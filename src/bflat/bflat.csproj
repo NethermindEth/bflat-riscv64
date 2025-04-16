@@ -80,6 +80,9 @@
     <SupportedTarget Include="linux-bionic-arm64">
       <LibPath>linux\arm64\bionic</LibPath>
     </SupportedTarget>
+    <SupportedTarget Include="linux-glibc-riscv64">
+      <LibPath>linux\riscv64\glibc</LibPath>
+    </SupportedTarget>
   </ItemGroup>
 
   <ItemGroup>
@@ -234,6 +237,8 @@
     <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
     <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\arm64\zerolib.dll&quot;"
+          WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
+    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d RISCV64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\riscv64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
     <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />

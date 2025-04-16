@@ -66,7 +66,7 @@ internal class BuildCommand : CommandBase
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
-        ArgumentHelpName = "x86|x64|arm64"
+        ArgumentHelpName = "x86|x64|arm64|riscv64"
     };
     private static Option<string> TargetOSOption = new Option<string>("--os", "Target operating system")
     {
@@ -178,6 +178,7 @@ internal class BuildCommand : CommandBase
         {
             Architecture.X64 => TargetArchitecture.X64,
             Architecture.Arm64 => TargetArchitecture.ARM64,
+            Architecture.RiscV64 => TargetArchitecture.RiscV64,
         };
 
         string targetArchitectureStr = result.GetValueForOption(TargetArchitectureOption);
@@ -187,6 +188,7 @@ internal class BuildCommand : CommandBase
             {
                 "x64" => TargetArchitecture.X64,
                 "arm64" => TargetArchitecture.ARM64,
+                "riscv64" => TargetArchitecture.RiscV64,
                 "x86" => TargetArchitecture.X86,
                 _ => throw new Exception($"Target architecture '{targetArchitectureStr}' is not supported"),
             };
@@ -373,6 +375,7 @@ internal class BuildCommand : CommandBase
                 TargetArchitecture.ARM64 => "arm64",
                 TargetArchitecture.X64 => "x64",
                 TargetArchitecture.X86 => "x86",
+                TargetArchitecture.RiscV64 => "riscv64",
                 _ => throw new Exception(targetArchitecture.ToString()),
             };
             currentLibPath = Path.Combine(currentLibPath, archPart);
@@ -836,7 +839,7 @@ internal class BuildCommand : CommandBase
 
                 if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86)
+                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86 or TargetArchitecture.RiscV64)
                         ldArgs.Append("zerolibnative.obj ");
                 }
             }
@@ -889,6 +892,8 @@ internal class BuildCommand : CommandBase
                 {
                     if (targetArchitecture == TargetArchitecture.ARM64)
                         ldArgs.Append("-dynamic-linker /lib/ld-linux-aarch64.so.1 ");
+                    else if (targetArchitecture == TargetArchitecture.RiscV64)
+                        ldArgs.Append("-dynamic-linker /lib/ld-linux-riscv64-lp64d.so.1 ");
                     else
                         ldArgs.Append("-dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
                     ldArgs.Append($"\"{firstLib}/Scrt1.o\" ");
