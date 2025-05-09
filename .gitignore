@@ -7,3 +7,4 @@ src/bflat/[Nn]u[Gg]et.config
 launchSettings.json
 .vs/
 msbuild.binlog
+._*
