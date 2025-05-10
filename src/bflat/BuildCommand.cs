@@ -66,7 +66,11 @@ internal class BuildCommand : CommandBase
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
+#if NET10_0_OR_GREATER
         ArgumentHelpName = "x86|x64|arm64|riscv64"
+#else
+        ArgumentHelpName = "x86|x64|arm64"
+#endif
     };
     private static Option<string> TargetOSOption = new Option<string>("--os", "Target operating system")
     {
@@ -178,7 +182,9 @@ internal class BuildCommand : CommandBase
         {
             Architecture.X64 => TargetArchitecture.X64,
             Architecture.Arm64 => TargetArchitecture.ARM64,
+#if NET10_0_OR_GREATER
             Architecture.RiscV64 => TargetArchitecture.RiscV64,
+#endif
         };
 
         string targetArchitectureStr = result.GetValueForOption(TargetArchitectureOption);
@@ -188,7 +194,9 @@ internal class BuildCommand : CommandBase
             {
                 "x64" => TargetArchitecture.X64,
                 "arm64" => TargetArchitecture.ARM64,
+#if NET10_0_OR_GREATER
                 "riscv64" => TargetArchitecture.RiscV64,
+#endif
                 "x86" => TargetArchitecture.X86,
                 _ => throw new Exception($"Target architecture '{targetArchitectureStr}' is not supported"),
             };
@@ -402,7 +410,9 @@ internal class BuildCommand : CommandBase
                 TargetArchitecture.ARM64 => "arm64",
                 TargetArchitecture.X64 => "x64",
                 TargetArchitecture.X86 => "x86",
+#if NET10_0_OR_GREATER
                 TargetArchitecture.RiscV64 => "riscv64",
+#endif
                 _ => throw new Exception(targetArchitecture.ToString()),
             };
             currentLibPath = Path.Combine(currentLibPath, archPart);
@@ -880,7 +890,11 @@ internal class BuildCommand : CommandBase
 
                 if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86 or TargetArchitecture.RiscV64)
+                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86
+#if NET10_0_OR_GREATER
+                        or TargetArchitecture.RiscV64
+#endif
+                        )
                         ldArgs.Append("zerolibnative.obj ");
                 }
             }
@@ -933,8 +947,10 @@ internal class BuildCommand : CommandBase
                 {
                     if (targetArchitecture == TargetArchitecture.ARM64)
                         ldArgs.Append("-dynamic-linker /lib/ld-linux-aarch64.so.1 ");
+#if NET10_0_OR_GREATER
                     else if (targetArchitecture == TargetArchitecture.RiscV64)
                         ldArgs.Append("-dynamic-linker /lib/ld-linux-riscv64-lp64d.so.1 ");
+#endif
                     else
                         ldArgs.Append("-dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
                     ldArgs.Append($"\"{firstLib}/Scrt1.o\" ");
@@ -995,7 +1011,11 @@ internal class BuildCommand : CommandBase
                 }
                 else if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture == TargetArchitecture.ARM64 || targetArchitecture == TargetArchitecture.RiscV64)
+                    if (targetArchitecture == TargetArchitecture.ARM64
+#if NET10_0_OR_GREATER
+                        || targetArchitecture == TargetArchitecture.RiscV64
+#endif
+                        )
                         ldArgs.Append($"\"{firstLib}/libzerolibnative.o\" ");
                 }
             }
