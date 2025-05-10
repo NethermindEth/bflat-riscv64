@@ -53,7 +53,7 @@ namespace System
                 this = default;
                 return; // returns default
             }
-#if X64 || ARM64
+#if X64 || ARM64 || RISCV64
             if ((ulong)(uint)start + (ulong)(uint)length > (ulong)(uint)array.Length)
                 Environment.FailFast(null);
 #elif X86 || ARM
