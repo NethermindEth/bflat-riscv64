@@ -147,6 +147,7 @@ internal class ILBuildCommand : CommandBase
                 TargetArchitecture.X64 => "X64",
                 TargetArchitecture.ARM => "ARM",
                 TargetArchitecture.ARM64 => "ARM64",
+                TargetArchitecture.RiscV64 => "RISCV64",
             },
             os switch
             {
