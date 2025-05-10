@@ -173,7 +173,7 @@ internal class BuildCommand : CommandBase
             targetOS = TargetOS.Linux;
         else
             throw new NotImplementedException();
-        
+
         TargetArchitecture targetArchitecture = RuntimeInformation.ProcessArchitecture switch
         {
             Architecture.X64 => TargetArchitecture.X64,
@@ -214,10 +214,35 @@ internal class BuildCommand : CommandBase
 
         ILProvider ilProvider = new NativeAotILProvider();
         bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
-        var logger = new Logger(Console.Out, ilProvider, verbose, Array.Empty<int>(), singleWarn: false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+
+#if NET10_0_OR_GREATER
+        var logger = new Logger(Console.Out,
+            ilProvider,
+            verbose,
+            Array.Empty<int>(),
+            singleWarn: false,
+            Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(),
+            false,
+            new Dictionary<int,bool>());
+#else
+        var logger = new Logger(Console.Out, ilProvider, verbose, Array.Empty<int>(), singleWarn: false, Array.Empty<string>(),
+            Array.Empty<string>(), Array.Empty<string>());
+#endif
 
         BuildTargetType buildTargetType = result.GetValueForOption(CommonOptions.TargetOption);
         string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
+
+#if DEBUG
+        Console.Error.WriteLine("Building with the following inputs:");
+        foreach (var input in inputFiles)
+        {
+            Console.Error.WriteLine("Input: " + input);
+        }
+        foreach (var input in references)
+        {
+            Console.Error.WriteLine("Reference: " + input);
+        }
+#endif
 
         PerfWatch createCompilationWatch = new PerfWatch("Create IL compilation");
         CSharpCompilation sourceCompilation = ILBuildCommand.CreateCompilation(
@@ -321,8 +346,10 @@ internal class BuildCommand : CommandBase
             SettingsTunnel.EmitGCInfo = false;
             SettingsTunnel.EmitEHInfo = false;
             SettingsTunnel.EmitGSCookies = false;
+#if !NET10_0_OR_GREATER
             if (debugInfoFormat == 0)
                 SettingsTunnel.EmitUnwindInfo = false;
+#endif
         }
 
         bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
@@ -456,7 +483,11 @@ internal class BuildCommand : CommandBase
         }
         else
         {
+#if NET10_0_OR_GREATER
+            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads", true)));
+#else
             compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads")));
+#endif
         }
 
         if (!nativeLib)
@@ -552,7 +583,9 @@ internal class BuildCommand : CommandBase
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
 
+#if !NET10_0_OR_GREATER
         ilProvider = new FeatureSwitchManager(ilProvider, logger, featureSwitches, substitutions);
+#endif
 
         var stackTracePolicy = !disableStackTraceData ?
             (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy() : new NoStackTraceEmissionPolicy();
@@ -613,7 +646,11 @@ internal class BuildCommand : CommandBase
         TypePreinit.TypePreinitializationPolicy preinitPolicy = preinitStatics ?
                 new TypePreinit.TypeLoaderAwarePreinitializationPolicy() : new TypePreinit.DisabledPreinitializationPolicy();
 
+#if NET10_0_OR_GREATER
+        var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy, new StaticReadOnlyFieldPolicy(), null);
+#else
         var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy);
+#endif
 
         builder
             .UseILProvider(ilProvider)
@@ -701,7 +738,11 @@ internal class BuildCommand : CommandBase
             // has the whole program view.
             if (preinitStatics)
             {
+#if NET10_0_OR_GREATER
+                preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy(), new StaticReadOnlyFieldPolicy(), null);
+#else
                 preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy());
+#endif
                 builder.UsePreinitializationManager(preinitManager);
             }
 
@@ -954,7 +995,7 @@ internal class BuildCommand : CommandBase
                 }
                 else if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture == TargetArchitecture.ARM64)
+                    if (targetArchitecture == TargetArchitecture.ARM64 || targetArchitecture == TargetArchitecture.RiscV64)
                         ldArgs.Append($"\"{firstLib}/libzerolibnative.o\" ");
                 }
             }
