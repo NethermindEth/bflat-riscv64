@@ -8,3 +8,7 @@ launchSettings.json
 .vs/
 msbuild.binlog
 ._*
+*.tar.gz
+src/packages/*.nupkg
+structure.txt
+src/structure.txt
