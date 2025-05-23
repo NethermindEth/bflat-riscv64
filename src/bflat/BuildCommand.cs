@@ -1058,6 +1058,13 @@ internal class BuildCommand : CommandBase
             ldArgs.Append($"-T \"{linkerScript}\" ");
             string startObj = Path.Combine(homePath, "start_zisk.o");
             ldArgs.Append($"\"{startObj}\" ");
+            
+            if (stdlib == StandardLibType.Zero && targetArchitecture == TargetArchitecture.RiscV64)
+            {
+                string runtimeLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "glibc");
+                ldArgs.Append($"\"{runtimeLibPath}/libzerolibnative.o\" ");
+            }
+            
             ldArgs.Append($"\"{objectFilePath}\" ");
             ldArgs.Append($"-o \"{outputFilePath}\" ");
             ldArgs.Append("--static --gc-sections -z noexecstack ");
