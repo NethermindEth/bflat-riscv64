@@ -5,7 +5,7 @@
     <ImplicitUsings>false</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);LINUX;RISCV64</DefineConstants>
+    <DefineConstants>$(DefineConstants);LINUX;RISCV64;ZISK</DefineConstants>
     <UseFrameworkReference>false</UseFrameworkReference>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>

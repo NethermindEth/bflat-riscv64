@@ -161,4 +161,5 @@ public enum TargetOS
     Windows,
     Linux,
     UEFI,
+    Zisk
 }

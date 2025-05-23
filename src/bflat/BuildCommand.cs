@@ -209,6 +209,7 @@ internal class BuildCommand : CommandBase
                 "windows" => TargetOS.Windows,
                 "linux" => TargetOS.Linux,
                 "uefi" => TargetOS.UEFI,
+                "zisk" => TargetOS.Zisk,
                 _ => throw new Exception($"Target OS '{targetOSStr}' is not supported"),
             };
         }
@@ -317,6 +318,10 @@ internal class BuildCommand : CommandBase
             {
                 outputFilePath += ".efi";
             }
+            else if (targetOS == TargetOS.Zisk)
+            {
+                // No extension by default; user specifies via -o
+            }
             else
             {
                 if (buildTargetType is not BuildTargetType.Exe and not BuildTargetType.WinExe)
@@ -333,7 +338,7 @@ internal class BuildCommand : CommandBase
         var tsTargetOs = targetOS switch
         {
             TargetOS.Windows or TargetOS.UEFI => Internal.TypeSystem.TargetOS.Windows,
-            TargetOS.Linux => Internal.TypeSystem.TargetOS.Linux,
+            TargetOS.Linux or TargetOS.Zisk => Internal.TypeSystem.TargetOS.Linux,
         };
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
@@ -400,6 +405,7 @@ internal class BuildCommand : CommandBase
                 TargetOS.Linux => "linux",
                 TargetOS.Windows => "windows",
                 TargetOS.UEFI => "uefi",
+                TargetOS.Zisk => "zisk",
                 _ => throw new Exception(targetOS.ToString()),
             };
             currentLibPath = Path.Combine(currentLibPath, osPart);
@@ -542,6 +548,10 @@ internal class BuildCommand : CommandBase
             directPinvokes.Add("libSystem.Net.Security.Native");
             directPinvokes.Add("libSystem.Security.Cryptography.Native.OpenSsl");
             directPinvokes.Add("libsokol");
+        }
+        else if (targetOS == TargetOS.Zisk)
+        {
+            // Minimal P/Invokes; adjust if fibonacci.cs calls native functions
         }
 
         PInvokeILEmitterConfiguration pinvokePolicy = new ConfigurablePInvokePolicy(typeSystemContext.Target, directPinvokes, directPinvokeList);
@@ -1041,6 +1051,16 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{firstLib}/crtendS.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
             }
+        } else if (targetOS == TargetOS.Zisk)
+        {
+            ldArgs.Append("-flavor ld ");
+            string linkerScript = Path.Combine(homePath, "linkerscripts", "zisk.ld");
+            ldArgs.Append($"-T \"{linkerScript}\" ");
+            string startObj = Path.Combine(homePath, "start_zisk.o");
+            ldArgs.Append($"\"{startObj}\" ");
+            ldArgs.Append($"\"{objectFilePath}\" ");
+            ldArgs.Append($"-o \"{outputFilePath}\" ");
+            ldArgs.Append("--static --gc-sections -z noexecstack ");
         }
 
         ldArgs.AppendJoin(' ', result.GetValueForOption(LdFlagsOption));

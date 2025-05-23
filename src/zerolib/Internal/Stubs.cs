@@ -151,6 +151,14 @@ assigningNull:
             MethodTable** result;
             if (EfiSystemTable->BootServices->AllocatePool(2 /* LoaderData*/, (nint)size, (void**)&result) != 0)
                 result = null;
+
+#elif ZISK
+            // Simple bump allocator for ZisK, starting at RAM base (0xa0020000)
+            static byte* heapPtr = (byte*)0xa0020000;
+            byte* ptr = heapPtr;
+            heapPtr += size;
+            heapPtr = (byte*)(((nuint)heapPtr + 7) & ~7); // Align to 8 bytes
+            MethodTable** result = (MethodTable**)ptr;
 #else
 #error Nope
 #endif

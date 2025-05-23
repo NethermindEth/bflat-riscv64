@@ -156,6 +156,7 @@ internal class ILBuildCommand : CommandBase
                 TargetOS.Windows => "WINDOWS",
                 TargetOS.Linux => "LINUX",
                 TargetOS.UEFI => "UEFI",
+                TargetOS.Zisk => "ZISK"
             }
         };
 

@@ -3,10 +3,10 @@
 
   <!-- Host & target -->
   <PropertyGroup>
-    <!-- RiscV64 example
-      <HostSpecific>linux-glibc-x64</HostSpecific>
-      <TargetSpecific>linux-glibc-riscv64</TargetSpecific>
-    -->
+    
+    <HostSpecific>linux-glibc-x64</HostSpecific>
+    <TargetSpecific>linux-glibc-riscv64</TargetSpecific>
+   
     <DotnetVersion Condition="'$(DotnetVersion)' == ''">10</DotnetVersion>
   </PropertyGroup>
 
