@@ -3,9 +3,9 @@
 
   <!-- Host & target -->
   <PropertyGroup>
-    <!-- RiscV64 example
-      <HostSpecific>linux-glibc-x64</HostSpecific>
-      <TargetSpecific>linux-glibc-riscv64</TargetSpecific>
+    <!-- RISCV64 example
+    <HostSpecific>linux-musl-x64</HostSpecific>
+    <TargetSpecific>linux-musl-riscv64</TargetSpecific>
     -->
     <DotnetVersion Condition="'$(DotnetVersion)' == ''">10</DotnetVersion>
   </PropertyGroup>
@@ -94,6 +94,9 @@
     </SupportedTarget>
     <SupportedTarget Condition="'$(TargetSpecific)' == 'linux-glibc-riscv64'" Include="linux-glibc-riscv64">
       <LibPath>linux\riscv64\glibc</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(TargetSpecific)' == 'linux-musl-riscv64'" Include="linux-musl-riscv64">
+      <LibPath>linux\riscv64\musl</LibPath>
     </SupportedTarget>
   </ItemGroup>
 
