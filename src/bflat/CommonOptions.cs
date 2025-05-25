@@ -42,6 +42,10 @@ internal static class CommonOptions
         new Option<bool>("--deterministic",
             "Produce deterministic outputs including timestamps");
 
+    public static Option<bool> NoPthreadOption =
+        new Option<bool>("--no-pthread",
+            "Remove pthread dependency");
+
     public static Option<string> OutputOption =
         new Option<string>(new string[] { "-o", "--out" },
             "Output file path")

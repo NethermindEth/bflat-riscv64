@@ -126,6 +126,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.ResourceOption,
             CommonOptions.StdLibOption,
             CommonOptions.DeterministicOption,
+            CommonOptions.NoPthreadOption,
             CommonOptions.VerbosityOption,
             CommonOptions.LangVersionOption,
         };
@@ -1023,7 +1024,11 @@ internal class BuildCommand : CommandBase
 
             ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc -lc -lgcc ");
             if (libc != "bionic")
-                ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed -lpthread ");
+            {
+                ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
+                if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
+                    ldArgs.Append("-lpthread ");
+            }
 
             if (libc == "bionic")
             {
