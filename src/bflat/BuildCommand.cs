@@ -81,7 +81,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -568,7 +568,7 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Resources.UseSystemResourceKeys", true);
         }
 
-        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic";
+        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl";
         if (disableGlobalization)
         {
             featureSwitches.Add("System.Globalization.Invariant", true);
@@ -944,6 +944,12 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-dynamic-linker /system/bin/linker64 ");
                     ldArgs.Append($"\"{firstLib}/crtbegin_dynamic.o\" ");
                 }
+                else if (libc == "musl")
+                {
+                    ldArgs.Append("-static ");
+                    ldArgs.Append($"\"{firstLib}/crt1.o\" ");
+                    ldArgs.Append($"\"{firstLib}/crti.o\" ");
+                }
                 else
                 {
                     if (targetArchitecture == TargetArchitecture.ARM64)
@@ -969,7 +975,7 @@ internal class BuildCommand : CommandBase
 
             ldArgs.AppendFormat("-o \"{0}\" ", outputFilePath);
 
-            if (libc != "bionic")
+            if (libc != "bionic" && libc != "musl")
             {
                 ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtbeginS.o\" ");
@@ -1007,7 +1013,7 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
-                    if (libc != "bionic")
+                    if (libc != "bionic" && libc != "musl")
                         ldArgs.Append("-lSystem.Globalization.Native -lSystem.Net.Security.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
@@ -1020,14 +1026,24 @@ internal class BuildCommand : CommandBase
                         ldArgs.Append($"\"{firstLib}/libzerolibnative.o\" ");
                 }
             }
-                
 
-            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc -lc -lgcc ");
-            if (libc != "bionic")
+            if (libc != "musl")
+            {
+                ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc -lc -lgcc ");
+            }
+            else
+            {
+                ldArgs.Append("--as-needed -ldl -lm -z relro -z now --discard-all --gc-sections -lgcc ");
+            }
+            if (libc != "bionic" && libc != "musl")
             {
                 ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
                 if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
                     ldArgs.Append("-lpthread ");
+            }
+            else if (libc == "musl")
+            {
+                ldArgs.Append($"\"{firstLib}/libc.a\" ");
             }
 
             if (libc == "bionic")
@@ -1040,6 +1056,10 @@ internal class BuildCommand : CommandBase
                 {
                     ldArgs.Append($"\"{firstLib}/crtend_android.o\" ");
                 }
+            }
+            else if (libc == "musl")
+            {
+                ldArgs.Append($"\"{firstLib}/crtn.o\" ");
             }
             else
             {
