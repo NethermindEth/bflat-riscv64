@@ -95,6 +95,14 @@
     <SupportedTarget Condition="'$(TargetSpecific)' == 'linux-glibc-riscv64'" Include="linux-glibc-riscv64">
       <LibPath>linux\riscv64\glibc</LibPath>
     </SupportedTarget>
+
+    <SupportedTarget Include="zisk-riscv64">
+      <LibPath>zkvm\riscv64</LibPath>
+    </SupportedTarget>
+  </ItemGroup>
+  <ItemGroup>
+  <!-- Remove ZisK from all the automatic download/extract tasks -->
+    <SupportedTarget Remove="zisk-riscv64" />
   </ItemGroup>
 
   <ItemGroup>
@@ -104,14 +112,34 @@
   </ItemGroup>
 
   <ItemGroup>
+    <RuntimeArtifact Remove="bflat-libs-zisk-riscv64" />
+  </ItemGroup>
+
+  <ItemGroup>
     <CompilerBlob Include="compiler-$(CompilerHost)" />
     <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')" />
 
     <Blob Include="@(CompilerBlob);@(SdkBlob)" />
   </ItemGroup>
-
+  <ItemGroup>
+    <SdkBlob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- don’t attempt to download the ZisK *blob* either -->
+    <Blob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
   <Target Name="CreateCompilerLayout"
-          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs" />
+          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
+
+    <MakeDir Directories="$(OutputPath)lib\zkvm\riscv64" />
+
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\zisk.ld"
+          DestinationFolder="$(OutputPath)lib\zkvm\riscv64\" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\start_zisk.o"
+          DestinationFolder="$(OutputPath)lib\zkvm\riscv64\" />
+    <Copy SourceFiles="$(OutputPath)lib\linux\riscv64\glibc\libzerolibnative.o"
+      DestinationFolder="$(OutputPath)lib\zkvm\riscv64\" />
+  </Target>
 
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"

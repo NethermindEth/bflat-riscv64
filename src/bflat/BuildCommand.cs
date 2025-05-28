@@ -342,6 +342,12 @@ internal class BuildCommand : CommandBase
         };
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
+        // --- ZisK: force-disable compressed / float units -------------------------
+        // if (targetOS == TargetOS.Zisk && targetArchitecture == TargetArchitecture.RiscV64)
+        // {
+        //     // tack on ,-c,-d,-f  (strip any leading comma handling)
+        //     isaArg = string.IsNullOrEmpty(isaArg) ? "-c,-d,-f" : isaArg + ",-c,-d,-f";
+        // }
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
@@ -1054,20 +1060,21 @@ internal class BuildCommand : CommandBase
         } else if (targetOS == TargetOS.Zisk)
         {
             ldArgs.Append("-flavor ld ");
-            string linkerScript = Path.Combine(homePath, "linkerscripts", "zisk.ld");
-            ldArgs.Append($"-T \"{linkerScript}\" ");
-            string startObj = Path.Combine(homePath, "start_zisk.o");
-            ldArgs.Append($"\"{startObj}\" ");
-            
-            if (stdlib == StandardLibType.Zero && targetArchitecture == TargetArchitecture.RiscV64)
-            {
-                string runtimeLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "glibc");
-                ldArgs.Append($"\"{runtimeLibPath}/libzerolibnative.o\" ");
-            }
-            
+            ldArgs.Append("-EL -m elf64lriscv ");
+            ldArgs.Append("-static --gc-sections -z noexecstack ");
+            // ldArgs.Append("--riscv-no-relax ");
+
+            string ziskLibPath = Path.Combine(homePath, "lib", "zkvm", "riscv64");
+
+            ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "zisk.ld")}\" ");
+            ldArgs.Append($"\"{Path.Combine(ziskLibPath, "start_zisk.o")}\" ");
+            ldArgs.Append($"\"{Path.Combine(ziskLibPath, "libzerolibnative.o")}\" ");
+
+            // managed object
             ldArgs.Append($"\"{objectFilePath}\" ");
-            ldArgs.Append($"-o \"{outputFilePath}\" ");
-            ldArgs.Append("--static --gc-sections -z noexecstack ");
+
+            ldArgs.Append("-o ");
+            ldArgs.Append($"\"{outputFilePath}\" ");
         }
 
         ldArgs.AppendJoin(' ', result.GetValueForOption(LdFlagsOption));

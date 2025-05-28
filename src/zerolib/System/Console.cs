@@ -43,40 +43,59 @@ namespace System
 
     public static unsafe partial class Console
     {
+#if ZISK
+        // Exported from start_zisk.S
+        [System.Runtime.InteropServices.DllImport("*", EntryPoint = "__zisk_write_byte")]
+        private static extern void ZiskWriteByte(byte b);
+
+        [System.Runtime.InteropServices.DllImport("*", EntryPoint = "set_output")]
+        public static extern void SetPublicOutput(int id, uint value);
+
+        /// <summary>
+        /// ZisK-specific character output. Only included when ZISK is defined.
+        /// </summary>
+        public static void Write(char c)
+        {
+            ZiskWriteByte((byte)c);
+        }
+#endif
+
         public static void WriteLine(string s)
         {
             for (int i = 0; i < s.Length; i++)
-                Console.Write(s[i]);
+                Write(s[i]);
 #if WINDOWS || UEFI
-            Console.Write('\r');
+            Write('\r');
 #endif
-            Console.Write('\n');
+            Write('\n');
         }
 
         public static void WriteLine(int i)
         {
             const int BufferSize = 16;
             char* pBuffer = stackalloc char[BufferSize];
-            if (i < 0)
+            int value = i;
+            if (value < 0)
             {
                 Write('-');
+                value = -value;
             }
 
             char* pEnd = &pBuffer[BufferSize - 1];
-            char* pCurrent = pEnd;
+            char* pCur = pEnd;
             do
             {
-                *(pCurrent--) = (char)((i % 10) + '0');
-                i /= 10;
-            } while (i != 0);
+                *(pCur--) = (char)((value % 10) + '0');
+                value /= 10;
+            } while (value != 0);
 
-            while (pCurrent <= pEnd)
-                Write(*(pCurrent++));
+            while (pCur <= pEnd)
+                Write(*(pCur++));
 
 #if WINDOWS || UEFI
-            Console.Write('\r');
+            Write('\r');
 #endif
-            Console.Write('\n');
+            Write('\n');
         }
     }
 }
