@@ -16,7 +16,29 @@ PHDRS {
 
 SECTIONS
 {
-  .text : { *(.text.init) *(.text .text.*)} >rom AT>rom :text
+  .text : { 
+    /* First: Bootstrap code */
+    *(.text.init)
+    . = ALIGN(4);
+    
+    /* Second: Critical entry points (these MUST come early) */
+    *(.text.__managed__Main)
+    *(.text.*__managed__Main*)
+    *(.text.*MainMethodWrapper*)
+    *(.text.*Program__Main*)
+    . = ALIGN(4);
+    
+    /* Third: All other program code */
+    *(.text .text.*)
+    . = ALIGN(4);
+    
+    /* Fourth: Any managed code sections */
+    KEEP(*(__managedcode))
+    . = ALIGN(4);
+    
+    /* Ensure proper alignment and padding */
+    . = ALIGN(16);
+  } >rom AT>rom :text
 
   . = ALIGN(8);
   PROVIDE(_global_pointer = .);
@@ -27,15 +49,21 @@ SECTIONS
   .bss : {
     PROVIDE(_bss_start = .);
     *(.bss .bss.*);
-    PROVIDE(_bss_end = .); # ... and one at the end
+    PROVIDE(_bss_end = .);
   } >ram AT>ram :bss
 
   . = ALIGN(8);
-  PROVIDE(_init_stack_top = . + 0x100000); # reserve 1M bytes for the initialisation stack
-
+  PROVIDE(_init_stack_top = . + 0x100000);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);
   PROVIDE(_kernel_heap_top = ORIGIN(ram) + LENGTH(ram));
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
 
   _end = .;
+  
+  /* Discard debug sections */
+  /DISCARD/ : {
+    *(.debug*)
+    *(.comment)
+    *(.riscv.attributes)
+  }
 }

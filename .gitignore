@@ -9,3 +9,4 @@ launchSettings.json
 msbuild.binlog
 ._*
 /src/packages/
+/proof/

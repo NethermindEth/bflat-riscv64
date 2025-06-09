@@ -44,19 +44,28 @@ namespace System
     public static unsafe partial class Console
     {
 #if ZISK
-        // Exported from start_zisk.S
-        [System.Runtime.InteropServices.DllImport("*", EntryPoint = "__zisk_write_byte")]
-        private static extern void ZiskWriteByte(byte b);
-
-        [System.Runtime.InteropServices.DllImport("*", EntryPoint = "set_output")]
-        public static extern void SetPublicOutput(int id, uint value);
-
         /// <summary>
-        /// ZisK-specific character output. Only included when ZISK is defined.
+        /// ZisK-specific character output using ZisK I/O functions
         /// </summary>
         public static void Write(char c)
         {
-            ZiskWriteByte((byte)c);
+            ZisK.WriteChar(c);
+        }
+        
+        /// <summary>
+        /// Read input data from ZisK VM
+        /// </summary>
+        public static byte[] ReadInput()
+        {
+            return ZisK.ReadInput();
+        }
+        
+        /// <summary>
+        /// Set public output for ZisK VM
+        /// </summary>
+        public static void SetPublicOutput(int id, uint value)
+        {
+            ZisK.SetOutput(id, value);
         }
 #endif
 
