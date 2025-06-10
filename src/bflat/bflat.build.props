@@ -1,0 +1,53 @@
+<Project>
+  <PropertyGroup>
+    <CompilerHost Condition="'$(HostSpecific)' == 'windows-x64' or ('$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'win-x64')">windows-x64</CompilerHost>
+    <CompilerHost Condition="'$(HostSpecific)' == 'linux-glibc-x64' or ('$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'linux-x64')">linux-glibc-x64</CompilerHost>
+    <DownloadCachePath Condition="$(DownloadCachePath) == ''">$(BaseIntermediateOutputPath)</DownloadCachePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SupportedHost Condition="'$(Flavor)' == ''" Include="windows-x64">
+      <OS>windows</OS>
+      <Arch>x64</Arch>
+    </SupportedHost>
+    <SupportedHost Condition="'$(Flavor)' == ''" Include="windows-arm64">
+      <OS>windows</OS>
+      <Arch>arm64</Arch>
+    </SupportedHost>
+    <SupportedHost Include="linux-glibc-x64">
+      <OS>linux</OS>
+      <Arch>x64</Arch>
+    </SupportedHost>
+    <SupportedHost Condition="'$(Flavor)' == ''" Include="linux-glibc-arm64">
+      <OS>linux</OS>
+      <Arch>arm64</Arch>
+    </SupportedHost>
+  </ItemGroup>
+
+  <ItemGroup>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'windows-x64')" Include="windows-x64">
+      <LibPath>windows\x64\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'windows-arm64')" Include="windows-arm64">
+      <LibPath>windows\arm64\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'windows-x86')" Include="windows-x86">
+      <LibPath>windows\x86\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'linux-glibc-x64')" Include="linux-glibc-x64">
+      <LibPath>linux\x64\glibc\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'linux-glibc-arm64')" Include="linux-glibc-arm64">
+      <LibPath>linux\arm64\glibc</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == '' and ('$(TargetSpecific)' == '' or '$(TargetSpecific)' == 'linux-bionic-arm64')" Include="linux-bionic-arm64">
+      <LibPath>linux\arm64\bionic</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == 'riscv64' or '$(TargetSpecific)' == 'linux-glibc-riscv64'" Include="linux-glibc-riscv64">
+      <LibPath>linux\riscv64\glibc</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="'$(Flavor)' == 'riscv64' or '$(TargetSpecific)' == 'linux-musl-riscv64'" Include="linux-musl-riscv64">
+      <LibPath>linux\riscv64\musl</LibPath>
+    </SupportedTarget>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,29 @@
+<Project>
+  <!-- Inference -->
+  <PropertyGroup>
+    <!-- Infer DotNet version -->
+    <DotnetVersion>8</DotnetVersion>
+    <DotnetVersion Condition="'$(DotnetVersion)' == '' or '$(Flavor)' == 'riscv64'">10</DotnetVersion>
+
+    <!-- Infer blob source -->
+    <BlobSource>bflattened</BlobSource>
+    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10'">interpretica</BlobSource>
+  </PropertyGroup>
+
+  <!-- Infer blob sources -->
+  <PropertyGroup>
+    <RuntimeUri Condition="'$(BlobSource)' == 'interpretica'">https://opensource.interpretica.io/bflat/</RuntimeUri>
+    <BlobsUri Condition="'$(BlobSource)' == 'interpretica'">https://opensource.interpretica.io/bflat/blobs/</BlobsUri>
+    <RuntimeUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/runtime/releases/download/</RuntimeUri>
+    <BlobsUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/blobs/releases/download/</BlobsUri>
+  </PropertyGroup>
+
+  <!-- Infer dotnet/blob/codeanalysis version -->
+  <PropertyGroup>
+    <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
+    <RuntimeVersion Condition="'$(DotnetVersion)' == '8'">8.0.2-rtm.24317.2</RuntimeVersion>
+
+    <BlobsVersion>1.3</BlobsVersion>
+    <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
+  </PropertyGroup>
+</Project>
