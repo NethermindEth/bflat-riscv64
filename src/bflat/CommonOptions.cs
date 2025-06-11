@@ -97,7 +97,17 @@ internal static class CommonOptions
         if (inputFileNames.Length > 0)
             return inputFileNames;
 
-        return Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.cs", SearchOption.AllDirectories).ToArray();
+        var files = Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.cs", SearchOption.AllDirectories);
+        var result = new List<string>();
+
+        foreach (var file in files)
+        {
+            var fileName = Path.GetFileName(file);
+            if (!fileName.StartsWith("._"))
+                result.Add(file);
+        }
+
+        return result.ToArray();
     }
 
     public static string[] GetReferencePaths(string[] referencePaths, StandardLibType stdlib)
