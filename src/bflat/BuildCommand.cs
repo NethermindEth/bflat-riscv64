@@ -18,13 +18,18 @@
 
 using System;
 using System.Collections.Generic;
-using System.CommandLine.Parsing;
 using System.CommandLine;
+using System.CommandLine.Help;
+using System.CommandLine.Parsing;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
+using System.Reflection.Metadata;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Xml;
+
+using System.IO;
+using System.Linq;
 using System.Threading;
 
 using Microsoft.CodeAnalysis.CSharp;
@@ -32,10 +37,82 @@ using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis;
 
 using ILCompiler;
+using ILCompiler.Dataflow;
+using ILCompiler.DependencyAnalysis;
 
-using Internal.TypeSystem;
 using Internal.IL;
+using Internal.IL.Stubs;
+using Internal.TypeSystem;
 using Internal.TypeSystem.Ecma;
+
+using ILLink.Shared;
+
+class CustomILProvider : ILProvider
+{
+    private ILProvider inner;
+    public TypeSystemContext TypeContext;
+
+    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext)
+    {
+        inner = innerProvider;
+        TypeContext = typeContext;
+    }
+
+    public override MethodIL GetMethodIL(MethodDesc method)
+    {
+        if (method.OwningType is MetadataType owningType &&
+            owningType.Namespace == "System" &&
+            owningType.Name == "OutOfMemoryException" &&
+            method.Name == "GetDefaultMessage")
+        {
+            var stringType = TypeContext.GetWellKnownType(WellKnownType.String);
+            FieldDesc  emptyField = null;
+
+            foreach (var field in stringType.GetFields())
+            {
+                if (field.Name == "Empty" && field.IsStatic)
+                {
+                    emptyField = field;
+                    break;
+                }
+            }
+
+            if (emptyField == null)
+            {
+                throw new Exception("No Empty field found for OutOfMemoryException");
+            }
+
+            return new ILStubMethodIL(
+                method,
+                new byte[]
+                {
+                    (byte)ILOpcode.ldsfld, 0x01, 0x00, 0x00, 0x00,
+                    (byte)ILOpcode.ret
+                },
+                Array.Empty<LocalVariableDefinition>(),
+                new object[] { emptyField }
+            );
+        }
+
+        if (method.OwningType is MetadataType owningType2 &&
+            owningType2.Namespace == "Internal.JitInterface" &&
+            owningType2.Name == "CorInfoImpl" &&
+            method.Name == "getAsyncInfo")
+        {
+            return new ILStubMethodIL(
+                method,
+                new byte[]
+                {
+                    (byte)ILOpcode.ret
+                },
+                Array.Empty<LocalVariableDefinition>(),
+                new object[] {}
+            );
+        }
+
+        return inner.GetMethodIL(method);
+    }
+}
 
 internal class BuildCommand : CommandBase
 {
@@ -221,12 +298,21 @@ internal class BuildCommand : CommandBase
             userSpecificedOutputFileName != null ? Path.GetFileNameWithoutExtension(userSpecificedOutputFileName) :
             CommonOptions.GetOutputFileNameWithoutSuffix(userSpecifiedInputFiles);
 
-        ILProvider ilProvider = new NativeAotILProvider();
         bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
+        bool disableStackTraceData = result.GetValueForOption(NoStackTraceDataOption) || stdlib != StandardLibType.DotNet;
+        string systemModuleName = DefaultSystemModule;
+        string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
+
+        if (stdlib == StandardLibType.None && references.Length == 0)
+            systemModuleName = compiledModuleName;
+        if (stdlib == StandardLibType.Zero)
+            systemModuleName = "zerolib";
+
+        ILProvider ilProviderOld = new NativeAotILProvider();
 
 #if NET10_0_OR_GREATER
         var logger = new Logger(Console.Out,
-            ilProvider,
+            ilProviderOld,
             verbose,
             Array.Empty<int>(),
             singleWarn: false,
@@ -238,8 +324,31 @@ internal class BuildCommand : CommandBase
             Array.Empty<string>(), Array.Empty<string>());
 #endif
 
+        //
+        // Initialize type system context
+        //
+
+        SharedGenericsMode genericsMode = SharedGenericsMode.CanonicalReferenceTypes;
+
+        bool disableReflection = result.GetValueForOption(NoReflectionOption);
+        var tsTargetOs = targetOS switch
+        {
+            TargetOS.Windows or TargetOS.UEFI => Internal.TypeSystem.TargetOS.Windows,
+            TargetOS.Linux => Internal.TypeSystem.TargetOS.Linux,
+        };
+        bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
+
+        string isaArg = result.GetValueForOption(TargetIsaOption);
+        InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
+                "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
+                optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
+
+        var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
+        var targetAbi = TargetAbi.NativeAot;
+        var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
+        var ms = new MemoryStream();
+
         BuildTargetType buildTargetType = result.GetValueForOption(CommonOptions.TargetOption);
-        string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
 
 #if DEBUG
         Console.Error.WriteLine("Building with the following inputs:");
@@ -283,7 +392,6 @@ internal class BuildCommand : CommandBase
             ? 0 : DebugInformationFormat.Embedded;
         var emitOptions = new EmitOptions(debugInformationFormat: debugInfoFormat);
 
-        var ms = new MemoryStream();
         PerfWatch emitWatch = new PerfWatch("C# compiler emit");
         var resinfos = CommonOptions.GetResourceDescriptions(result.GetValueForOption(CommonOptions.ResourceOption));
         var compResult = sourceCompilation.Emit(ms, manifestResources: resinfos, options: emitOptions);
@@ -331,25 +439,6 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        var tsTargetOs = targetOS switch
-        {
-            TargetOS.Windows or TargetOS.UEFI => Internal.TypeSystem.TargetOS.Windows,
-            TargetOS.Linux => Internal.TypeSystem.TargetOS.Linux,
-        };
-
-        string isaArg = result.GetValueForOption(TargetIsaOption);
-        InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
-                "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
-                optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
-
-        bool disableReflection = result.GetValueForOption(NoReflectionOption);
-        bool disableStackTraceData = result.GetValueForOption(NoStackTraceDataOption) || stdlib != StandardLibType.DotNet;
-        string systemModuleName = DefaultSystemModule;
-        if (stdlib == StandardLibType.None && references.Length == 0)
-            systemModuleName = compiledModuleName;
-        if (stdlib == StandardLibType.Zero)
-            systemModuleName = "zerolib";
-
         if (stdlib != StandardLibType.DotNet)
         {
             SettingsTunnel.EmitGCInfo = false;
@@ -361,19 +450,10 @@ internal class BuildCommand : CommandBase
 #endif
         }
 
-        bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
-
-        //
-        // Initialize type system context
-        //
-
-        SharedGenericsMode genericsMode = SharedGenericsMode.CanonicalReferenceTypes;
-
-        var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
-        var targetAbi = TargetAbi.NativeAot;
-        var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0, ms, compiledModuleName);
+
+        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -439,7 +519,12 @@ internal class BuildCommand : CommandBase
             foreach (var reference in EnumerateExpandedDirectories(libPath, mask))
             {
                 string assemblyName = Path.GetFileNameWithoutExtension(reference);
+                if (assemblyName.StartsWith("System.Diagnostics"))
+                    continue;
                 referenceFilePaths[assemblyName] = reference;
+#if DEBUG
+                Console.WriteLine("Reference file: " + assemblyName + " -> " + reference);
+#endif
             }
         }
 
@@ -447,37 +532,46 @@ internal class BuildCommand : CommandBase
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
 
         typeSystemContext.SetSystemModule(typeSystemContext.GetModuleForSimpleName(systemModuleName));
+
+        //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
 
         //
         // Initialize compilation group and compilation roots
         //
 
-        List<string> initAssemblies = new List<string> { "System.Private.CoreLib" };
+        List<string> initAssemblies = new List<string>();
+
+        initAssemblies.Add("System.Private.CoreLib");
 
         if (!disableReflection || !disableStackTraceData)
             initAssemblies.Add("System.Private.StackTraceMetadata");
 
         initAssemblies.Add("System.Private.TypeLoader");
 
+        initAssemblies.Add("System.Console");
+
         if (!disableReflection)
             initAssemblies.Add("System.Private.Reflection.Execution");
         else
             initAssemblies.Add("System.Private.DisabledReflection");
 
+        initAssemblies.Add("mscorlib");
+        initAssemblies.Add("System");
+
         // Build a list of assemblies that have an initializer that needs to run before
         // any user code runs.
-        List<ModuleDesc> assembliesWithInitalizers = new List<ModuleDesc>();
+        List<ModuleDesc> assembliesWithInitializers = new List<ModuleDesc>();
         if (stdlib == StandardLibType.DotNet)
         {
             foreach (string initAssemblyName in initAssemblies)
             {
                 ModuleDesc assembly = typeSystemContext.GetModuleForSimpleName(initAssemblyName);
-                assembliesWithInitalizers.Add(assembly);
+                assembliesWithInitializers.Add(assembly);
             }
         }
 
-        var libraryInitializers = new LibraryInitializers(typeSystemContext, assembliesWithInitalizers);
+        var libraryInitializers = new LibraryInitializers(typeSystemContext, assembliesWithInitializers);
 
         List<MethodDesc> initializerList = new List<MethodDesc>(libraryInitializers.LibraryInitializerMethods);
 
@@ -491,6 +585,10 @@ internal class BuildCommand : CommandBase
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedSettingsBlob", Array.Empty<string>()));
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", Array.Empty<string>()));
             compilationRoots.Add(new ExpectedIsaFeaturesRootProvider(instructionSetSupport));
+            compilationRoots.Add(
+                new GenericRootProvider<TypeDesc>(
+                    typeSystemContext.SystemModule.GetType("System", "SR"),
+                    (type, rooter) => rooter.AddCompilationRoot(type.GetStaticConstructor(), "Force initialize SR cctor")));
         }
         else
         {
@@ -504,10 +602,14 @@ internal class BuildCommand : CommandBase
         if (!nativeLib)
         {
             compilationRoots.Add(new MainMethodRootProvider(compiledAssembly, initializerList, generateLibraryAndModuleInitializers: true));
+            compilationRoots.Add(new NativeLibraryInitializerRootProvider(typeSystemContext.GeneratedAssembly, initializerList));
         }
 
         if (compiledAssembly != typeSystemContext.SystemModule)
+        {
             compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule));
+        }
+
         compilationGroup = new SingleFileCompilationModuleGroup();
 
         if (nativeLib)
@@ -665,8 +767,8 @@ internal class BuildCommand : CommandBase
 
         builder
             .UseILProvider(ilProvider)
-            .UsePreinitializationManager(preinitManager)
-        .UseResilience(true);
+            .UsePreinitializationManager(preinitManager);
+            .UseResilience(true);
 
         ILScanResults scanResults = null;
         if (useScanner)
@@ -721,6 +823,13 @@ internal class BuildCommand : CommandBase
 
         if (scanResults != null)
         {
+            DevirtualizationManager devirtualizationManager = scanResults.GetDevirtualizationManager();
+
+            SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+            ILProvider unsubstitutedILProvider = ilProvider;
+            ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager);
+            builder.UseILProvider(ilProvider);
+
             // If we have a scanner, feed the vtable analysis results to the compilation.
             // This could be a command line switch if we really wanted to.
             builder.UseVTableSliceProvider(scanResults.GetVTableLayoutInfo());
@@ -732,7 +841,7 @@ internal class BuildCommand : CommandBase
             // If we have a scanner, we can drive devirtualization using the information
             // we collected at scanning time (effectively sealing unsealed types if possible).
             // This could be a command line switch if we really wanted to.
-            builder.UseDevirtualizationManager(scanResults.GetDevirtualizationManager());
+            builder.UseDevirtualizationManager(devirtualizationManager);
 
             // If we use the scanner's result, we need to consult it to drive inlining.
             // This prevents e.g. devirtualizing and inlining methods on types that were
@@ -1012,8 +1121,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append("-lSystem.Native ");
                 if (stdlib == StandardLibType.DotNet)
                 {
+                    ldArgs.Append("-latomic ");
+                    ldArgs.Append("-leventpipe-disabled -laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
-                    if (libc != "bionic" && libc != "musl")
+                    if (libc != "bionic")
                         ldArgs.Append("-lSystem.Globalization.Native -lSystem.Net.Security.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
