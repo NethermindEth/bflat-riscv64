@@ -127,6 +127,12 @@ internal static class CommonOptions
             {
                 if (f.EndsWith("zerolib.dll"))
                     continue;
+                if (f.EndsWith("KernelTraceControl.dll"))
+                    continue;
+                if (f.EndsWith("KernelTraceControl.Win61.dll"))
+                    continue;
+                if (f.EndsWith("msdia140.dll"))
+                    continue;
                 result.Add(f);
             }
         }
