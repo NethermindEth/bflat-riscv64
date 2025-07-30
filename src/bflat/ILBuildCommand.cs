@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.IO;
@@ -245,7 +246,8 @@ internal class ILBuildCommand : CommandBase
             outputKind.Value,
             allowUnsafe: true,
             optimizationLevel: optimizationLevel,
-            deterministic: deterministic);
+            deterministic: deterministic,
+            metadataImportOptions: MetadataImportOptions.All);
         return CSharpCompilation.Create(moduleName, trees, metadataReferences, compilationOptions);
     }
 }
