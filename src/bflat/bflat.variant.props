@@ -22,8 +22,10 @@
   <PropertyGroup>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '8'">8.0.2-rtm.24317.2</RuntimeVersion>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10'">.b5</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '8'"></RuntimeVersionPostfix>
 
-    <BlobsVersion>1.3</BlobsVersion>
+    <BlobsVersion>10.0.0.b5</BlobsVersion>
     <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
   </PropertyGroup>
 </Project>
