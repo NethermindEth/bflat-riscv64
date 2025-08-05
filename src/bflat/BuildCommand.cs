@@ -311,14 +311,18 @@ internal class BuildCommand : CommandBase
         ILProvider ilProviderOld = new NativeAotILProvider();
 
 #if NET10_0_OR_GREATER
-        var logger = new Logger(Console.Out,
+        var logger = new Logger(
+            Console.Out,
             ilProviderOld,
             verbose,
             Array.Empty<int>(),
-            singleWarn: false,
-            Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(),
             false,
-            new Dictionary<int,bool>());
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            false,
+            new Dictionary<int,bool>(),
+            false);
 #else
         var logger = new Logger(Console.Out, ilProvider, verbose, Array.Empty<int>(), singleWarn: false, Array.Empty<string>(),
             Array.Empty<string>(), Array.Empty<string>());
@@ -712,7 +716,6 @@ internal class BuildCommand : CommandBase
 
             resBlockingPolicy = new ManifestResourceBlockingPolicy(logger, featureSwitches, resourceBlocks);
 
-            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.AnonymousTypeHeuristic;
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.ReflectionILScanning;
         }
         else
@@ -722,7 +725,7 @@ internal class BuildCommand : CommandBase
         }
         DynamicInvokeThunkGenerationPolicy invokeThunkGenerationPolicy = new DefaultDynamicInvokeThunkGenerationPolicy();
 
-        var compilerGenerateState = new ILCompiler.Dataflow.CompilerGeneratedState(ilProvider, logger);
+        var compilerGenerateState = new ILCompiler.Dataflow.CompilerGeneratedState(ilProvider, logger, false);
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
@@ -768,7 +771,7 @@ internal class BuildCommand : CommandBase
         builder
             .UseILProvider(ilProvider)
             .UsePreinitializationManager(preinitManager);
-            .UseResilience(true);
+            //.UseResilience(true);
 
         ILScanResults scanResults = null;
         if (useScanner)
@@ -806,7 +809,9 @@ internal class BuildCommand : CommandBase
         DependencyTrackingLevel trackingLevel = dgmlLogFileName == null ?
             DependencyTrackingLevel.None : DependencyTrackingLevel.First;
 
-        bool foldMethodBodies = optimizationMode != OptimizationMode.None;
+        MethodBodyFoldingMode foldMethodBodies = (optimizationMode != OptimizationMode.None)
+            ? MethodBodyFoldingMode.Generic
+            : MethodBodyFoldingMode.None;
         
         compilationRoots.Add(metadataManager);
         compilationRoots.Add(interopStubManager);
@@ -1038,7 +1043,7 @@ internal class BuildCommand : CommandBase
                     firstLib = lpath;
             }
 
-            ldArgs.Append("-z now -z relro -z noexecstack --hash-style=gnu --eh-frame-hdr ");
+            ldArgs.Append("-z now -z relro -z noexecstack --hash-style=gnu --eh-frame-hdr -z nostart-stop-gc ");
             
             if (targetArchitecture == TargetArchitecture.ARM64)
                 ldArgs.Append("-EL --fix-cortex-a53-843419 ");
@@ -1122,7 +1127,8 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-latomic ");
-                    ldArgs.Append("-leventpipe-disabled -laotminipal -lstandalonegc-disabled ");
+                    ldArgs.Append("-leventpipe-disabled ");
+                    ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
                         ldArgs.Append("-lSystem.Globalization.Native -lSystem.Net.Security.Native ");
