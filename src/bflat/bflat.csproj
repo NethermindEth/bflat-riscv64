@@ -38,9 +38,9 @@
     <CompilerBlob Include="compiler-$(CompilerHost)" />
 
     <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')">
-      <Os>%(SupportedTarget.Os)</Os>
-      <Lib>%(SupportedTarget.Lib)</Lib>
-      <Arch>%(SupportedTarget.Arch)</Arch>
+      <Os>%(Os)</Os>
+      <Lib>%(Lib)</Lib>
+      <Arch>%(Arch)</Arch>
     </SdkBlob>
 
     <Blob Include="@(CompilerBlob);@(SdkBlob)" />
@@ -126,27 +126,12 @@
           Inputs="@(SdkBlob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
           Outputs="@(SdkBlob->'$(IntermediateOutputPath)\%(Identity)-$(BlobsVersion).semaphore')">
 
-    <ItemGroup>
-      <SdkBlobZip Include="@(SdkBlob)">
-        <ZipPath>$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip</ZipPath>
-        <DestDir>$(OutputPath)lib\riscv64\musl</DestDir>
-        <SemaphoreFile>$(IntermediateOutputPath)\%(Identity)-$(BlobsVersion).semaphore</SemaphoreFile>
-      </SdkBlobZip>
-    </ItemGroup>
-
-    <Unzip SourceFiles="@(SdkBlobZip->'%(ZipPath)')"
-           DestinationFolder="%(SdkBlobZip.DestDir)" />
-
-    <Touch Files="@(SdkBlobZip->'%(SemaphoreFile)')"
-           AlwaysCreate="true" />
-
-    <!--
+    <Message Text="Extracting SDK blob for os=%(SdkBlob.Os) arch=%(SdkBlob.Arch) lib=%(SdkBlob.Lib)..." Importance="High" />
     <Unzip SourceFiles="$(DownloadCachePath)%(SdkBlob.Identity)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)lib/%(SdkBlob.Os)/%(SdkBlob.Arch)/%(SdkBlob.Lib)" />
 
     <Touch Files="$(IntermediateOutputPath)\%(SdkBlob.Identity)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
-    -->
   </Target>
 
   <Target Name="BuildLayouts"
