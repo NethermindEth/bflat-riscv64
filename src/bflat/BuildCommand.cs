@@ -1144,14 +1144,12 @@ internal class BuildCommand : CommandBase
                 }
             }
 
+            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc ");
             if (libc != "musl")
             {
-                ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc -lc -lgcc ");
+                ldArgs.Append("-lc -lgcc ");
             }
-            else
-            {
-                ldArgs.Append("--as-needed -ldl -lm -z relro -z now --discard-all --gc-sections -lgcc ");
-            }
+
             if (libc != "bionic" && libc != "musl")
             {
                 ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
