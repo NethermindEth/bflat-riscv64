@@ -36,7 +36,12 @@
 
   <ItemGroup>
     <CompilerBlob Include="compiler-$(CompilerHost)" />
-    <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')" />
+
+    <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')">
+      <Os>%(SupportedTarget.Os)</Os>
+      <Lib>%(SupportedTarget.Lib)</Lib>
+      <Arch>%(SupportedTarget.Arch)</Arch>
+    </SdkBlob>
 
     <Blob Include="@(CompilerBlob);@(SdkBlob)" />
   </ItemGroup>
@@ -49,7 +54,7 @@
           Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip'))"
           Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip')">
 
-    <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)/%(RuntimeArtifact.Identity).zip"
+    <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)$(RuntimeVersionPostfix)/%(RuntimeArtifact.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(RuntimeArtifact.Identity)-$(RuntimeVersion).zip" />
@@ -121,11 +126,27 @@
           Inputs="@(SdkBlob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
           Outputs="@(SdkBlob->'$(IntermediateOutputPath)\%(Identity)-$(BlobsVersion).semaphore')">
 
+    <ItemGroup>
+      <SdkBlobZip Include="@(SdkBlob)">
+        <ZipPath>$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip</ZipPath>
+        <DestDir>$(OutputPath)lib\riscv64\musl</DestDir>
+        <SemaphoreFile>$(IntermediateOutputPath)\%(Identity)-$(BlobsVersion).semaphore</SemaphoreFile>
+      </SdkBlobZip>
+    </ItemGroup>
+
+    <Unzip SourceFiles="@(SdkBlobZip->'%(ZipPath)')"
+           DestinationFolder="%(SdkBlobZip.DestDir)" />
+
+    <Touch Files="@(SdkBlobZip->'%(SemaphoreFile)')"
+           AlwaysCreate="true" />
+
+    <!--
     <Unzip SourceFiles="$(DownloadCachePath)%(SdkBlob.Identity)-$(BlobsVersion).zip"
-           DestinationFolder="$(OutputPath)" />
+           DestinationFolder="$(OutputPath)lib/%(SdkBlob.Os)/%(SdkBlob.Arch)/%(SdkBlob.Lib)" />
 
     <Touch Files="$(IntermediateOutputPath)\%(SdkBlob.Identity)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
+    -->
   </Target>
 
   <Target Name="BuildLayouts"

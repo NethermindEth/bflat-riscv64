@@ -43,11 +43,16 @@
     <SupportedTarget Condition="'$(Flavor)' == ''" Include="linux-bionic-arm64">
       <LibPath>linux\arm64\bionic</LibPath>
     </SupportedTarget>
+    <!--
     <SupportedTarget Condition="'$(Flavor)' == 'riscv64'" Include="linux-glibc-riscv64">
       <LibPath>linux\riscv64\glibc</LibPath>
     </SupportedTarget>
+  -->
     <SupportedTarget Condition="'$(Flavor)' == 'riscv64'" Include="linux-musl-riscv64">
       <LibPath>linux\riscv64\musl</LibPath>
+      <Os>linux</Os>
+      <Lib>musl</Lib>
+      <Arch>riscv64</Arch>
     </SupportedTarget>
   </ItemGroup>
 </Project>
