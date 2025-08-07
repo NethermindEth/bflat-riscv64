@@ -57,6 +57,10 @@ internal static class CommonOptions
         new Option<string[]>(new string[] { "-d", "--define" },
             "Define conditional compilation symbol(s)");
 
+    public static Option<string[]> ExtraLd =
+        new Option<string[]>(new string[] { "--extra-ld" },
+            "Extra ld inputs/libraries");
+
     public static Option<string[]> ResourceOption =
     new Option<string[]>(new string[] { "-res", "--resource" },
         "Managed resource to include")

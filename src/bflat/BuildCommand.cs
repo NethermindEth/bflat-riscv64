@@ -206,6 +206,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.NoPthreadOption,
             CommonOptions.VerbosityOption,
             CommonOptions.LangVersionOption,
+            CommonOptions.ExtraLd,
         };
         command.Handler = new BuildCommand();
 
@@ -247,6 +248,7 @@ internal class BuildCommand : CommandBase
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
         string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib);
+        string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
         TargetOS targetOS;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -1180,6 +1182,11 @@ internal class BuildCommand : CommandBase
             {
                 ldArgs.Append($"\"{firstLib}/crtendS.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
+            }
+
+            foreach (var ldArg in extraLd)
+            {
+                ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
             }
         }
 
