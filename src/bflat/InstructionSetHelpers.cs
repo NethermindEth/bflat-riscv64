@@ -28,9 +28,7 @@ namespace System.CommandLine
                     Architecture.Arm => TargetArchitecture.ARM,
                     Architecture.Arm64 => TargetArchitecture.ARM64,
                     Architecture.LoongArch64 => TargetArchitecture.LoongArch64,
-#if NET10_0_OR_GREATER
                     Architecture.RiscV64 => TargetArchitecture.RiscV64,
-#endif
                     _ => throw new NotImplementedException()
                 };
             }
@@ -43,9 +41,7 @@ namespace System.CommandLine
                     "arm" or "armel" => TargetArchitecture.ARM,
                     "arm64" => TargetArchitecture.ARM64,
                     "loongarch64" => TargetArchitecture.LoongArch64,
-#if NET10_0_OR_GREATER
                     "riscv64" => TargetArchitecture.RiscV64,
-#endif
                     _ => throw new CommandLineException($"Target architecture '{token}' is not supported")
                 };
             }
