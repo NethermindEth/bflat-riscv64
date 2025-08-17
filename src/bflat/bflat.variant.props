@@ -2,8 +2,7 @@
   <!-- Inference -->
   <PropertyGroup>
     <!-- Infer DotNet version -->
-    <DotnetVersion>8</DotnetVersion>
-    <DotnetVersion Condition="'$(DotnetVersion)' == '' or '$(Flavor)' == 'riscv64'">10</DotnetVersion>
+    <DotnetVersion>10</DotnetVersion>
 
     <!-- Infer blob source -->
     <BlobSource>bflattened</BlobSource>
@@ -21,9 +20,7 @@
   <!-- Infer dotnet/blob/codeanalysis version -->
   <PropertyGroup>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
-    <RuntimeVersion Condition="'$(DotnetVersion)' == '8'">8.0.2-rtm.24317.2</RuntimeVersion>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10'">.b6</RuntimeVersionPostfix>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '8'"></RuntimeVersionPostfix>
 
     <BlobsVersion>10.0.0.b6</BlobsVersion>
     <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
