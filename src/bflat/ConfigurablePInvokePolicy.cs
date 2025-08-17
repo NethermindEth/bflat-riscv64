@@ -91,11 +91,7 @@ namespace ILCompiler
             }
             else
             {
-#if NET10_0_OR_GREATER
                 string suffix = _target.IsApplePlatform ? ".dylib" : ".so";
-#else
-                string suffix = _target.IsOSXLike ? ".dylib" : ".so";
-#endif
                 if (name.EndsWith(suffix, StringComparison.Ordinal))
                     yield return name.Substring(0, name.Length - suffix.Length);
             }
