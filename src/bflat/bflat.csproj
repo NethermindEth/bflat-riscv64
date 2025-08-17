@@ -183,23 +183,23 @@
     <MakeDir Directories="$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86"
              Condition="!Exists('$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86')" />
 
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\x64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\arm64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == 'riscv64'" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d RISCV64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\riscv64\zerolib.dll&quot;"
+    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d RISCV64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\riscv64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\arm64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X86 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X86 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\x64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\arm64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Condition="'$(Flavor)' == ''" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\ref\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\ref\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
   </Target>
 
