@@ -13,8 +13,8 @@ namespace bflat.Tests
         private readonly string _compilerPath;
 
         public BflatCompilation()
-            : this(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows" : "linux-glibc",
-                RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant())
+            : this(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows" : "linux-musl",
+                "riscv64")
         { }
 
         public BflatCompilation(string osPart, string archPart)
