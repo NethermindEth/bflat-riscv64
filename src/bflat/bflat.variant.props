@@ -20,9 +20,9 @@
   <!-- Infer dotnet/blob/codeanalysis version -->
   <PropertyGroup>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10'">.b6</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10'">.b11</RuntimeVersionPostfix>
 
-    <BlobsVersion>10.0.0.b6</BlobsVersion>
+    <BlobsVersion>10.0.0.b11</BlobsVersion>
     <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
   </PropertyGroup>
 </Project>
