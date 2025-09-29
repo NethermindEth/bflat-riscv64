@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>false</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);LINUX;RISCV64</DefineConstants>
+    <UseFrameworkReference>true</UseFrameworkReference>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <RuntimeIdentifier>linux-riscv64</RuntimeIdentifier>
+    <!--<SelfContained>true</SelfContained>-->
+    <!--<DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>-->
+    <AssemblyName>zisklib</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="**\._*.cs"/>
+  </ItemGroup>
+
+</Project>
