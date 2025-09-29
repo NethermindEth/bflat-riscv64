@@ -12,6 +12,19 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Remove ZisK from all the automatic download/extract tasks -->
+    <SupportedTarget Remove="linux-zisk-riscv64" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SdkBlob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- don’t attempt to download the ZisK *blob* either -->
+    <Blob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
       <_Parameter1>BflatRuntimeVersion</_Parameter1>
       <_Parameter2>$(RuntimeVersion)</_Parameter2>
@@ -35,6 +48,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Remove ZisK from all the automatic download/extract tasks -->
+    <RuntimeArtifact Remove="bflat-libs-zisk-riscv64" />
+  </ItemGroup>
+
+  <ItemGroup>
     <CompilerBlob Include="compiler-$(CompilerHost)" />
 
     <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')">
@@ -47,7 +65,20 @@
   </ItemGroup>
 
   <Target Name="CreateCompilerLayout"
-          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs" />
+          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
+
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\zisk.ld"
+          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\start_zisk.o"
+          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\extra.o"
+          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\crt1.o"
+          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+    <Copy SourceFiles="$(OutputPath)lib\linux\riscv64\musl\libzerolibnative.o"
+      DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+  </Target>
 
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"
