@@ -154,7 +154,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -219,6 +219,21 @@ internal class BuildCommand : CommandBase
                 yield return file;
             }
         }
+    }
+
+    void PatchRiscvAbi(string path)
+    {
+        const long offset = 0x30;
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
+        fs.Seek(offset, SeekOrigin.Begin);
+        int b = fs.ReadByte();
+        if (b == 4 || b == 5)
+        {
+            fs.Seek(offset, SeekOrigin.Begin);
+            fs.WriteByte(0);
+        }
+        fs.Close();
     }
 
     public override int Handle(ParseResult result)
@@ -488,10 +503,14 @@ internal class BuildCommand : CommandBase
 
             if (targetOS == TargetOS.Linux)
             {
-                currentLibPath = Path.Combine(currentLibPath, libc ?? "glibc");
+                var tmpLibc = libc;
+                if (libc == "zisk")
+                    tmpLibc = "musl";
+                currentLibPath = Path.Combine(currentLibPath, tmpLibc ?? "glibc");
                 libPath = currentLibPath + separator + libPath;
             }
 
+            Console.WriteLine("Library path: " + libPath);
             if (!Directory.Exists(currentLibPath))
             {
                 Console.Error.WriteLine($"Directory '{currentLibPath}' doesn't exist.");
@@ -565,6 +584,9 @@ internal class BuildCommand : CommandBase
         CompilationModuleGroup compilationGroup;
         List<ICompilationRootProvider> compilationRoots = new List<ICompilationRootProvider>();
 
+        TypeMapManager typeMapManager = new UsageBasedTypeMapManager(
+            TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext));
+
         compilationRoots.Add(new UnmanagedEntryPointsRootProvider(compiledAssembly));
 
         if (stdlib == StandardLibType.DotNet)
@@ -572,25 +594,20 @@ internal class BuildCommand : CommandBase
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedSettingsBlob", Array.Empty<string>()));
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", Array.Empty<string>()));
             compilationRoots.Add(new ExpectedIsaFeaturesRootProvider(instructionSetSupport));
-            compilationRoots.Add(
-                new GenericRootProvider<TypeDesc>(
-                    typeSystemContext.SystemModule.GetType("System", "SR"),
-                    (type, rooter) => rooter.AddCompilationRoot(type.GetStaticConstructor(), "Force initialize SR cctor")));
         }
         else
         {
-            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads", true)));
+            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads", exportHidden: true)));
         }
 
         if (!nativeLib)
         {
             compilationRoots.Add(new MainMethodRootProvider(compiledAssembly, initializerList, generateLibraryAndModuleInitializers: true));
-            compilationRoots.Add(new NativeLibraryInitializerRootProvider(typeSystemContext.GeneratedAssembly, initializerList));
         }
 
         if (compiledAssembly != typeSystemContext.SystemModule)
         {
-            compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule));
+            compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule, hidden: true));
         }
 
         compilationGroup = new SingleFileCompilationModuleGroup();
@@ -653,7 +670,7 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Resources.UseSystemResourceKeys", true);
         }
 
-        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl";
+        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || libc == "zisk";
         if (disableGlobalization)
         {
             featureSwitches.Add("System.Globalization.Invariant", true);
@@ -732,17 +749,18 @@ internal class BuildCommand : CommandBase
         bool useScanner = optimizationMode != OptimizationMode.None;
 
         // Enable static data preinitialization in optimized builds.
-        bool preinitStatics = optimizationMode != OptimizationMode.None;
+        bool preinitStatics = false; //optimizationMode != OptimizationMode.None;
 
         TypePreinit.TypePreinitializationPolicy preinitPolicy = preinitStatics ?
                 new TypePreinit.TypeLoaderAwarePreinitializationPolicy() : new TypePreinit.DisabledPreinitializationPolicy();
 
-        var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy, new StaticReadOnlyFieldPolicy(), null);
+        var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy, new StaticReadOnlyFieldPolicy(), flowAnnotations);
 
         builder
             .UseILProvider(ilProvider)
-            .UsePreinitializationManager(preinitManager);
-            //.UseResilience(true);
+            .UsePreinitializationManager(preinitManager)
+            .UseTypeMapManager(typeMapManager)
+            .UseResilience(true);
 
         ILScanResults scanResults = null;
         if (useScanner)
@@ -781,7 +799,7 @@ internal class BuildCommand : CommandBase
             DependencyTrackingLevel.None : DependencyTrackingLevel.First;
 
         MethodBodyFoldingMode foldMethodBodies = (optimizationMode != OptimizationMode.None)
-            ? MethodBodyFoldingMode.Generic
+            ? MethodBodyFoldingMode.All
             : MethodBodyFoldingMode.None;
         
         compilationRoots.Add(metadataManager);
@@ -794,12 +812,17 @@ internal class BuildCommand : CommandBase
             .UseLogger(logger)
             .UseDependencyTracking(trackingLevel)
             .UseCompilationRoots(compilationRoots)
+            .UseTypeMapManager(typeMapManager)
             .UseOptimizationMode(optimizationMode)
             .UseDebugInfoProvider(debugInfoProvider);
 
         if (scanResults != null)
         {
             DevirtualizationManager devirtualizationManager = scanResults.GetDevirtualizationManager();
+
+            builder.UseTypeMapManager(scanResults.GetTypeMapManager());
+
+            substitutions.AppendFrom(scanResults.GetBodyAndFieldSubstitutions());
 
             SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
             ILProvider unsubstitutedILProvider = ilProvider;
@@ -834,8 +857,11 @@ internal class BuildCommand : CommandBase
             // has the whole program view.
             if (preinitStatics)
             {
-                preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy(), new StaticReadOnlyFieldPolicy(), null);
-                builder.UsePreinitializationManager(preinitManager);
+                var readOnlyFieldPolicy = scanResults.GetReadOnlyFieldPolicy();
+                preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy(),
+                    readOnlyFieldPolicy, flowAnnotations);
+                builder.UsePreinitializationManager(preinitManager)
+                    .UseReadOnlyFieldPolicy(readOnlyFieldPolicy);
             }
 
             // If we have a scanner, we can inline threadstatics storage using the information
@@ -899,6 +925,11 @@ internal class BuildCommand : CommandBase
         //
         // Run the platform linker
         //
+
+        if (targetArchitecture == TargetArchitecture.RiscV64)
+        {
+            PatchRiscvAbi(objectFilePath);
+        }
 
         if (logger.IsVerbose)
             logger.LogMessage("Running the linker");
@@ -1000,6 +1031,8 @@ internal class BuildCommand : CommandBase
         {
             ldArgs.Append("-flavor ld ");
 
+            string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
+
             string firstLib = null;
             foreach (var lpath in libPath.Split(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':'))
             {
@@ -1023,10 +1056,13 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-dynamic-linker /system/bin/linker64 ");
                     ldArgs.Append($"\"{firstLib}/crtbegin_dynamic.o\" ");
                 }
-                else if (libc == "musl")
+                else if (libc == "musl" || libc == "zisk")
                 {
                     ldArgs.Append("-static ");
-                    ldArgs.Append($"\"{firstLib}/crt1.o\" ");
+                    if (libc == "zisk")
+                        ldArgs.Append($"\"{ziskLibPath}/crt1.o\" ");
+                    else
+                        ldArgs.Append($"\"{firstLib}/crt1.o\" ");
                     ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 }
                 else
@@ -1052,7 +1088,7 @@ internal class BuildCommand : CommandBase
 
             ldArgs.AppendFormat("-o \"{0}\" ", outputFilePath);
 
-            if (libc != "bionic" && libc != "musl")
+            if (libc != "bionic" && libc != "musl" && libc != "zisk")
             {
                 ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtbeginS.o\" ");
@@ -1094,7 +1130,7 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
-                        ldArgs.Append("-lSystem.Globalization.Native -lSystem.Net.Security.Native ");
+                        ldArgs.Append("-lSystem.Globalization.Native ");//-lSystem.Net.Security.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
                 {
@@ -1103,19 +1139,19 @@ internal class BuildCommand : CommandBase
                 }
             }
 
-            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc ");
-            if (libc != "musl")
+            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections ");
+            if (libc != "musl" && libc != "zisk")
             {
                 ldArgs.Append("-lc -lgcc ");
             }
 
-            if (libc != "bionic" && libc != "musl")
+            if (libc != "bionic" && libc != "musl" && libc != "zisk")
             {
                 ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
                 if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
                     ldArgs.Append("-lpthread ");
             }
-            else if (libc == "musl")
+            else if (libc == "musl" || libc == "zisk")
             {
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
             }
@@ -1131,7 +1167,7 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"\"{firstLib}/crtend_android.o\" ");
                 }
             }
-            else if (libc == "musl")
+            else if (libc == "musl" || libc == "zisk")
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
             }
@@ -1144,6 +1180,13 @@ internal class BuildCommand : CommandBase
             foreach (var ldArg in extraLd)
             {
                 ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
+            }
+
+            if (libc == "zisk")
+            {
+                ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "zisk.ld")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "start_zisk.o")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "extra.o")}\" ");
             }
         }
 
