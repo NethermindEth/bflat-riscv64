@@ -52,5 +52,11 @@
       <Lib>musl</Lib>
       <Arch>riscv64</Arch>
     </SupportedTarget>
+    <SupportedTarget Include="linux-zisk-riscv64">
+      <LibPath>linux\riscv64\zisk</LibPath>
+      <Os>linux</Os>
+      <Lib>zisk</Lib>
+      <Arch>riscv64</Arch>
+    </SupportedTarget>
   </ItemGroup>
 </Project>
