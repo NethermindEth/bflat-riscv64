@@ -1060,10 +1060,17 @@ internal class BuildCommand : CommandBase
                 {
                     ldArgs.Append("-static ");
                     if (libc == "zisk")
+                    {
                         ldArgs.Append($"\"{ziskLibPath}/crt1.o\" ");
+                        PatchRiscvAbi(ziskLibPath + "/crt1.o");
+                    }
                     else
                         ldArgs.Append($"\"{firstLib}/crt1.o\" ");
                     ldArgs.Append($"\"{firstLib}/crti.o\" ");
+                    if (libc == "zisk")
+                    {
+                        PatchRiscvAbi(firstLib + "/crti.o");
+                    }
                 }
                 else
                 {
