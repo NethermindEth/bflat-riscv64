@@ -41,9 +41,6 @@ SECTIONS
     . = ALIGN(16);
   } >rom AT>rom :text
 
-  . = ALIGN(8);
-  PROVIDE(_global_pointer = .);
-
   .rodata ALIGN(16) : {
     *(.rodata .rodata.*)
   } >rom AT>rom :rodata
@@ -73,6 +70,9 @@ SECTIONS
     *(.bss .bss.* .sbss .sbss.* COMMON .scommon);
     PROVIDE(_bss_end = .);
   } >ram AT>ram
+
+  . = ALIGN(8);
+  PROVIDE(_global_pointer = .);
 
   . = ALIGN(8);
   PROVIDE(_init_stack_top = . + 0x100000);
