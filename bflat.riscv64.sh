@@ -5,7 +5,7 @@ export TOP_DIR="$(cd "$(dirname "$(which "$0")")" ; pwd -P)"
 
 docker build --platform linux/amd64 .
 
-docker_image=$(docker build --platform linux/amd64 -t maximmenshikov/bflat-riscv64 -q .)
+docker_image=$(docker build --platform linux/amd64 -t maximmenshikov/bflat-riscv64-zk -q .)
 
 interactive=""
 arg=""
