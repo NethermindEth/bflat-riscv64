@@ -1,0 +1,7 @@
+options:
+  ld:
+    - value: --wrap=RhpNewFast
+    - value: --wrap=RhpNewPtrArrayFast
+    - value: --wrap=RhpNewArrayFast
+    - value: --wrap=RhNewString
+    - value: --wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny
