@@ -67,17 +67,69 @@
   <Target Name="CreateCompilerLayout"
           DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk_sim" />
 
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\zisk.ld"
+    <!-- Pure Zisk specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\entrypoint.o" />
+
+    <!-- Zisk Simulator specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\entrypoint.o" />
+
+    <!-- Generic modules -->
+
+    <!-- crt-musl patch -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\crt-musl\crt1.o"
           DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\start_zisk.o"
-          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\extra.o"
-          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)linkerscripts\crt1.o"
-          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+
+    <!-- NoFP -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.o" />
+
+    <!-- PAL -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />
+
+    <!-- RHP -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
+
+    <!-- stdcppshim -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />
+
+    <!-- tls -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.o" />
+
+    <!-- uBootstrap -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ubootstrap\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ubootstrap.o" />
+
+    <!-- ugc-zero -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGC.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGC.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleManager.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleManager.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleStore.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHeap.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
+
+    <!-- zerolibnative -->
     <Copy SourceFiles="$(OutputPath)lib\linux\riscv64\musl\libzerolibnative.o"
       DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+
+    <!-- patch-elf script -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"
+          DestinationFiles="$(OutputPath)patch_elf.py" />
   </Target>
 
   <Target Name="DownloadRuntimeArtifacts"
