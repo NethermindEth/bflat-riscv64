@@ -1,3 +1,11 @@
+/**
+ * @file
+ * @brief Floating point neglecting module
+ *
+ * Copyright (C) 2025 Demerzel Solutions Limited (Nethermind)
+ *
+ * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
+ */
 void __extenddftf2(void) { }
 void __addtf3(void) { }
 void __netf2(void) { }
