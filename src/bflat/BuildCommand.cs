@@ -1242,6 +1242,8 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=__clock_gettime ");
                 ldArgs.Append($"--wrap=clock_gettime ");
                 ldArgs.Append($"--wrap=__malloc_allzerop ");
+                ldArgs.Append($"--wrap=mmap ");
+                ldArgs.Append($"--wrap=munmap ");
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
