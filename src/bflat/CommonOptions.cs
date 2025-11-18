@@ -46,6 +46,10 @@ internal static class CommonOptions
         new Option<bool>("--no-pthread",
             "Remove pthread dependency");
 
+    public static Option<bool> KeepObjectOption =
+        new Option<bool>("--keep-object",
+            "Keep object file");
+
     public static Option<string> OutputOption =
         new Option<string>(new string[] { "-o", "--out" },
             "Output file path")
