@@ -1,0 +1,3 @@
+options:
+  ld:
+    - value: --wrap=RhpAssignRefRiscV64
