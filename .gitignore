@@ -12,3 +12,4 @@ msbuild.binlog
 .DS_Store
 /.old
 /src/bflat/modules/ugc-zero/src
+/src/packages
