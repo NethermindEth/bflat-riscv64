@@ -142,3 +142,28 @@ __wrap_munmap(void *addr, int length)
 {
     return 0;
 }
+
+
+int
+__wrap_mlock(const void *addr, int len)
+{
+    return 0;
+}
+
+int
+__wrap_munlock(const void *addr, int len)
+{
+    return 0;
+}
+
+int
+__wrap_mlockall(int flags)
+{
+    return 0;
+}
+
+int
+__wrap_munlockall(void)
+{
+    return 0;
+}

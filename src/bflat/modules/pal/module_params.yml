@@ -17,3 +17,7 @@ options:
     - value: --wrap=__malloc_allzerop
     - value: --wrap=mmap
     - value: --wrap=munmap
+    - value: --wrap=mlock
+    - value: --wrap=munlock
+    - value: --wrap=mlockall
+    - value: --wrap=munlockall
