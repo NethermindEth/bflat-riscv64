@@ -154,7 +154,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -203,6 +203,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.VerbosityOption,
             CommonOptions.LangVersionOption,
             CommonOptions.ExtraLd,
+            CommonOptions.KeepObjectOption,
         };
         command.Handler = new BuildCommand();
 
@@ -471,6 +472,7 @@ internal class BuildCommand : CommandBase
             libc ??= "none"; // don't have shcrt for Windows x86 because that one's hacked up
 
         string homePath = CommonOptions.HomePath;
+        string patchElfPath = Path.Combine(homePath, "patch_elf.py");
         string libPath = Environment.GetEnvironmentVariable("BFLAT_LIB");
         if (libPath == null)
         {
@@ -504,7 +506,7 @@ internal class BuildCommand : CommandBase
             if (targetOS == TargetOS.Linux)
             {
                 var tmpLibc = libc;
-                if (libc == "zisk")
+                if (libc == "zisk" || libc == "zisk_sim")
                     tmpLibc = "musl";
                 currentLibPath = Path.Combine(currentLibPath, tmpLibc ?? "glibc");
                 libPath = currentLibPath + separator + libPath;
@@ -670,7 +672,7 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Resources.UseSystemResourceKeys", true);
         }
 
-        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || libc == "zisk";
+        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || libc == "zisk" || libc == "zisk_sim";
         if (disableGlobalization)
         {
             featureSwitches.Add("System.Globalization.Invariant", true);
@@ -721,9 +723,10 @@ internal class BuildCommand : CommandBase
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
+#if false
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
-
+#endif
         MetadataManager metadataManager = new UsageBasedMetadataManager(
             compilationGroup,
             typeSystemContext,
@@ -888,6 +891,7 @@ internal class BuildCommand : CommandBase
             dumpers.Add(new MstatObjectDumper(mstatFileName, typeSystemContext));
 
         string objectFilePath = Path.ChangeExtension(outputFilePath, targetOS is TargetOS.Windows or TargetOS.UEFI ? ".obj" : ".o");
+        string patchedFilePath = Path.ChangeExtension(outputFilePath, ".patched");
 
         PerfWatch compileWatch = new PerfWatch("Native compile");
         CompilationResults compilationResults = compilation.Compile(objectFilePath, ObjectDumper.Compose(dumpers));
@@ -1032,6 +1036,7 @@ internal class BuildCommand : CommandBase
             ldArgs.Append("-flavor ld ");
 
             string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
+            string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
 
             string firstLib = null;
             foreach (var lpath in libPath.Split(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':'))
@@ -1056,10 +1061,10 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-dynamic-linker /system/bin/linker64 ");
                     ldArgs.Append($"\"{firstLib}/crtbegin_dynamic.o\" ");
                 }
-                else if (libc == "musl" || libc == "zisk")
+                else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
                 {
                     ldArgs.Append("-static ");
-                    if (libc == "zisk")
+                    if (libc == "zisk" || libc == "zisk_sim")
                     {
                         ldArgs.Append($"\"{ziskLibPath}/crt1.o\" ");
                         PatchRiscvAbi(ziskLibPath + "/crt1.o");
@@ -1067,7 +1072,7 @@ internal class BuildCommand : CommandBase
                     else
                         ldArgs.Append($"\"{firstLib}/crt1.o\" ");
                     ldArgs.Append($"\"{firstLib}/crti.o\" ");
-                    if (libc == "zisk")
+                    if (libc == "zisk" || libc == "zisk_sim")
                     {
                         PatchRiscvAbi(firstLib + "/crti.o");
                     }
@@ -1095,7 +1100,8 @@ internal class BuildCommand : CommandBase
 
             ldArgs.AppendFormat("-o \"{0}\" ", outputFilePath);
 
-            if (libc != "bionic" && libc != "musl" && libc != "zisk")
+            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
+                libc != "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtbeginS.o\" ");
@@ -1137,7 +1143,7 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
-                        ldArgs.Append("-lSystem.Globalization.Native ");//-lSystem.Net.Security.Native ");
+                        ldArgs.Append("-lSystem.Globalization.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
                 {
@@ -1147,18 +1153,19 @@ internal class BuildCommand : CommandBase
             }
 
             ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections ");
-            if (libc != "musl" && libc != "zisk")
+            if (libc != "musl" && libc != "zisk" && libc != "zisk_sim")
             {
                 ldArgs.Append("-lc -lgcc ");
             }
 
-            if (libc != "bionic" && libc != "musl" && libc != "zisk")
+            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
+                libc != "zisk_sim")
             {
                 ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
                 if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
                     ldArgs.Append("-lpthread ");
             }
-            else if (libc == "musl" || libc == "zisk")
+            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
             }
@@ -1174,7 +1181,7 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"\"{firstLib}/crtend_android.o\" ");
                 }
             }
-            else if (libc == "musl" || libc == "zisk")
+            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
             }
@@ -1189,11 +1196,68 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
             }
 
-            if (libc == "zisk")
+            if (libc == "zisk" || libc == "zisk_sim")
             {
-                ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "zisk.ld")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "start_zisk.o")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "extra.o")}\" ");
+                /* Zisk */
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "script.ld")}\" ");
+                }
+                else
+                {
+                    ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
+                }
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                ldArgs.Append($"--whole-archive ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
+
+                /* rhp */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
+                ldArgs.Append($"--wrap=RhpNewFast ");
+                ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
+                ldArgs.Append($"--wrap=RhpNewArrayFast ");
+                ldArgs.Append($"--wrap=RhNewString ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
+
+                /* rhp_native */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
+                ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
+
+                /* pal */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
+                ldArgs.Append($"--wrap=getenv ");
+                ldArgs.Append($"--wrap=getcwd ");
+                ldArgs.Append($"--wrap=getpid ");
+                ldArgs.Append($"--wrap=getegid ");
+                ldArgs.Append($"--wrap=geteuid ");
+                ldArgs.Append($"--wrap=sched_getaffinity ");
+                ldArgs.Append($"--wrap=open ");
+                ldArgs.Append($"--wrap=__libc_malloc_impl ");
+                ldArgs.Append($"--wrap=__libc_realloc ");
+                ldArgs.Append($"--wrap=__libc_free ");
+                ldArgs.Append($"--wrap=pthread_create ");
+                ldArgs.Append($"--wrap=pthread_sigmask ");
+                ldArgs.Append($"--wrap=__clock_gettime ");
+                ldArgs.Append($"--wrap=clock_gettime ");
+                ldArgs.Append($"--wrap=__malloc_allzerop ");
+
+                /* tls */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
+                ldArgs.Append($"--wrap=__tls_get_addr ");
+                ldArgs.Append($"--wrap=__init_tls ");
+                ldArgs.Append($"--wrap=__init_tp ");
+                ldArgs.Append($"--wrap=__copy_tls ");
+                ldArgs.Append($"--no-whole-archive ");
+
+                /* ugc */
+                ldArgs.Append($"--wrap=GC_Initialize ");
+                ldArgs.Append($"--wrap=GC_VersionInfo ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHeap.cpp.obj")}\" ");
             }
         }
 
@@ -1217,7 +1281,18 @@ internal class BuildCommand : CommandBase
         int exitCode = RunCommand(ld, ldArgs.ToString(), printCommands);
         linkWatch.Complete();
 
-        try { File.Delete(objectFilePath); } catch { }
+        if (libc == "zisk" && exitCode == 0)
+        {
+            int patchExitCode = RunCommand(patchElfPath,
+                outputFilePath + " " + patchedFilePath +
+                " --fix-init-array --fix-tdata --split-code-data --remove-eh",
+                printCommands);
+        }
+        if (!result.GetValueForOption(CommonOptions.KeepObjectOption))
+        {
+            try { File.Delete(objectFilePath); } catch { }
+        }
+
         if (exportsFile != null)
             try { File.Delete(exportsFile); } catch { }
 
