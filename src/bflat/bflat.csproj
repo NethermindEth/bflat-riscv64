@@ -90,6 +90,8 @@
     <!-- NoFP -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\musl\nofp.o" />
 
     <!-- PAL -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
