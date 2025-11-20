@@ -46,3 +46,32 @@ __wrap_S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny(
 	return S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
 		param_1, param_2);
 }
+
+void
+__wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register()
+{
+}
+
+void
+__wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources()
+{
+}
+
+/*
+void
+__wrap_S_P_CoreLib_System_Globalization_GlobalizationMode_Settings___cctor()
+{
+}
+*/
+
+int32_t
+__wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
+{
+	value[0] = 'e';
+	value[1] = 'n';
+	value[2] = '_';
+	value[3] = 'U';
+	value[4] = 'S';
+	value[5] = '\0';
+	return 1;
+}
