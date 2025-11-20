@@ -1196,6 +1196,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
             }
 
+            if (libc == "musl")
+            {
+                /* hack, no fp must be built properly */
+                ldArgs.Append($"\"{Path.Combine(firstLib, "nofp.o")}\" ");
+            }
+
             if (libc == "zisk" || libc == "zisk_sim")
             {
                 /* Zisk */
@@ -1220,6 +1226,9 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpNewArrayFast ");
                 ldArgs.Append($"--wrap=RhNewString ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
+                ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
@@ -1244,6 +1253,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=__malloc_allzerop ");
                 ldArgs.Append($"--wrap=mmap ");
                 ldArgs.Append($"--wrap=munmap ");
+                ldArgs.Append($"--wrap=mlock ");
+                ldArgs.Append($"--wrap=munlock ");
+                ldArgs.Append($"--wrap=mlockall ");
+                ldArgs.Append($"--wrap=munlockall ");
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
