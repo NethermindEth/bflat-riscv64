@@ -13,8 +13,14 @@ extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
 
 extern char *
-__wrap_getenv(char *)
+__wrap_getenv(char *var)
 {
+    if (strcmp(var, "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT") == 0 ||
+        strcmp(var, "DOTNET_SYSTEM_GLOBALIZATION_PREDEFINED_CULTURES_ONLY") == 0)
+    {
+        return "1";
+    }
+
     return 0;
 }
 
