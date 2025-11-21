@@ -1229,6 +1229,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
                 ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");

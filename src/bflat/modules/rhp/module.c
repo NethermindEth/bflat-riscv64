@@ -75,3 +75,9 @@ __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
 	value[5] = '\0';
 	return 1;
 }
+
+int
+__wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void)
+{
+	return 1;
+}
