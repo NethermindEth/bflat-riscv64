@@ -765,6 +765,7 @@ internal class BuildCommand : CommandBase
             .UseTypeMapManager(typeMapManager)
             .UseResilience(true);
 
+        int parallelism = Environment.ProcessorCount;
         ILScanResults scanResults = null;
         if (useScanner)
         {
@@ -773,7 +774,9 @@ internal class BuildCommand : CommandBase
             ILScannerBuilder scannerBuilder = builder.GetILScannerBuilder()
                 .UseCompilationRoots(compilationRoots)
                 .UseMetadataManager(metadataManager)
+                .UseParallelism(parallelism)
                 .UseInteropStubManager(interopStubManager)
+                .UseTypeMapManager(typeMapManager)
                 .UseLogger(logger);
 
             string scanDgmlLogFileName = result.GetValueForOption(MstatOption) ? Path.ChangeExtension(outputFilePath, ".scan.dgml.xml") : null;
@@ -811,11 +814,11 @@ internal class BuildCommand : CommandBase
             .UseInstructionSetSupport(instructionSetSupport)
             .UseMethodBodyFolding(foldMethodBodies)
             .UseMetadataManager(metadataManager)
+            .UseParallelism(parallelism)
             .UseInteropStubManager(interopStubManager)
             .UseLogger(logger)
             .UseDependencyTracking(trackingLevel)
             .UseCompilationRoots(compilationRoots)
-            .UseTypeMapManager(typeMapManager)
             .UseOptimizationMode(optimizationMode)
             .UseDebugInfoProvider(debugInfoProvider);
 
