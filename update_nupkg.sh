@@ -1,7 +1,7 @@
 #!/bin/bash
 export TOP_DIR="$(cd "$(dirname "$(which "$0")")" ; pwd -P)"
 
-ver="${1:-v10.0.0.b12}"
+ver="${1:-v10.0.0.b13}"
 file="bflat.compiler.10.0.0.nupkg"
 
 if [ -f "${HOME}/.nuget/packages/bflat.compiler/10.0.0" ] ; then
