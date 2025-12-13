@@ -544,15 +544,19 @@ internal class BuildCommand : CommandBase
         //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
 
+        ilProvider = new HardwareIntrinsicILProvider(
+            instructionSetSupport,
+            new ExternSymbolMappedField(typeSystemContext.GetWellKnownType(WellKnownType.Int32), "g_cpuFeatures"),
+            ilProvider);
+
         //
         // Initialize compilation group and compilation roots
         //
 
-        List<string> initAssemblies = new List<string>();
+        List<string> initAssemblies = new List<string> { "System.Private.CoreLib" };
 
-        initAssemblies.Add("System.Private.CoreLib");
 
-        if (!disableReflection || !disableStackTraceData)
+        if (!disableReflection && !disableStackTraceData)
             initAssemblies.Add("System.Private.StackTraceMetadata");
 
         initAssemblies.Add("System.Private.TypeLoader");
@@ -585,9 +589,7 @@ internal class BuildCommand : CommandBase
 
         CompilationModuleGroup compilationGroup;
         List<ICompilationRootProvider> compilationRoots = new List<ICompilationRootProvider>();
-
-        TypeMapManager typeMapManager = new UsageBasedTypeMapManager(
-            TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext));
+        TypeMapManager typeMapManager = new UsageBasedTypeMapManager(TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext));
 
         compilationRoots.Add(new UnmanagedEntryPointsRootProvider(compiledAssembly));
 
@@ -608,10 +610,7 @@ internal class BuildCommand : CommandBase
         }
 
         if (compiledAssembly != typeSystemContext.SystemModule)
-        {
             compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule, hidden: true));
-        }
-
         compilationGroup = new SingleFileCompilationModuleGroup();
 
         if (nativeLib)
@@ -658,12 +657,25 @@ internal class BuildCommand : CommandBase
             { "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization", false },
             { "System.Resources.ResourceManager.AllowCustomResourceTypes", false },
             { "System.Text.Encoding.EnableUnsafeUTF7Encoding", false },
-            { "System.Runtime.Serialization.DataContractSerializer.IsReflectionOnly", true },
-            { "System.Xml.Serialization.XmlSerializer.IsReflectionOnly", true },
-            { "System.Xml.XmlResolver.IsNetworkingEnabledByDefault", false },
-            { "System.Linq.Expressions.CanCompileToIL", false },
             { "System.Linq.Expressions.CanEmitObjectArrayDelegate", false },
-            { "System.Linq.Expressions.CanCreateArbitraryDelegates", false },
+            { "System.ComponentModel.DefaultValueAttribute.IsSupported", false },
+            { "System.ComponentModel.Design.IDesignerHost.IsSupported", false },
+            { "System.ComponentModel.TypeConverter.EnableUnsafeBinaryFormatterInDesigntimeLicenseContextSerialization", false },
+            { "System.ComponentModel.TypeDescriptor.IsComObjectDescriptorSupported", false },
+            { "System.Data.DataSet.XmlSerializationIsSupported", false },
+            { "System.Linq.Enumerable.IsSizeOptimized", true },
+            { "System.Net.SocketsHttpHandler.Http3Support", false },
+            { "System.Reflection.Metadata.MetadataUpdater.IsSupported", false },
+            { "System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", false },
+            { "System.Runtime.InteropServices.BuiltInComInterop.IsSupported", false },
+            { "System.Runtime.InteropServices.EnableConsumingManagedCodeFromNativeHosting", false },
+            { "System.Runtime.InteropServices.EnableCppCLIHostActivation", false },
+            { "System.Runtime.InteropServices.Marshalling.EnableGeneratedComInterfaceComImportInterop", false },
+            { "System.StartupHookProvider.IsSupported", false },
+            { "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault", false },
+            { "System.Threading.Thread.EnableAutoreleasePool", false },
+            { "System.Threading.ThreadPool.UseWindowsThreadPool", true },
+            { "System.Globalization.PredefinedCulturesOnly", true },
         };
 
         bool disableExceptionMessages = result.GetValueForOption(NoExceptionMessagesOption);
@@ -678,10 +690,9 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Globalization.Invariant", true);
         }
 
-        if (disableReflection)
+        if (disableStackTraceData)
         {
-            featureSwitches.Add("System.Collections.Generic.DefaultComparers", false);
-            featureSwitches.Add("System.Reflection.IsReflectionExecutionAvailable", false);
+            featureSwitches.Add("System.Diagnostics.StackTrace.IsSupported", false);
         }
 
         foreach (var featurePair in result.GetValueForOption(FeatureSwitchOption))
@@ -697,6 +708,10 @@ internal class BuildCommand : CommandBase
 
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
+
+        SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+        ILProvider unsubstitutedILProvider = ilProvider;
+        ilProvider = new SubstitutedILProvider(ilProvider, substitutionProvider, new DevirtualizationManager());
 
         var stackTracePolicy = !disableStackTraceData ?
             (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy() : new NoStackTraceEmissionPolicy();
@@ -723,7 +738,7 @@ internal class BuildCommand : CommandBase
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
-#if false
+#if true
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
@@ -807,7 +822,7 @@ internal class BuildCommand : CommandBase
         MethodBodyFoldingMode foldMethodBodies = (optimizationMode != OptimizationMode.None)
             ? MethodBodyFoldingMode.All
             : MethodBodyFoldingMode.None;
-        
+
         compilationRoots.Add(metadataManager);
         compilationRoots.Add(interopStubManager);
         builder
@@ -830,9 +845,11 @@ internal class BuildCommand : CommandBase
 
             substitutions.AppendFrom(scanResults.GetBodyAndFieldSubstitutions());
 
-            SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
-            ILProvider unsubstitutedILProvider = ilProvider;
+            substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager);
+
+            // Use a more precise IL provider that uses whole program analysis for dead branch elimination
             builder.UseILProvider(ilProvider);
 
             // If we have a scanner, feed the vtable analysis results to the compilation.
@@ -907,7 +924,7 @@ internal class BuildCommand : CommandBase
             ExportsFileWriter defFileWriter = new ExportsFileWriter(typeSystemContext, exportsFile, []);
             foreach (var compilationRoot in compilationRoots)
             {
-                if (compilationRoot is UnmanagedEntryPointsRootProvider provider)
+                if (compilationRoot is UnmanagedEntryPointsRootProvider provider && !provider.Hidden)
                     defFileWriter.AddExportedMethods(provider.ExportedMethods);
             }
 
@@ -1050,10 +1067,10 @@ internal class BuildCommand : CommandBase
             }
 
             ldArgs.Append("-z now -z relro -z noexecstack --hash-style=gnu --eh-frame-hdr -z nostart-stop-gc ");
-            
+
             if (targetArchitecture == TargetArchitecture.ARM64)
                 ldArgs.Append("-EL --fix-cortex-a53-843419 ");
-            
+
             if (libc == "bionic")
                 ldArgs.Append("--warn-shared-textrel -z max-page-size=4096 --enable-new-dtags ");
 
@@ -1233,10 +1250,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
                 ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
+                ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
                 ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
+                ldArgs.Append($"--wrap=RhpCidResolve ");
 
                 /* pal */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
