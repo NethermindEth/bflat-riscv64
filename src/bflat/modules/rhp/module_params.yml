@@ -5,3 +5,4 @@ options:
     - value: --wrap=RhpNewArrayFast
     - value: --wrap=RhNewString
     - value: --wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny
+    - value: --wrap=RhpCidResolve
