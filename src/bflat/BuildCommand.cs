@@ -1242,6 +1242,7 @@ internal class BuildCommand : CommandBase
                 /* rhp */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
                 ldArgs.Append($"--wrap=RhpNewFast ");
+                ldArgs.Append($"--wrap=RhpNewObject ");
                 ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
                 ldArgs.Append($"--wrap=RhpNewArrayFast ");
                 ldArgs.Append($"--wrap=RhNewString ");
@@ -1295,6 +1296,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=sigaction ");
                 ldArgs.Append($"--wrap=signal ");
                 ldArgs.Append($"--wrap=syscall ");
+                //ldArgs.Append($"--wrap=__stdio_write ");
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
