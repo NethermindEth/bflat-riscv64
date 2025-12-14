@@ -8,6 +8,7 @@
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
 #include <inttypes.h>
+#include <stdarg.h>
 
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
@@ -172,4 +173,49 @@ int
 __wrap_munlockall(void)
 {
     return 0;
+}
+
+int
+__wrap_sched_yield(void)
+{
+    return 0;
+}
+
+int
+__wrap_sigaction(int signum, void *act, void *oldact)
+{
+    return 0;
+};
+
+void *
+__wrap_signal(int signum, void *handler)
+{
+    return 0;
+}
+
+extern long __real_syscall(long number, ...);
+
+long
+__wrap_syscall(long number, ...)
+{
+    va_list args;
+    long arg1, arg2, arg3, arg4, arg5, arg6;
+    long result;
+
+    va_start(args, number);
+    arg1 = va_arg(args, long);
+    arg2 = va_arg(args, long);
+    arg3 = va_arg(args, long);
+    arg4 = va_arg(args, long);
+    arg5 = va_arg(args, long);
+    arg6 = va_arg(args, long);
+    va_end(args);
+
+    switch (number) {
+        case 0x11b:
+            return 0;
+
+        default:
+            return __real_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
+    }
 }
