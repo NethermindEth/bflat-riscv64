@@ -15,6 +15,8 @@
 extern void *RhpNewObject(void *methodTable, int allocFlags);
 extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
     unsigned long numElements, void * pTransitionFrame);
+
+
 extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
     unsigned int *param_1, unsigned int **param_2);
 extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void);
@@ -33,25 +35,134 @@ get_dispatch_cell_from_t5(void)
 void *
 __wrap_RhpNewFast(void *methodTable)
 {
-    return RhpNewObject(methodTable, 0);
+    const size_t MT_BASE_SIZE_OFFSET = 0x4;
+    const size_t OBJ_EETYPE_OFFSET   = 0x0;
+    const size_t MIN_OBJECT_SIZE     = 0x18;
+
+    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
+    size_t total = (size_t)baseSize;
+
+    if (total < MIN_OBJECT_SIZE)
+        total = MIN_OBJECT_SIZE;
+
+    /* Align allocation size to 8 bytes */
+    total = (total + 7u) & ~(size_t)7u;
+
+    void *obj = calloc(1, total);
+    if (!obj)
+        return 0;
+
+    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
+    return obj;
+}
+
+void *
+__wrap_RhpNewObject(void *methodTable, int allocFlags)
+{
+    (void)allocFlags;
+
+    const size_t MT_BASE_SIZE_OFFSET = 0x4;
+    const size_t OBJ_EETYPE_OFFSET   = 0x0;
+    const size_t MIN_OBJECT_SIZE     = 0x18;
+
+    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
+    size_t total = (size_t)baseSize;
+
+    if (total < MIN_OBJECT_SIZE)
+        total = MIN_OBJECT_SIZE;
+
+    /* Align allocation size to 8 bytes */
+    total = (total + 7u) & ~(size_t)7u;
+
+    void *obj = calloc(1, total);
+    if (!obj)
+        return 0;
+
+    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
+    return obj;
+}
+
+#define OBJ_EETYPE_OFFSET        0x0
+#define ARRAY_LENGTH_OFFSET      0x8
+
+#define MT_COMPONENT_SIZE_OFFSET 0x0
+#define MT_BASE_SIZE_OFFSET      0x4
+
+#define SZARRAY_BASE_SIZE        0x18
+#define STRING_BASE_SIZE         0x16
+#define STRING_COMPONENT_SIZE    0x2
+
+static inline size_t
+align_up_8(size_t x)
+{
+    return (x + 7u) & ~(size_t)7u;
+}
+
+static inline uint32_t
+mt_base_size(void *methodTable)
+{
+    return *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
+}
+
+static inline uint16_t
+mt_component_size(void *methodTable)
+{
+    return *(volatile uint16_t *)((uint8_t *)methodTable + MT_COMPONENT_SIZE_OFFSET);
+}
+
+static inline void
+init_object_header(void *obj, void *methodTable)
+{
+    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
+}
+
+static inline void
+init_array_length(void *obj, unsigned long numElements)
+{
+    *(uint32_t *)((uint8_t *)obj + ARRAY_LENGTH_OFFSET) = (uint32_t)numElements;
 }
 
 void *
 __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
-    return RhpGcAlloc(methodTable, 0, numElements, 0);
+    size_t total = (size_t)SZARRAY_BASE_SIZE + ((size_t)numElements << 3);
+
+    void *obj = calloc(1, total);
+    if (!obj)
+        return 0;
+
+    init_object_header(obj, methodTable);
+    init_array_length(obj, numElements);
+    return obj;
 }
 
 void *
 __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
 {
-    return RhpGcAlloc(methodTable, 0, numElements, 0);
+    size_t comp = (size_t)mt_component_size(methodTable);
+    size_t total = align_up_8((size_t)SZARRAY_BASE_SIZE + ((size_t)numElements * comp));
+
+    void *obj = calloc(1, total);
+    if (!obj)
+        return 0;
+
+    init_object_header(obj, methodTable);
+    init_array_length(obj, numElements);
+    return obj;
 }
 
 void *
 __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
-    return RhpGcAlloc(methodTable, 0, numElements, 0);
+    size_t total = align_up_8((size_t)STRING_BASE_SIZE + ((size_t)numElements * (size_t)STRING_COMPONENT_SIZE));
+
+    void *obj = calloc(1, total);
+    if (!obj)
+        return 0;
+
+    init_object_header(obj, methodTable);
+    init_array_length(obj, numElements);
+    return obj;
 }
 
 void **
