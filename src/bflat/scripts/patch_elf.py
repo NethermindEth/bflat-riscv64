@@ -161,6 +161,7 @@ def find_fn_boundaries(args, print_report=False):
         lines = p.stdout.splitlines()
         hdr_re = re.compile(r"^\s*([0-9a-fA-Fx]+)\s+<[^>]+>:\s*$")
         insn_re = re.compile(r"^\s*([0-9a-fA-Fx]+):\s+[0-9a-fA-F ]+\s")
+        unimp_re = re.compile(r"^\s*[0-9a-fA-Fx]+:\s+[0-9a-fA-F ]+\s+unimp\s*$")
         cur_start = None
         addrs_in_block = []
         obj_sizes = {}
@@ -195,6 +196,11 @@ def find_fn_boundaries(args, print_report=False):
                 flush_disasm_block()
                 cur_start = int(m_hdr.group(1), 16)
                 addrs_in_block = []
+                continue
+            # Check for unimp instruction (marks data boundary)
+            if unimp_re.match(ln) and cur_start is not None:
+                # Found unimp - stop analyzing this block
+                flush_disasm_block()
                 continue
             m_insn = insn_re.match(ln)
             if m_insn and cur_start is not None:
