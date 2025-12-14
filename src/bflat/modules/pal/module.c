@@ -9,6 +9,8 @@
  */
 #include <inttypes.h>
 #include <stdarg.h>
+#include <string.h>
+#include <stdio.h>
 
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
@@ -64,21 +66,84 @@ __wrap_open(const char *path, int flags, int mode)
 
 
 static uint8_t *mem = 0;
+
+static inline uintptr_t
+align_down_8_uintptr(uintptr_t x)
+{
+    return x & ~(uintptr_t)7;
+}
+
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
-    void    *tmp;
+    /* NOTE: This allocator is a simple downward bump allocator.
+     * It is intentionally verbose for diagnostics. */
+    void     *tmp;
     uint64_t *len;
 
-    if (mem == 0)
-        mem = (uint8_t *)(uintptr_t)_kernel_heap_top;
+    uint8_t  *saved_mem = mem;
+    uintptr_t top = (uintptr_t)_kernel_heap_top;
+    uintptr_t bottom = (uintptr_t)_kernel_heap_bottom;
 
-    mem -= n;
-    mem -= ((uintptr_t)mem % 8);
-    tmp = mem;
-    mem -= 8;
-    len = (uint64_t *)mem;
-    *len = n;
+    /* Initialize bump pointer */
+    if (mem == 0)
+        mem = (uint8_t *)top;
+
+    /* Defensive: ensure we print meaningful diagnostics even if mem is corrupt */
+    uintptr_t mem_before = (uintptr_t)mem;
+
+    /* Align requested size to 8 so our "len" header stays aligned */
+    size_t req = (size_t)n;
+    size_t req_aligned = (req + 7u) & ~(size_t)7u;
+
+    /* Compute new pointer using uintptr_t to avoid UB on pointer underflow */
+    uintptr_t new_tmp_u = align_down_8_uintptr(mem_before - (uintptr_t)req_aligned);
+    uintptr_t new_len_u = new_tmp_u - 8u;
+
+    tmp = (void *)new_tmp_u;
+    len = (uint64_t *)new_len_u;
+
+    /* Emit maximum diagnostics with correct pointer formatting */
+    printf(
+        "malloc(n=%lu aligned=%zu) mem@%p saved_mem=%p mem_before=%#" PRIxPTR
+        " top=%#" PRIxPTR " bottom=%#" PRIxPTR
+        " -> tmp=%#" PRIxPTR " len=%#" PRIxPTR
+        "\n",
+        n,
+        req_aligned,
+        (void *)&mem,
+        (void *)saved_mem,
+        mem_before,
+        top,
+        bottom,
+        (uintptr_t)tmp,
+        (uintptr_t)len
+    );
+
+    /* Basic range diagnostics (do not trap; just log loudly) */
+    if (bottom >= top)
+    {
+        printf("malloc WARN: heap bounds invalid: bottom=%#" PRIxPTR " top=%#" PRIxPTR "\n", bottom, top);
+    }
+    if (mem_before < bottom || mem_before > top)
+    {
+        printf("malloc WARN: mem pointer out of range before alloc: mem_before=%#" PRIxPTR " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
+               mem_before, bottom, top);
+    }
+    if (new_len_u < bottom || new_tmp_u > top)
+    {
+        printf("malloc WARN: computed ptrs out of heap range: tmp=%#" PRIxPTR " len=%#" PRIxPTR " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
+               new_tmp_u, new_len_u, bottom, top);
+    }
+
+    /* Commit bump pointer (include optional diagnostic gap) */
+    mem = (uint8_t *)new_len_u;
+    mem -= 0x40; /* diagnostic gap (keep if you still want it) */
+
+    /* Store allocation size header */
+    *len = (uint64_t)req_aligned;
+
+    /* Return pointer to usable payload */
     return tmp;
 }
 
@@ -90,21 +155,34 @@ __wrap___libc_free(void *mem)
 void *
 __wrap___libc_realloc(void *p, unsigned long n)
 {
-    void    *tmp;
-    uint8_t *len;
+    void     *tmp;
+    uint64_t *len;
 
     if (!p)
-        return __wrap___libc_malloc_impl(n);
-
-    len = (p - 8);
-    if (*len >= n)
     {
-        return mem;
+        printf("realloc(p=NULL, n=%lu): delegating to malloc\n", n);
+        return __wrap___libc_malloc_impl(n);
     }
 
-    mem = __wrap___libc_malloc_impl(n);
-    memcpy(mem, p, *len);
-    return mem;
+    len = (uint64_t *)((uint8_t *)p - 8u);
+
+    printf("realloc(p=%p, n=%lu): old_len=%" PRIu64 " header@%p\n", p, n, *len, (void *)len);
+
+    if (*len >= (uint64_t)n)
+    {
+        /* Existing block is big enough */
+        return p;
+    }
+
+    tmp = __wrap___libc_malloc_impl(n);
+    if (!tmp)
+    {
+        printf("realloc(p=%p, n=%lu): malloc returned NULL\n", p, n);
+        return 0;
+    }
+
+    memcpy(tmp, p, (size_t)*len);
+    return tmp;
 }
 
 int
@@ -219,3 +297,11 @@ __wrap_syscall(long number, ...)
             return __real_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
     }
 }
+
+#if 0
+int
+__wrap___stdio_write(int fd, const void *buf, int count)
+{
+    return -1;
+}
+#endif
