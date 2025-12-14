@@ -72,9 +72,8 @@ SECTIONS
   .heap ALIGN(16) :
   {
     _kernel_heap_bottom = .;
-    . = . + (50 * 1024 * 1024);
+    . = . + (150 * 1024 * 1024);
     _kernel_heap_top = .;
-    PROVIDE(_kernel_heap_bottom = _init_stack_top);
   } :data
 
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
