@@ -270,3 +270,29 @@ void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
 void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
 {
 }
+
+int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
+{
+    return 0;
+}
+
+void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
+{
+}
+
+void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
+{
+    return param_2;
+}
+
+void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
+{
+}
+
+void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
+{
+}
+
+void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
+{
+}
