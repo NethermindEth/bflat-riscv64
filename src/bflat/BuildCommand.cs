@@ -738,7 +738,7 @@ internal class BuildCommand : CommandBase
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
-#if true
+#if false
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
@@ -1251,6 +1251,11 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
                 ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
+                ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_CompilerHelpers_StartupCodeHelpers__InitializeCommandLineArgs ");
+                ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
@@ -1280,6 +1285,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=munlock ");
                 ldArgs.Append($"--wrap=mlockall ");
                 ldArgs.Append($"--wrap=munlockall ");
+                ldArgs.Append($"--wrap=sched_yield ");
+                ldArgs.Append($"--wrap=sigaction ");
+                ldArgs.Append($"--wrap=signal ");
+                ldArgs.Append($"--wrap=syscall ");
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
@@ -1323,7 +1332,7 @@ internal class BuildCommand : CommandBase
         {
             int patchExitCode = RunCommand(patchElfPath,
                 outputFilePath + " " + patchedFilePath +
-                " --fix-init-array --fix-tdata --split-code-data --remove-eh",
+                " --fix-init-array --fix-tdata --split-code-data --remove-eh ",
                 printCommands);
         }
         if (!result.GetValueForOption(CommonOptions.KeepObjectOption))
