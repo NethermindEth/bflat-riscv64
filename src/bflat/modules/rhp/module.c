@@ -14,9 +14,10 @@
 
 extern void *RhpNewObject(void *methodTable, int allocFlags);
 extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
-	unsigned long numElements, void * pTransitionFrame);
+    unsigned long numElements, void * pTransitionFrame);
 extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
-	unsigned int *param_1, unsigned int **param_2);
+    unsigned int *param_1, unsigned int **param_2);
+extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void);
 
 /*
  * The actual cell is in t5, therefore we must extract it from there
@@ -24,41 +25,41 @@ extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
 static inline void *
 get_dispatch_cell_from_t5(void)
 {
-	void *cell;
-	__asm__ volatile("mv %0, t5" : "=r"(cell));
-	return cell;
+    void *cell;
+    __asm__ volatile("mv %0, t5" : "=r"(cell));
+    return cell;
 }
 
 void *
 __wrap_RhpNewFast(void *methodTable)
 {
-	return RhpNewObject(methodTable, 0);
+    return RhpNewObject(methodTable, 0);
 }
 
 void *
 __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
-	return RhpGcAlloc(methodTable, 0, numElements, 0);
+    return RhpGcAlloc(methodTable, 0, numElements, 0);
 }
 
 void *
 __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
 {
-	return RhpGcAlloc(methodTable, 0, numElements, 0);
+    return RhpGcAlloc(methodTable, 0, numElements, 0);
 }
 
 void *
 __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
-	return RhpGcAlloc(methodTable, 0, numElements, 0);
+    return RhpGcAlloc(methodTable, 0, numElements, 0);
 }
 
 void **
 __wrap_S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny(
-	unsigned int *param_1, unsigned int **param_2)
+    unsigned int *param_1, unsigned int **param_2)
 {
-	return S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
-		param_1, param_2);
+    return S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
+        param_1, param_2);
 }
 
 void
@@ -81,19 +82,24 @@ __wrap_S_P_CoreLib_System_Globalization_GlobalizationMode_Settings___cctor()
 int32_t
 __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
 {
-	value[0] = 'e';
-	value[1] = 'n';
-	value[2] = '_';
-	value[3] = 'U';
-	value[4] = 'S';
-	value[5] = '\0';
-	return 1;
+    value[0] = 'e';
+    value[1] = 'n';
+    value[2] = '_';
+    value[3] = 'U';
+    value[4] = 'S';
+    value[5] = '\0';
+    return 1;
 }
 
 int
 __wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void)
 {
-	return 1;
+    if (getenv("__test_processor_number_speed_check") != NULL)
+    {
+        return __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck();
+    }
+    /* Stub implementation - original .NET function EH info preserved via reference above */
+    return 1;
 }
 
 /*
@@ -108,7 +114,7 @@ __wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(
  */
 #define THREAD_STATIC_STORAGE_SIZE (256 * 1024)
 static uint8_t thread_static_storage[THREAD_STATIC_STORAGE_SIZE]
-	__attribute__((aligned(64))) = { 0 };
+    __attribute__((aligned(64))) = { 0 };
 static uint8_t *thread_static_ptr = thread_static_storage;
 
 /*
@@ -117,7 +123,7 @@ static uint8_t *thread_static_ptr = thread_static_storage;
 void *
 __wrap_RhGetThreadStaticStorage(void)
 {
-	return thread_static_storage;
+    return thread_static_storage;
 }
 
 /*
@@ -140,27 +146,27 @@ extern void *RhResolveDispatchOnType(MethodTable *pInstanceType, MethodTable *pI
 static inline MethodTable *
 get_method_table(void *obj)
 {
-	return *(MethodTable **)obj;
+    return *(MethodTable **)obj;
 }
 
 typedef enum DispatchCellType : uint32_t
 {
-	DispatchCellType_InterfaceAndSlot = 0,
-	DispatchCellType_VTableOffset     = 1,
-	DispatchCellType_MetadataToken    = 2,
+    DispatchCellType_InterfaceAndSlot = 0,
+    DispatchCellType_VTableOffset     = 1,
+    DispatchCellType_MetadataToken    = 2,
 } DispatchCellType;
 
 typedef struct DispatchCellInfoLite
 {
-	uint32_t CellType;
-	uint32_t _pad0;
-	void    *InterfaceType;
-	uint16_t InterfaceSlot;
-	uint8_t  HasCache;
-	uint8_t  _pad1;
-	uint32_t MetadataToken;
-	uint32_t VTableOffset;
-	uint32_t _pad2;
+    uint32_t CellType;
+    uint32_t _pad0;
+    void    *InterfaceType;
+    uint16_t InterfaceSlot;
+    uint8_t  HasCache;
+    uint8_t  _pad1;
+    uint32_t MetadataToken;
+    uint32_t VTableOffset;
+    uint32_t _pad2;
 } DispatchCellInfoLite;
 
 static void
@@ -172,72 +178,95 @@ cid_fail_fast(const char *reason,
               const DispatchCellInfoLite *info,
               void *target)
 {
-	fprintf(stderr,
-	        "[CID] FAIL: %s\n"
-	        "  tb=%p pCell=%p obj=%p mt=%p target=%p\n",
-	        reason,
-	        callerTransitionBlockParam,
-	        pCell,
-	        obj,
-	        (void *)mt,
-	        target);
+    fprintf(stderr,
+            "[CID] FAIL: %s\n"
+            "  tb=%p pCell=%p obj=%p mt=%p target=%p\n",
+            reason,
+            callerTransitionBlockParam,
+            pCell,
+            obj,
+            (void *)mt,
+            target);
 
-	if (info != NULL)
-	{
-		fprintf(stderr,
-		        "  cellInfo: CellType=%u InterfaceType=%p InterfaceSlot=%u VTableOffset=%u\n",
-		        (unsigned)info->CellType,
-		        (void *)info->InterfaceType,
-		        (unsigned)info->InterfaceSlot,
-		        (unsigned)info->VTableOffset);
-	}
+    if (info != NULL)
+    {
+        fprintf(stderr,
+                "  cellInfo: CellType=%u InterfaceType=%p InterfaceSlot=%u VTableOffset=%u\n",
+                (unsigned)info->CellType,
+                (void *)info->InterfaceType,
+                (unsigned)info->InterfaceSlot,
+                (unsigned)info->VTableOffset);
+    }
 
-	/* Prevent silent jump-to-null at the call site */
-	abort();
+    /* Prevent silent jump-to-null at the call site */
+    abort();
 }
 
 void *
 __rhp_cid_resolve_nocache(void *callerTransitionBlockParam, void *pCell)
 {
-	uint8_t *tb = (uint8_t *)callerTransitionBlockParam;
-	void *obj = *(void **)(tb + (2 * sizeof(void *)));
-	MethodTable *mt = get_method_table(obj);
+    uint8_t *tb = (uint8_t *)callerTransitionBlockParam;
+    void *obj = *(void **)(tb + (2 * sizeof(void *)));
+    MethodTable *mt = get_method_table(obj);
 
-	pCell = get_dispatch_cell_from_t5();
+    pCell = get_dispatch_cell_from_t5();
 
-	if (obj == NULL || mt == NULL)
-	{
-		cid_fail_fast("could not locate 'this' in transition block",
-		              callerTransitionBlockParam, pCell, obj, mt, NULL, NULL);
-	}
+    if (obj == NULL || mt == NULL)
+    {
+        cid_fail_fast("could not locate 'this' in transition block",
+                      callerTransitionBlockParam, pCell, obj, mt, NULL, NULL);
+    }
 
-	DispatchCellInfoLite info;
-	for (size_t i = 0; i < sizeof(info); i++)
-		((volatile uint8_t *)&info)[i] = 0;
+    DispatchCellInfoLite info;
+    for (size_t i = 0; i < sizeof(info); i++)
+        ((volatile uint8_t *)&info)[i] = 0;
 
-	RhpGetDispatchCellInfo(pCell, &info);
+    RhpGetDispatchCellInfo(pCell, &info);
 
-	if (info.CellType == DispatchCellType_InterfaceAndSlot)
-	{
-		void *target = RhResolveDispatchOnType(mt, (MethodTable *)info.InterfaceType, info.InterfaceSlot);
-		if (target == NULL)
-			cid_fail_fast("RhResolveDispatchOnType returned NULL",
-			              callerTransitionBlockParam, pCell, obj, mt, &info, target);
-		return target;
-	}
+    if (info.CellType == DispatchCellType_InterfaceAndSlot)
+    {
+        void *target = RhResolveDispatchOnType(mt, (MethodTable *)info.InterfaceType, info.InterfaceSlot);
+        if (target == NULL)
+            cid_fail_fast("RhResolveDispatchOnType returned NULL",
+                          callerTransitionBlockParam, pCell, obj, mt, &info, target);
+        return target;
+    }
 
-	if (info.CellType == DispatchCellType_VTableOffset)
-	{
-		/* VTableOffset dispatch: *(mt + offset) */
-		void *target = *(void **)(((uint8_t *)mt) + info.VTableOffset);
-		if (target == NULL)
-			cid_fail_fast("VTableOffset target is NULL",
-			              callerTransitionBlockParam, pCell, obj, mt, &info, target);
-		return target;
-	}
+    if (info.CellType == DispatchCellType_VTableOffset)
+    {
+        /* VTableOffset dispatch: *(mt + offset) */
+        void *target = *(void **)(((uint8_t *)mt) + info.VTableOffset);
+        if (target == NULL)
+            cid_fail_fast("VTableOffset target is NULL",
+                          callerTransitionBlockParam, pCell, obj, mt, &info, target);
+        return target;
+    }
 
-	/* Unsupported dispatch-cell type on this minimal path */
-	cid_fail_fast("unsupported dispatch cell type",
-	              callerTransitionBlockParam, pCell, obj, mt, &info, NULL);
-	return (void *)0;
+    /* Unsupported dispatch-cell type on this minimal path */
+    cid_fail_fast("unsupported dispatch cell type",
+                  callerTransitionBlockParam, pCell, obj, mt, &info, NULL);
+    return (void *)0;
+}
+
+extern long S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForTypeSlow(void *param_1,void *param_2);
+
+long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1,void *param_2)
+{
+    return S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForTypeSlow(param_1,param_2);
+}
+
+void __wrap__Z16InitializeCGroupv(void)
+{
+}
+
+void __wrap_S_P_CoreLib_Internal_Runtime_CompilerHelpers_StartupCodeHelpers__InitializeCommandLineArgs(void)
+{
+}
+
+void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
+{
+}
+
+void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
+{
 }
