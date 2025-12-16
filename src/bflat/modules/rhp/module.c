@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern void *RhpNewObject(void *methodTable, int allocFlags);
 extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
@@ -213,28 +214,27 @@ __wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(
     return 1;
 }
 
-/*
- * Thread Static Storage for zkVM.
- *
- * On zkVM there's no real threading, so we provide a simple static storage
- * area for thread statics. The NativeAOT runtime uses thread statics for
- * various internal purposes including locks and class constructor tracking.
- *
- * GetUninlinedThreadStaticBaseForType is called to get the base address
- * for a type's thread static fields. We provide a simple static buffer.
- */
+typedef struct ThreadStaticStorageLite
+{
+    void *pThreadStaticStorageArray; /* offset 0: managed array object reference */
+} ThreadStaticStorageLite;
+
+static ThreadStaticStorageLite g_thread_static_storage = { 0 };
+
+/* Optional backing store for other custom thread-static emulation (not returned directly). */
 #define THREAD_STATIC_STORAGE_SIZE (256 * 1024)
 static uint8_t thread_static_storage[THREAD_STATIC_STORAGE_SIZE]
     __attribute__((aligned(64))) = { 0 };
 static uint8_t *thread_static_ptr = thread_static_storage;
 
 /*
- * Wrapper for RhGetThreadStaticStorage - returns our static storage
+ * Wrapper for RhGetThreadStaticStorage - returns a pointer to the storage struct
+ * with the managed array reference at offset 0.
  */
 void *
 __wrap_RhGetThreadStaticStorage(void)
 {
-    return thread_static_storage;
+    return &g_thread_static_storage;
 }
 
 /*
@@ -359,11 +359,78 @@ __rhp_cid_resolve_nocache(void *callerTransitionBlockParam, void *pCell)
     return (void *)0;
 }
 
-extern long S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForTypeSlow(void *param_1,void *param_2);
+#define TSS_MAX_TYPEMANAGERS 1024
+#define TSS_MAX_SLOTS        4096
 
-long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1,void *param_2)
+typedef struct ThreadStaticsKeyedStore
 {
-    return S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForTypeSlow(param_1,param_2);
+    void   *slots[TSS_MAX_SLOTS];
+} ThreadStaticsKeyedStore;
+
+static ThreadStaticsKeyedStore g_tss_by_type_manager[TSS_MAX_TYPEMANAGERS];
+
+static inline uint32_t
+tss_read_u32(const void *p)
+{
+    return *(const volatile uint32_t *)p;
+}
+
+static inline size_t
+tss_align_up(size_t x, size_t a)
+{
+    return (x + (a - 1u)) & ~(a - 1u);
+}
+
+#define TSS_SLOT_BYTES 256
+
+long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1, void *param_2)
+{
+    /* typeManagerIndex is read from param_1 + 8 (matches lw s3,8(s2) in disassembly) */
+    uint32_t typeManagerIndex = 0;
+    if (param_1 != NULL)
+        typeManagerIndex = tss_read_u32((const uint8_t *)param_1 + 8);
+
+    /* slot index comes in param_2; treat it as a 32-bit signed/unsigned index */
+    uintptr_t slotU = (uintptr_t)param_2;
+    uint32_t slot = (uint32_t)slotU;
+
+    printf("[TSS] GetTSBase(typeMgr=%u, slot=%u) param_1=%p param_2=%p\n",
+           (unsigned)typeManagerIndex, (unsigned)slot, param_1, param_2);
+
+    if (typeManagerIndex >= TSS_MAX_TYPEMANAGERS || slot >= TSS_MAX_SLOTS)
+    {
+        printf("[TSS] WARN: out of bounds (typeMgr=%u/%u slot=%u/%u)\n",
+               (unsigned)typeManagerIndex, (unsigned)TSS_MAX_TYPEMANAGERS,
+               (unsigned)slot, (unsigned)TSS_MAX_SLOTS);
+        return 0;
+    }
+
+    void *p = g_tss_by_type_manager[typeManagerIndex].slots[slot];
+    if (p != NULL)
+        return (long)p;
+
+    /* Allocate from our backing store and zero-init */
+    size_t need = tss_align_up((size_t)TSS_SLOT_BYTES, 16);
+
+    if ((size_t)(thread_static_storage + THREAD_STATIC_STORAGE_SIZE - thread_static_ptr) < need)
+    {
+        printf("[TSS] OOM: backing store exhausted (need=%zu left=%zu)\n",
+               need,
+               (size_t)(thread_static_storage + THREAD_STATIC_STORAGE_SIZE - thread_static_ptr));
+        return 0;
+    }
+
+    p = (void *)thread_static_ptr;
+    thread_static_ptr += need;
+
+    memset(p, 0, need);
+
+    g_tss_by_type_manager[typeManagerIndex].slots[slot] = p;
+
+    printf("[TSS] Alloc slot: typeMgr=%u slot=%u -> %p (bytes=%zu) next=%p\n",
+           (unsigned)typeManagerIndex, (unsigned)slot, p, need, (void *)thread_static_ptr);
+
+    return (long)p;
 }
 
 void __wrap__Z16InitializeCGroupv(void)
