@@ -1263,6 +1263,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
+                ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");

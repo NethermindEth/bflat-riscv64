@@ -383,6 +383,11 @@ tss_align_up(size_t x, size_t a)
 
 #define TSS_SLOT_BYTES 256
 
+void *_param_1 = 0;
+void *_param_2 = 0;
+uint32_t _typeManagerIndex = 0;
+uint32_t rhp_tss_counter = 0;
+
 long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1, void *param_2)
 {
     /* typeManagerIndex is read from param_1 + 8 (matches lw s3,8(s2) in disassembly) */
@@ -404,6 +409,27 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
                (unsigned)slot, (unsigned)TSS_MAX_SLOTS);
         return 0;
     }
+
+    if (param_1 != _param_1 || param_2 != _param_2 ||
+        typeManagerIndex != _typeManagerIndex)
+    {
+        rhp_tss_counter = 0;
+        _param_1 = param_1;
+        _param_2 = param_2;
+        _typeManagerIndex = typeManagerIndex;
+    }
+
+    rhp_tss_counter++;
+
+    if (rhp_tss_counter > 5000)
+    {
+        printf("[TSS] WARN: too many calls (typeMgr=%u/%u slot=%u/%u)\n",
+               (unsigned)typeManagerIndex, (unsigned)TSS_MAX_TYPEMANAGERS,
+               (unsigned)slot, (unsigned)TSS_MAX_SLOTS);
+        int *i = NULL;
+        *i = 0;
+    }
+
 
     void *p = g_tss_by_type_manager[typeManagerIndex].slots[slot];
     if (p != NULL)
@@ -473,4 +499,9 @@ void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 {
+}
+
+int __wrap__ZN6Thread10IsDetachedEv(void *)
+{
+    return 0;
 }

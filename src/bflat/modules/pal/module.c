@@ -73,6 +73,8 @@ align_down_8_uintptr(uintptr_t x)
     return x & ~(uintptr_t)7;
 }
 
+extern uint32_t rhp_tss_counter;
+
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
@@ -102,6 +104,8 @@ __wrap___libc_malloc_impl(unsigned long n)
 
     tmp = (void *)new_tmp_u;
     len = (uint64_t *)new_len_u;
+
+    rhp_tss_counter = 0;
 
     /* Emit maximum diagnostics with correct pointer formatting */
     printf(
@@ -150,6 +154,7 @@ __wrap___libc_malloc_impl(unsigned long n)
 void
 __wrap___libc_free(void *mem)
 {
+    rhp_tss_counter = 0;
 }
 
 void *
@@ -157,6 +162,8 @@ __wrap___libc_realloc(void *p, unsigned long n)
 {
     void     *tmp;
     uint64_t *len;
+
+    rhp_tss_counter = 0;
 
     if (!p)
     {
