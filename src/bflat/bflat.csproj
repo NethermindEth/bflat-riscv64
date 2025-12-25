@@ -103,6 +103,10 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
 
+    <!-- RNG -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.o" />
+
     <!-- stdcppshim -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />
@@ -173,7 +177,7 @@
 
     <Unzip SourceFiles="$(DownloadCachePath)compiler-$(CompilerHost)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)" />
-    
+
     <Exec Command="chmod +x $(OutputPath)bin/lld" Condition="'$(OS)' != 'Windows_NT' and $(CompilerHost.StartsWith('linux'))" />
     <Exec Command="chmod +x $(OutputPath)bin/llvm-objcopy" Condition="'$(OS)' != 'Windows_NT' and $(CompilerHost.StartsWith('linux'))" />
 
