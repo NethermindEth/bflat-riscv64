@@ -12,6 +12,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#define _DEBUG (0)
+
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
 
@@ -108,6 +110,7 @@ __wrap___libc_malloc_impl(unsigned long n)
     rhp_tss_counter = 0;
 
     /* Emit maximum diagnostics with correct pointer formatting */
+#if _DEBUG
     printf(
         "malloc(n=%lu aligned=%zu) mem@%p saved_mem=%p mem_before=%#" PRIxPTR
         " top=%#" PRIxPTR " bottom=%#" PRIxPTR
@@ -139,6 +142,7 @@ __wrap___libc_malloc_impl(unsigned long n)
         printf("malloc WARN: computed ptrs out of heap range: tmp=%#" PRIxPTR " len=%#" PRIxPTR " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
                new_tmp_u, new_len_u, bottom, top);
     }
+#endif
 
     /* Commit bump pointer (include optional diagnostic gap) */
     mem = (uint8_t *)new_len_u;
@@ -167,13 +171,16 @@ __wrap___libc_realloc(void *p, unsigned long n)
 
     if (!p)
     {
+#if _DEBUG
         printf("realloc(p=NULL, n=%lu): delegating to malloc\n", n);
+#endif
         return __wrap___libc_malloc_impl(n);
     }
 
     len = (uint64_t *)((uint8_t *)p - 8u);
-
+#if _DEBUG
     printf("realloc(p=%p, n=%lu): old_len=%" PRIu64 " header@%p\n", p, n, *len, (void *)len);
+#endif
 
     if (*len >= (uint64_t)n)
     {
@@ -184,7 +191,9 @@ __wrap___libc_realloc(void *p, unsigned long n)
     tmp = __wrap___libc_malloc_impl(n);
     if (!tmp)
     {
+#if _DEBUG
         printf("realloc(p=%p, n=%lu): malloc returned NULL\n", p, n);
+#endif
         return 0;
     }
 
@@ -305,10 +314,18 @@ __wrap_syscall(long number, ...)
     }
 }
 
-#if 0
 int
 __wrap___stdio_write(int fd, const void *buf, int count)
 {
     return -1;
 }
-#endif
+
+int
+__wrap_sysconf(int n)
+{
+    if (n == 1)
+        return 100;
+    if (n == 2)
+        return 4096;
+    return 0;
+}
