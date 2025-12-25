@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define _DEBUG (0)
+
 extern void *RhpNewObject(void *methodTable, int allocFlags);
 extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
     unsigned long numElements, void * pTransitionFrame);
@@ -184,13 +186,6 @@ __wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEven
 {
 }
 
-/*
-void
-__wrap_S_P_CoreLib_System_Globalization_GlobalizationMode_Settings___cctor()
-{
-}
-*/
-
 int32_t
 __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
 {
@@ -289,6 +284,7 @@ cid_fail_fast(const char *reason,
               const DispatchCellInfoLite *info,
               void *target)
 {
+#if _DEBUG
     fprintf(stderr,
             "[CID] FAIL: %s\n"
             "  tb=%p pCell=%p obj=%p mt=%p target=%p\n",
@@ -298,15 +294,17 @@ cid_fail_fast(const char *reason,
             obj,
             (void *)mt,
             target);
-
+#endif
     if (info != NULL)
     {
+#if _DEBUG
         fprintf(stderr,
                 "  cellInfo: CellType=%u InterfaceType=%p InterfaceSlot=%u VTableOffset=%u\n",
                 (unsigned)info->CellType,
                 (void *)info->InterfaceType,
                 (unsigned)info->InterfaceSlot,
                 (unsigned)info->VTableOffset);
+#endif
     }
 
     /* Prevent silent jump-to-null at the call site */
@@ -399,14 +397,18 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
     uintptr_t slotU = (uintptr_t)param_2;
     uint32_t slot = (uint32_t)slotU;
 
+#if _DEBUG
     printf("[TSS] GetTSBase(typeMgr=%u, slot=%u) param_1=%p param_2=%p\n",
            (unsigned)typeManagerIndex, (unsigned)slot, param_1, param_2);
+#endif
 
     if (typeManagerIndex >= TSS_MAX_TYPEMANAGERS || slot >= TSS_MAX_SLOTS)
     {
+#if _DEBUG
         printf("[TSS] WARN: out of bounds (typeMgr=%u/%u slot=%u/%u)\n",
                (unsigned)typeManagerIndex, (unsigned)TSS_MAX_TYPEMANAGERS,
                (unsigned)slot, (unsigned)TSS_MAX_SLOTS);
+#endif
         return 0;
     }
 
@@ -420,7 +422,7 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
     }
 
     rhp_tss_counter++;
-
+#if _DEBUG
     if (rhp_tss_counter > 5000)
     {
         printf("[TSS] WARN: too many calls (typeMgr=%u/%u slot=%u/%u)\n",
@@ -429,6 +431,7 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
         int *i = NULL;
         *i = 0;
     }
+#endif
 
 
     void *p = g_tss_by_type_manager[typeManagerIndex].slots[slot];
@@ -440,9 +443,11 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
 
     if ((size_t)(thread_static_storage + THREAD_STATIC_STORAGE_SIZE - thread_static_ptr) < need)
     {
+#if _DEBUG
         printf("[TSS] OOM: backing store exhausted (need=%zu left=%zu)\n",
                need,
                (size_t)(thread_static_storage + THREAD_STATIC_STORAGE_SIZE - thread_static_ptr));
+#endif
         return 0;
     }
 
@@ -452,9 +457,10 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
     memset(p, 0, need);
 
     g_tss_by_type_manager[typeManagerIndex].slots[slot] = p;
-
+#if _DEBUG
     printf("[TSS] Alloc slot: typeMgr=%u slot=%u -> %p (bytes=%zu) next=%p\n",
            (unsigned)typeManagerIndex, (unsigned)slot, p, need, (void *)thread_static_ptr);
+#endif
 
     return (long)p;
 }
@@ -504,4 +510,18 @@ void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 int __wrap__ZN6Thread10IsDetachedEv(void *)
 {
     return 0;
+}
+
+int __wrap_System_Console_Interop_Sys__InitializeTerminalAndSignalHandling(void)
+{
+    return 1;
+}
+
+void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param)
+{
+}
+
+int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
+{
+    return bufferSize;
 }
