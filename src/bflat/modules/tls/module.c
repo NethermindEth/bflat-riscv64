@@ -44,7 +44,8 @@ extern int __set_thread_area(void *tp);
  * Can be called multiple times safely.
  * This function is designed to be safe to call from any context.
  */
-static void
+extern
+void
 ensure_tls_initialized(void)
 {
     /* Quick check without memory barrier for performance */
