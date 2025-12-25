@@ -1131,7 +1131,7 @@ internal class BuildCommand : CommandBase
             ldArgs.Append(objectFilePath);
             ldArgs.Append('"');
             ldArgs.Append(' ');
-            ldArgs.Append("--as-needed --discard-all --gc-sections ");
+            ldArgs.Append("--as-needed --gc-sections ");
             ldArgs.Append("-rpath \"$ORIGIN\" ");
 
             if (buildTargetType == BuildTargetType.Shared)
@@ -1264,6 +1264,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
                 ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"--wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling ");
+                    ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
+                    ldArgs.Append($"--wrap=SystemNative_Write ");
+                }
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
@@ -1297,7 +1303,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=sigaction ");
                 ldArgs.Append($"--wrap=signal ");
                 ldArgs.Append($"--wrap=syscall ");
-                //ldArgs.Append($"--wrap=__stdio_write ");
+                ldArgs.Append($"--wrap=sysconf ");
+                if (libc == "zisk")
+                {
+                    /* Hide write() in Zisk */
+                    ldArgs.Append($"--wrap=__stdio_write ");
+                }
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
@@ -1306,6 +1317,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=__init_tp ");
                 ldArgs.Append($"--wrap=__copy_tls ");
                 ldArgs.Append($"--no-whole-archive ");
+
+                /* rng */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
+                ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
 
                 /* ugc */
                 ldArgs.Append($"--wrap=GC_Initialize ");
