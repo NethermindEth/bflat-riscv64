@@ -46,6 +46,7 @@ internal class ILBuildCommand : CommandBase
             CommonOptions.DefinedSymbolsOption,
             CommonOptions.ReferencesOption,
             CommonOptions.StdLibOption,
+            CommonOptions.NoStdLibRefsOption,
             CommonOptions.DeterministicOption,
             CommonOptions.VerbosityOption,
             CommonOptions.OutputOption,
@@ -67,7 +68,8 @@ internal class ILBuildCommand : CommandBase
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
         string[] references = CommonOptions.GetReferencePaths(
             result.GetValueForOption(CommonOptions.ReferencesOption),
-            result.GetValueForOption(CommonOptions.StdLibOption));
+            result.GetValueForOption(CommonOptions.StdLibOption),
+            result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
 
         OptimizationLevel optimizationLevel = result.GetValueForOption(OptimizeOption) ? OptimizationLevel.Release : OptimizationLevel.Debug;
 

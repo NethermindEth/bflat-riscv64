@@ -173,6 +173,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.InputFilesArgument,
             CommonOptions.DefinedSymbolsOption,
             CommonOptions.ReferencesOption,
+            CommonOptions.NoStdLibRefsOption,
             CommonOptions.TargetOption,
             CommonOptions.OutputOption,
             NoLinkOption,
@@ -259,7 +260,8 @@ internal class BuildCommand : CommandBase
         string[] userSpecifiedInputFiles = result.GetValueForArgument(CommonOptions.InputFilesArgument);
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
-        string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib);
+        string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
+            result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
         string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
         TargetOS targetOS;

@@ -30,6 +30,10 @@ internal static class CommonOptions
             ArgumentHelpName = "file list"
         };
 
+    public static Option<bool> NoStdLibRefsOption =
+            new Option<bool>("--nostdlibrefs",
+                "Disable default .NET assemblies (specify using -r)");
+
     public static Option<bool> VerbosityOption =
         new Option<bool>("--verbose",
             "Enable verbose logging");
@@ -118,13 +122,21 @@ internal static class CommonOptions
         return result.ToArray();
     }
 
-    public static string[] GetReferencePaths(string[] referencePaths, StandardLibType stdlib)
+    public static string[] GetReferencePaths(string[] referencePaths, StandardLibType stdlib, bool noStdLibRefs)
     {
         if (stdlib == StandardLibType.None)
             return referencePaths;
 
-        List<string> result = new List<string>(referencePaths);
         string refPath = Path.Combine(HomePath, "ref");
+        List<string> result = new List<string>();
+        foreach (var tmp in referencePaths)
+        {
+            result.Add(tmp.Replace("{std}", refPath));
+        }
+        if (noStdLibRefs)
+        {
+            return result.ToArray();
+        }
         if (stdlib == StandardLibType.Zero)
         {
             result.Add(Path.Combine(refPath, "zerolib.dll"));
