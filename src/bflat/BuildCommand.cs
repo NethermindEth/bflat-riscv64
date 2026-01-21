@@ -66,7 +66,7 @@ class CustomILProvider : ILProvider
             method.Name == "GetDefaultMessage")
         {
             var stringType = TypeContext.GetWellKnownType(WellKnownType.String);
-            FieldDesc  emptyField = null;
+            FieldDesc emptyField = null;
 
             foreach (var field in stringType.GetFields())
             {
@@ -106,7 +106,7 @@ class CustomILProvider : ILProvider
                     (byte)ILOpcode.ret
                 },
                 Array.Empty<LocalVariableDefinition>(),
-                new object[] {}
+                new object[] { }
             );
         }
 
@@ -243,6 +243,8 @@ internal class BuildCommand : CommandBase
         bool nooptimize = result.GetValueForOption(DisableOptimizationOption);
         bool optimizeSpace = result.GetValueForOption(OptimizeSizeOption);
         bool optimizeTime = result.GetValueForOption(OptimizeSpeedOption);
+        string homePath = CommonOptions.HomePath;
+        string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
 
         OptimizationMode optimizationMode = OptimizationMode.Blended;
         if (optimizeSpace)
@@ -260,8 +262,30 @@ internal class BuildCommand : CommandBase
         string[] userSpecifiedInputFiles = result.GetValueForArgument(CommonOptions.InputFilesArgument);
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
+        string libc = result.GetValueForOption(TargetLibcOption);
+        if (libc == "zisk")
+        {
+            var definesList = new List<string>(defines ?? Array.Empty<string>());
+            definesList.Add("ZKVM_ZISK");
+            defines = definesList.ToArray();
+        }
         string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
             result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
+
+        // Add zisklib.dll for zisk libc
+        if (libc == "zisk")
+        {
+            string ziskLibDll = Path.Combine(ziskLibPath, "zisklib.dll");
+
+            var referenceList = new List<string>(references ?? Array.Empty<string>());
+            referenceList.Add(ziskLibDll);
+            references = referenceList.ToArray();
+
+#if DEBUG
+            Console.WriteLine("Added zisklib reference: " + ziskLibDll);
+#endif
+        }
+
         string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
         TargetOS targetOS;
@@ -332,7 +356,7 @@ internal class BuildCommand : CommandBase
             Array.Empty<string>(),
             Array.Empty<string>(),
             false,
-            new Dictionary<int,bool>(),
+            new Dictionary<int, bool>(),
             false);
 
         //
@@ -469,11 +493,9 @@ internal class BuildCommand : CommandBase
             referenceFilePaths[Path.GetFileNameWithoutExtension(reference)] = reference;
         }
 
-        string libc = result.GetValueForOption(TargetLibcOption);
         if (targetOS == TargetOS.Windows && targetArchitecture == TargetArchitecture.X86)
             libc ??= "none"; // don't have shcrt for Windows x86 because that one's hacked up
 
-        string homePath = CommonOptions.HomePath;
         string patchElfPath = Path.Combine(homePath, "patch_elf.py");
         string libPath = Environment.GetEnvironmentVariable("BFLAT_LIB");
         if (libPath == null)
@@ -1057,7 +1079,6 @@ internal class BuildCommand : CommandBase
         {
             ldArgs.Append("-flavor ld ");
 
-            string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
             string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
 
             string firstLib = null;
