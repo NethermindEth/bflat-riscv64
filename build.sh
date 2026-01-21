@@ -96,7 +96,7 @@ case $flavor in
 			on_fail $? "Failed to build bflat (riscv64)"
 		fi
 		if [ "${what}" == "zisklib" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/zisklib/zisklib.riscv64.csproj
+			dotnet build src/zisklib/zisklib.riscv64.csproj -c:Release
 			on_fail "Failed to build zisklib (generic)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
