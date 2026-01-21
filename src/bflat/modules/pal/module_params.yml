@@ -1,0 +1,23 @@
+options:
+  ld:
+    - value: --wrap=getenv
+    - value: --wrap=getcwd
+    - value: --wrap=getpid
+    - value: --wrap=getegid
+    - value: --wrap=geteuid
+    - value: --wrap=sched_getaffinity
+    - value: --wrap=open
+    - value: --wrap=__libc_malloc_impl
+    - value: --wrap=__libc_realloc
+    - value: --wrap=__libc_free
+    - value: --wrap=pthread_create
+    - value: --wrap=pthread_sigmask
+    - value: --wrap=__clock_gettime
+    - value: --wrap=clock_gettime
+    - value: --wrap=__malloc_allzerop
+    - value: --wrap=mmap
+    - value: --wrap=munmap
+    - value: --wrap=mlock
+    - value: --wrap=munlock
+    - value: --wrap=mlockall
+    - value: --wrap=munlockall

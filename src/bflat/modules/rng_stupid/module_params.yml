@@ -1,0 +1,3 @@
+options:
+  ld:
+    - value: --wrap=minipal_get_cryptographically_secure_random_bytes

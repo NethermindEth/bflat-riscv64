@@ -30,6 +30,10 @@ internal static class CommonOptions
             ArgumentHelpName = "file list"
         };
 
+    public static Option<bool> NoStdLibRefsOption =
+            new Option<bool>("--nostdlibrefs",
+                "Disable default .NET assemblies (specify using -r)");
+
     public static Option<bool> VerbosityOption =
         new Option<bool>("--verbose",
             "Enable verbose logging");
@@ -42,6 +46,14 @@ internal static class CommonOptions
         new Option<bool>("--deterministic",
             "Produce deterministic outputs including timestamps");
 
+    public static Option<bool> NoPthreadOption =
+        new Option<bool>("--no-pthread",
+            "Remove pthread dependency");
+
+    public static Option<bool> KeepObjectOption =
+        new Option<bool>("--keep-object",
+            "Keep object file");
+
     public static Option<string> OutputOption =
         new Option<string>(new string[] { "-o", "--out" },
             "Output file path")
@@ -52,6 +64,10 @@ internal static class CommonOptions
     public static Option<string[]> DefinedSymbolsOption =
         new Option<string[]>(new string[] { "-d", "--define" },
             "Define conditional compilation symbol(s)");
+
+    public static Option<string[]> ExtraLd =
+        new Option<string[]>(new string[] { "--extra-ld" },
+            "Extra ld inputs/libraries");
 
     public static Option<string[]> ResourceOption =
     new Option<string[]>(new string[] { "-res", "--resource" },
@@ -93,16 +109,34 @@ internal static class CommonOptions
         if (inputFileNames.Length > 0)
             return inputFileNames;
 
-        return Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.cs", SearchOption.AllDirectories).ToArray();
+        var files = Directory.EnumerateFiles(Directory.GetCurrentDirectory(), "*.cs", SearchOption.AllDirectories);
+        var result = new List<string>();
+
+        foreach (var file in files)
+        {
+            var fileName = Path.GetFileName(file);
+            if (!fileName.StartsWith("._"))
+                result.Add(file);
+        }
+
+        return result.ToArray();
     }
 
-    public static string[] GetReferencePaths(string[] referencePaths, StandardLibType stdlib)
+    public static string[] GetReferencePaths(string[] referencePaths, StandardLibType stdlib, bool noStdLibRefs)
     {
         if (stdlib == StandardLibType.None)
             return referencePaths;
 
-        List<string> result = new List<string>(referencePaths);
         string refPath = Path.Combine(HomePath, "ref");
+        List<string> result = new List<string>();
+        foreach (var tmp in referencePaths)
+        {
+            result.Add(tmp.Replace("{std}", refPath));
+        }
+        if (noStdLibRefs)
+        {
+            return result.ToArray();
+        }
         if (stdlib == StandardLibType.Zero)
         {
             result.Add(Path.Combine(refPath, "zerolib.dll"));
@@ -112,6 +146,12 @@ internal static class CommonOptions
             foreach (var f in Directory.GetFiles(refPath, "*.dll"))
             {
                 if (f.EndsWith("zerolib.dll"))
+                    continue;
+                if (f.EndsWith("KernelTraceControl.dll"))
+                    continue;
+                if (f.EndsWith("KernelTraceControl.Win61.dll"))
+                    continue;
+                if (f.EndsWith("msdia140.dll"))
                     continue;
                 result.Add(f);
             }

@@ -7,3 +7,9 @@ src/bflat/[Nn]u[Gg]et.config
 launchSettings.json
 .vs/
 msbuild.binlog
+._*
+/src/bflat/modules/*/*.o
+.DS_Store
+/.old
+/src/bflat/modules/ugc-zero/src
+/src/packages

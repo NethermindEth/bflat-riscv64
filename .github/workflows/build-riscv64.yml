@@ -1,0 +1,51 @@
+name: Build RISC-V64
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build_riscv64:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:25.04
+    name: Build RISC-V64 on Ubuntu 25.04
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git \
+            build-essential \
+            gcc \
+            g++ \
+            gcc-riscv64-linux-gnu \
+            g++-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            wget \
+            curl \
+            ca-certificates
+
+      - name: Install .NET 10
+        run: |
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
+          ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+          echo "DOTNET_ROOT=/usr/share/dotnet" >> $GITHUB_ENV
+          echo "/usr/share/dotnet" >> $GITHUB_PATH
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build modules (riscv64)
+        run: ./build.sh modules riscv64
+
+      - name: Build zisklib (riscv64)
+        run: ./build.sh zisklib riscv64
+
+      - name: Build bflat (riscv64)
+        run: ./build.sh bflat riscv64

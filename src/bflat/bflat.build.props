@@ -1,0 +1,62 @@
+<Project>
+  <PropertyGroup>
+    <CompilerHost Condition="'$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'win-x64'">windows-x64</CompilerHost>
+    <CompilerHost Condition="'$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'linux-x64'">linux-glibc-x64</CompilerHost>
+    <DownloadCachePath Condition="$(DownloadCachePath) == ''">$(BaseIntermediateOutputPath)</DownloadCachePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SupportedHost Condition="false" Include="windows-x64">
+      <OS>windows</OS>
+      <Arch>x64</Arch>
+    </SupportedHost>
+    <SupportedHost Condition="false" Include="windows-arm64">
+      <OS>windows</OS>
+      <Arch>arm64</Arch>
+    </SupportedHost>
+    <SupportedHost Include="linux-glibc-x64">
+      <OS>linux</OS>
+      <Arch>x64</Arch>
+    </SupportedHost>
+    <SupportedHost Condition="false" Include="linux-glibc-arm64">
+      <OS>linux</OS>
+      <Arch>arm64</Arch>
+    </SupportedHost>
+  </ItemGroup>
+
+  <ItemGroup>
+    <SupportedTarget Condition="false" Include="windows-x64">
+      <LibPath>windows\x64\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="windows-arm64">
+      <LibPath>windows\arm64\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="windows-x86">
+      <LibPath>windows\x86\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="linux-glibc-x64">
+      <LibPath>linux\x64\glibc\</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="linux-glibc-arm64">
+      <LibPath>linux\arm64\glibc</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="linux-bionic-arm64">
+      <LibPath>linux\arm64\bionic</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Condition="false" Include="linux-glibc-riscv64">
+      <LibPath>linux\riscv64\glibc</LibPath>
+    </SupportedTarget>
+    <SupportedTarget Include="linux-musl-riscv64">
+      <LibPath>linux\riscv64\musl</LibPath>
+      <Os>linux</Os>
+      <Lib>musl</Lib>
+      <Arch>riscv64</Arch>
+    </SupportedTarget>
+    <SupportedTarget Include="linux-zisk-riscv64">
+      <LibPath>linux\riscv64\zisk</LibPath>
+      <Os>linux</Os>
+      <Lib>zisk</Lib>
+      <Arch>riscv64</Arch>
+    </SupportedTarget>
+  </ItemGroup>
+</Project>

@@ -1,5 +1,7 @@
 # bflat
 
+[![Build RISC-V64](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml/badge.svg)](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
+
 ### https://flattened.net
 
 C# as you know it but with Go-inspired tooling that produces small, selfcontained, and native executables out of the box.

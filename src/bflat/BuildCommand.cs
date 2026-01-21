@@ -18,13 +18,18 @@
 
 using System;
 using System.Collections.Generic;
-using System.CommandLine.Parsing;
 using System.CommandLine;
+using System.CommandLine.Help;
+using System.CommandLine.Parsing;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
+using System.Reflection.Metadata;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Xml;
+
+using System.IO;
+using System.Linq;
 using System.Threading;
 
 using Microsoft.CodeAnalysis.CSharp;
@@ -32,10 +37,82 @@ using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis;
 
 using ILCompiler;
+using ILCompiler.Dataflow;
+using ILCompiler.DependencyAnalysis;
 
-using Internal.TypeSystem;
 using Internal.IL;
+using Internal.IL.Stubs;
+using Internal.TypeSystem;
 using Internal.TypeSystem.Ecma;
+
+using ILLink.Shared;
+
+class CustomILProvider : ILProvider
+{
+    private ILProvider inner;
+    public TypeSystemContext TypeContext;
+
+    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext)
+    {
+        inner = innerProvider;
+        TypeContext = typeContext;
+    }
+
+    public override MethodIL GetMethodIL(MethodDesc method)
+    {
+        if (method.OwningType is MetadataType owningType &&
+            owningType.Namespace == "System" &&
+            owningType.Name == "OutOfMemoryException" &&
+            method.Name == "GetDefaultMessage")
+        {
+            var stringType = TypeContext.GetWellKnownType(WellKnownType.String);
+            FieldDesc emptyField = null;
+
+            foreach (var field in stringType.GetFields())
+            {
+                if (field.Name == "Empty" && field.IsStatic)
+                {
+                    emptyField = field;
+                    break;
+                }
+            }
+
+            if (emptyField == null)
+            {
+                throw new Exception("No Empty field found for OutOfMemoryException");
+            }
+
+            return new ILStubMethodIL(
+                method,
+                new byte[]
+                {
+                    (byte)ILOpcode.ldsfld, 0x01, 0x00, 0x00, 0x00,
+                    (byte)ILOpcode.ret
+                },
+                Array.Empty<LocalVariableDefinition>(),
+                new object[] { emptyField }
+            );
+        }
+
+        if (method.OwningType is MetadataType owningType2 &&
+            owningType2.Namespace == "Internal.JitInterface" &&
+            owningType2.Name == "CorInfoImpl" &&
+            method.Name == "getAsyncInfo")
+        {
+            return new ILStubMethodIL(
+                method,
+                new byte[]
+                {
+                    (byte)ILOpcode.ret
+                },
+                Array.Empty<LocalVariableDefinition>(),
+                new object[] { }
+            );
+        }
+
+        return inner.GetMethodIL(method);
+    }
+}
 
 internal class BuildCommand : CommandBase
 {
@@ -66,7 +143,7 @@ internal class BuildCommand : CommandBase
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
-        ArgumentHelpName = "x86|x64|arm64"
+        ArgumentHelpName = "x86|x64|arm64|riscv64"
     };
     private static Option<string> TargetOSOption = new Option<string>("--os", "Target operating system")
     {
@@ -77,7 +154,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -96,6 +173,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.InputFilesArgument,
             CommonOptions.DefinedSymbolsOption,
             CommonOptions.ReferencesOption,
+            CommonOptions.NoStdLibRefsOption,
             CommonOptions.TargetOption,
             CommonOptions.OutputOption,
             NoLinkOption,
@@ -122,8 +200,11 @@ internal class BuildCommand : CommandBase
             CommonOptions.ResourceOption,
             CommonOptions.StdLibOption,
             CommonOptions.DeterministicOption,
+            CommonOptions.NoPthreadOption,
             CommonOptions.VerbosityOption,
             CommonOptions.LangVersionOption,
+            CommonOptions.ExtraLd,
+            CommonOptions.KeepObjectOption,
         };
         command.Handler = new BuildCommand();
 
@@ -142,11 +223,28 @@ internal class BuildCommand : CommandBase
         }
     }
 
+    void PatchRiscvAbi(string path)
+    {
+        const long offset = 0x30;
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
+        fs.Seek(offset, SeekOrigin.Begin);
+        int b = fs.ReadByte();
+        if (b == 4 || b == 5)
+        {
+            fs.Seek(offset, SeekOrigin.Begin);
+            fs.WriteByte(0);
+        }
+        fs.Close();
+    }
+
     public override int Handle(ParseResult result)
     {
         bool nooptimize = result.GetValueForOption(DisableOptimizationOption);
         bool optimizeSpace = result.GetValueForOption(OptimizeSizeOption);
         bool optimizeTime = result.GetValueForOption(OptimizeSpeedOption);
+        string homePath = CommonOptions.HomePath;
+        string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
 
         OptimizationMode optimizationMode = OptimizationMode.Blended;
         if (optimizeSpace)
@@ -164,7 +262,31 @@ internal class BuildCommand : CommandBase
         string[] userSpecifiedInputFiles = result.GetValueForArgument(CommonOptions.InputFilesArgument);
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
-        string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib);
+        string libc = result.GetValueForOption(TargetLibcOption);
+        if (libc == "zisk")
+        {
+            var definesList = new List<string>(defines ?? Array.Empty<string>());
+            definesList.Add("ZKVM_ZISK");
+            defines = definesList.ToArray();
+        }
+        string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
+            result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
+
+        // Add zisklib.dll for zisk libc
+        if (libc == "zisk")
+        {
+            string ziskLibDll = Path.Combine(ziskLibPath, "zisklib.dll");
+
+            var referenceList = new List<string>(references ?? Array.Empty<string>());
+            referenceList.Add(ziskLibDll);
+            references = referenceList.ToArray();
+
+#if DEBUG
+            Console.WriteLine("Added zisklib reference: " + ziskLibDll);
+#endif
+        }
+
+        string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
         TargetOS targetOS;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -173,11 +295,12 @@ internal class BuildCommand : CommandBase
             targetOS = TargetOS.Linux;
         else
             throw new NotImplementedException();
-        
+
         TargetArchitecture targetArchitecture = RuntimeInformation.ProcessArchitecture switch
         {
             Architecture.X64 => TargetArchitecture.X64,
             Architecture.Arm64 => TargetArchitecture.ARM64,
+            Architecture.RiscV64 => TargetArchitecture.RiscV64,
         };
 
         string targetArchitectureStr = result.GetValueForOption(TargetArchitectureOption);
@@ -187,6 +310,7 @@ internal class BuildCommand : CommandBase
             {
                 "x64" => TargetArchitecture.X64,
                 "arm64" => TargetArchitecture.ARM64,
+                "riscv64" => TargetArchitecture.RiscV64,
                 "x86" => TargetArchitecture.X86,
                 _ => throw new Exception($"Target architecture '{targetArchitectureStr}' is not supported"),
             };
@@ -210,12 +334,68 @@ internal class BuildCommand : CommandBase
             userSpecificedOutputFileName != null ? Path.GetFileNameWithoutExtension(userSpecificedOutputFileName) :
             CommonOptions.GetOutputFileNameWithoutSuffix(userSpecifiedInputFiles);
 
-        ILProvider ilProvider = new NativeAotILProvider();
         bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
-        var logger = new Logger(Console.Out, ilProvider, verbose, Array.Empty<int>(), singleWarn: false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+        bool disableStackTraceData = result.GetValueForOption(NoStackTraceDataOption) || stdlib != StandardLibType.DotNet;
+        string systemModuleName = DefaultSystemModule;
+        string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
+
+        if (stdlib == StandardLibType.None && references.Length == 0)
+            systemModuleName = compiledModuleName;
+        if (stdlib == StandardLibType.Zero)
+            systemModuleName = "zerolib";
+
+        ILProvider ilProviderOld = new NativeAotILProvider();
+
+        var logger = new Logger(
+            Console.Out,
+            ilProviderOld,
+            verbose,
+            Array.Empty<int>(),
+            false,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            false,
+            new Dictionary<int, bool>(),
+            false);
+
+        //
+        // Initialize type system context
+        //
+
+        SharedGenericsMode genericsMode = SharedGenericsMode.CanonicalReferenceTypes;
+
+        bool disableReflection = result.GetValueForOption(NoReflectionOption);
+        var tsTargetOs = targetOS switch
+        {
+            TargetOS.Windows or TargetOS.UEFI => Internal.TypeSystem.TargetOS.Windows,
+            TargetOS.Linux => Internal.TypeSystem.TargetOS.Linux,
+        };
+        bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
+
+        string isaArg = result.GetValueForOption(TargetIsaOption);
+        InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
+                "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
+                optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
+
+        var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
+        var targetAbi = TargetAbi.NativeAot;
+        var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
+        var ms = new MemoryStream();
 
         BuildTargetType buildTargetType = result.GetValueForOption(CommonOptions.TargetOption);
-        string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
+
+#if DEBUG
+        Console.Error.WriteLine("Building with the following inputs:");
+        foreach (var input in inputFiles)
+        {
+            Console.Error.WriteLine("Input: " + input);
+        }
+        foreach (var input in references)
+        {
+            Console.Error.WriteLine("Reference: " + input);
+        }
+#endif
 
         PerfWatch createCompilationWatch = new PerfWatch("Create IL compilation");
         CSharpCompilation sourceCompilation = ILBuildCommand.CreateCompilation(
@@ -247,7 +427,6 @@ internal class BuildCommand : CommandBase
             ? 0 : DebugInformationFormat.Embedded;
         var emitOptions = new EmitOptions(debugInformationFormat: debugInfoFormat);
 
-        var ms = new MemoryStream();
         PerfWatch emitWatch = new PerfWatch("C# compiler emit");
         var resinfos = CommonOptions.GetResourceDescriptions(result.GetValueForOption(CommonOptions.ResourceOption));
         var compResult = sourceCompilation.Emit(ms, manifestResources: resinfos, options: emitOptions);
@@ -295,47 +474,17 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        var tsTargetOs = targetOS switch
-        {
-            TargetOS.Windows or TargetOS.UEFI => Internal.TypeSystem.TargetOS.Windows,
-            TargetOS.Linux => Internal.TypeSystem.TargetOS.Linux,
-        };
-
-        string isaArg = result.GetValueForOption(TargetIsaOption);
-        InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
-                "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
-                optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
-
-        bool disableReflection = result.GetValueForOption(NoReflectionOption);
-        bool disableStackTraceData = result.GetValueForOption(NoStackTraceDataOption) || stdlib != StandardLibType.DotNet;
-        string systemModuleName = DefaultSystemModule;
-        if (stdlib == StandardLibType.None && references.Length == 0)
-            systemModuleName = compiledModuleName;
-        if (stdlib == StandardLibType.Zero)
-            systemModuleName = "zerolib";
-
         if (stdlib != StandardLibType.DotNet)
         {
             SettingsTunnel.EmitGCInfo = false;
             SettingsTunnel.EmitEHInfo = false;
             SettingsTunnel.EmitGSCookies = false;
-            if (debugInfoFormat == 0)
-                SettingsTunnel.EmitUnwindInfo = false;
         }
 
-        bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
-
-        //
-        // Initialize type system context
-        //
-
-        SharedGenericsMode genericsMode = SharedGenericsMode.CanonicalReferenceTypes;
-
-        var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
-        var targetAbi = TargetAbi.NativeAot;
-        var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0, ms, compiledModuleName);
+
+        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -344,11 +493,10 @@ internal class BuildCommand : CommandBase
             referenceFilePaths[Path.GetFileNameWithoutExtension(reference)] = reference;
         }
 
-        string libc = result.GetValueForOption(TargetLibcOption);
         if (targetOS == TargetOS.Windows && targetArchitecture == TargetArchitecture.X86)
             libc ??= "none"; // don't have shcrt for Windows x86 because that one's hacked up
 
-        string homePath = CommonOptions.HomePath;
+        string patchElfPath = Path.Combine(homePath, "patch_elf.py");
         string libPath = Environment.GetEnvironmentVariable("BFLAT_LIB");
         if (libPath == null)
         {
@@ -373,6 +521,7 @@ internal class BuildCommand : CommandBase
                 TargetArchitecture.ARM64 => "arm64",
                 TargetArchitecture.X64 => "x64",
                 TargetArchitecture.X86 => "x86",
+                TargetArchitecture.RiscV64 => "riscv64",
                 _ => throw new Exception(targetArchitecture.ToString()),
             };
             currentLibPath = Path.Combine(currentLibPath, archPart);
@@ -380,10 +529,14 @@ internal class BuildCommand : CommandBase
 
             if (targetOS == TargetOS.Linux)
             {
-                currentLibPath = Path.Combine(currentLibPath, libc ?? "glibc");
+                var tmpLibc = libc;
+                if (libc == "zisk" || libc == "zisk_sim")
+                    tmpLibc = "musl";
+                currentLibPath = Path.Combine(currentLibPath, tmpLibc ?? "glibc");
                 libPath = currentLibPath + separator + libPath;
             }
 
+            Console.WriteLine("Library path: " + libPath);
             if (!Directory.Exists(currentLibPath))
             {
                 Console.Error.WriteLine($"Directory '{currentLibPath}' doesn't exist.");
@@ -398,7 +551,12 @@ internal class BuildCommand : CommandBase
             foreach (var reference in EnumerateExpandedDirectories(libPath, mask))
             {
                 string assemblyName = Path.GetFileNameWithoutExtension(reference);
+                if (assemblyName.StartsWith("System.Diagnostics"))
+                    continue;
                 referenceFilePaths[assemblyName] = reference;
+#if DEBUG
+                Console.WriteLine("Reference file: " + assemblyName + " -> " + reference);
+#endif
             }
         }
 
@@ -406,7 +564,14 @@ internal class BuildCommand : CommandBase
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
 
         typeSystemContext.SetSystemModule(typeSystemContext.GetModuleForSimpleName(systemModuleName));
+
+        //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
+
+        ilProvider = new HardwareIntrinsicILProvider(
+            instructionSetSupport,
+            new ExternSymbolMappedField(typeSystemContext.GetWellKnownType(WellKnownType.Int32), "g_cpuFeatures"),
+            ilProvider);
 
         //
         // Initialize compilation group and compilation roots
@@ -414,34 +579,41 @@ internal class BuildCommand : CommandBase
 
         List<string> initAssemblies = new List<string> { "System.Private.CoreLib" };
 
-        if (!disableReflection || !disableStackTraceData)
+
+        if (!disableReflection && !disableStackTraceData)
             initAssemblies.Add("System.Private.StackTraceMetadata");
 
         initAssemblies.Add("System.Private.TypeLoader");
+
+        initAssemblies.Add("System.Console");
 
         if (!disableReflection)
             initAssemblies.Add("System.Private.Reflection.Execution");
         else
             initAssemblies.Add("System.Private.DisabledReflection");
 
+        initAssemblies.Add("mscorlib");
+        initAssemblies.Add("System");
+
         // Build a list of assemblies that have an initializer that needs to run before
         // any user code runs.
-        List<ModuleDesc> assembliesWithInitalizers = new List<ModuleDesc>();
+        List<ModuleDesc> assembliesWithInitializers = new List<ModuleDesc>();
         if (stdlib == StandardLibType.DotNet)
         {
             foreach (string initAssemblyName in initAssemblies)
             {
                 ModuleDesc assembly = typeSystemContext.GetModuleForSimpleName(initAssemblyName);
-                assembliesWithInitalizers.Add(assembly);
+                assembliesWithInitializers.Add(assembly);
             }
         }
 
-        var libraryInitializers = new LibraryInitializers(typeSystemContext, assembliesWithInitalizers);
+        var libraryInitializers = new LibraryInitializers(typeSystemContext, assembliesWithInitializers);
 
         List<MethodDesc> initializerList = new List<MethodDesc>(libraryInitializers.LibraryInitializerMethods);
 
         CompilationModuleGroup compilationGroup;
         List<ICompilationRootProvider> compilationRoots = new List<ICompilationRootProvider>();
+        TypeMapManager typeMapManager = new UsageBasedTypeMapManager(TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext));
 
         compilationRoots.Add(new UnmanagedEntryPointsRootProvider(compiledAssembly));
 
@@ -453,7 +625,7 @@ internal class BuildCommand : CommandBase
         }
         else
         {
-            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads")));
+            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads", exportHidden: true)));
         }
 
         if (!nativeLib)
@@ -462,7 +634,7 @@ internal class BuildCommand : CommandBase
         }
 
         if (compiledAssembly != typeSystemContext.SystemModule)
-            compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule));
+            compilationRoots.Add(new UnmanagedEntryPointsRootProvider((EcmaModule)typeSystemContext.SystemModule, hidden: true));
         compilationGroup = new SingleFileCompilationModuleGroup();
 
         if (nativeLib)
@@ -509,12 +681,25 @@ internal class BuildCommand : CommandBase
             { "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization", false },
             { "System.Resources.ResourceManager.AllowCustomResourceTypes", false },
             { "System.Text.Encoding.EnableUnsafeUTF7Encoding", false },
-            { "System.Runtime.Serialization.DataContractSerializer.IsReflectionOnly", true },
-            { "System.Xml.Serialization.XmlSerializer.IsReflectionOnly", true },
-            { "System.Xml.XmlResolver.IsNetworkingEnabledByDefault", false },
-            { "System.Linq.Expressions.CanCompileToIL", false },
             { "System.Linq.Expressions.CanEmitObjectArrayDelegate", false },
-            { "System.Linq.Expressions.CanCreateArbitraryDelegates", false },
+            { "System.ComponentModel.DefaultValueAttribute.IsSupported", false },
+            { "System.ComponentModel.Design.IDesignerHost.IsSupported", false },
+            { "System.ComponentModel.TypeConverter.EnableUnsafeBinaryFormatterInDesigntimeLicenseContextSerialization", false },
+            { "System.ComponentModel.TypeDescriptor.IsComObjectDescriptorSupported", false },
+            { "System.Data.DataSet.XmlSerializationIsSupported", false },
+            { "System.Linq.Enumerable.IsSizeOptimized", true },
+            { "System.Net.SocketsHttpHandler.Http3Support", false },
+            { "System.Reflection.Metadata.MetadataUpdater.IsSupported", false },
+            { "System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", false },
+            { "System.Runtime.InteropServices.BuiltInComInterop.IsSupported", false },
+            { "System.Runtime.InteropServices.EnableConsumingManagedCodeFromNativeHosting", false },
+            { "System.Runtime.InteropServices.EnableCppCLIHostActivation", false },
+            { "System.Runtime.InteropServices.Marshalling.EnableGeneratedComInterfaceComImportInterop", false },
+            { "System.StartupHookProvider.IsSupported", false },
+            { "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault", false },
+            { "System.Threading.Thread.EnableAutoreleasePool", false },
+            { "System.Threading.ThreadPool.UseWindowsThreadPool", true },
+            { "System.Globalization.PredefinedCulturesOnly", true },
         };
 
         bool disableExceptionMessages = result.GetValueForOption(NoExceptionMessagesOption);
@@ -523,16 +708,15 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Resources.UseSystemResourceKeys", true);
         }
 
-        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic";
+        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || libc == "zisk" || libc == "zisk_sim";
         if (disableGlobalization)
         {
             featureSwitches.Add("System.Globalization.Invariant", true);
         }
 
-        if (disableReflection)
+        if (disableStackTraceData)
         {
-            featureSwitches.Add("System.Collections.Generic.DefaultComparers", false);
-            featureSwitches.Add("System.Reflection.IsReflectionExecutionAvailable", false);
+            featureSwitches.Add("System.Diagnostics.StackTrace.IsSupported", false);
         }
 
         foreach (var featurePair in result.GetValueForOption(FeatureSwitchOption))
@@ -549,7 +733,9 @@ internal class BuildCommand : CommandBase
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
 
-        ilProvider = new FeatureSwitchManager(ilProvider, logger, featureSwitches, substitutions);
+        SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+        ILProvider unsubstitutedILProvider = ilProvider;
+        ilProvider = new SubstitutedILProvider(ilProvider, substitutionProvider, new DevirtualizationManager());
 
         var stackTracePolicy = !disableStackTraceData ?
             (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy() : new NoStackTraceEmissionPolicy();
@@ -563,7 +749,6 @@ internal class BuildCommand : CommandBase
 
             resBlockingPolicy = new ManifestResourceBlockingPolicy(logger, featureSwitches, resourceBlocks);
 
-            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.AnonymousTypeHeuristic;
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.ReflectionILScanning;
         }
         else
@@ -573,13 +758,14 @@ internal class BuildCommand : CommandBase
         }
         DynamicInvokeThunkGenerationPolicy invokeThunkGenerationPolicy = new DefaultDynamicInvokeThunkGenerationPolicy();
 
-        var compilerGenerateState = new ILCompiler.Dataflow.CompilerGeneratedState(ilProvider, logger);
+        var compilerGenerateState = new ILCompiler.Dataflow.CompilerGeneratedState(ilProvider, logger, false);
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
+#if false
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
-
+#endif
         MetadataManager metadataManager = new UsageBasedMetadataManager(
             compilationGroup,
             typeSystemContext,
@@ -605,18 +791,20 @@ internal class BuildCommand : CommandBase
         bool useScanner = optimizationMode != OptimizationMode.None;
 
         // Enable static data preinitialization in optimized builds.
-        bool preinitStatics = optimizationMode != OptimizationMode.None;
+        bool preinitStatics = false; //optimizationMode != OptimizationMode.None;
 
         TypePreinit.TypePreinitializationPolicy preinitPolicy = preinitStatics ?
                 new TypePreinit.TypeLoaderAwarePreinitializationPolicy() : new TypePreinit.DisabledPreinitializationPolicy();
 
-        var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy);
+        var preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, preinitPolicy, new StaticReadOnlyFieldPolicy(), flowAnnotations);
 
         builder
             .UseILProvider(ilProvider)
             .UsePreinitializationManager(preinitManager)
-        .UseResilience(true);
+            .UseTypeMapManager(typeMapManager)
+            .UseResilience(true);
 
+        int parallelism = Environment.ProcessorCount;
         ILScanResults scanResults = null;
         if (useScanner)
         {
@@ -625,7 +813,9 @@ internal class BuildCommand : CommandBase
             ILScannerBuilder scannerBuilder = builder.GetILScannerBuilder()
                 .UseCompilationRoots(compilationRoots)
                 .UseMetadataManager(metadataManager)
+                .UseParallelism(parallelism)
                 .UseInteropStubManager(interopStubManager)
+                .UseTypeMapManager(typeMapManager)
                 .UseLogger(logger);
 
             string scanDgmlLogFileName = result.GetValueForOption(MstatOption) ? Path.ChangeExtension(outputFilePath, ".scan.dgml.xml") : null;
@@ -653,14 +843,17 @@ internal class BuildCommand : CommandBase
         DependencyTrackingLevel trackingLevel = dgmlLogFileName == null ?
             DependencyTrackingLevel.None : DependencyTrackingLevel.First;
 
-        bool foldMethodBodies = optimizationMode != OptimizationMode.None;
-        
+        MethodBodyFoldingMode foldMethodBodies = (optimizationMode != OptimizationMode.None)
+            ? MethodBodyFoldingMode.All
+            : MethodBodyFoldingMode.None;
+
         compilationRoots.Add(metadataManager);
         compilationRoots.Add(interopStubManager);
         builder
             .UseInstructionSetSupport(instructionSetSupport)
             .UseMethodBodyFolding(foldMethodBodies)
             .UseMetadataManager(metadataManager)
+            .UseParallelism(parallelism)
             .UseInteropStubManager(interopStubManager)
             .UseLogger(logger)
             .UseDependencyTracking(trackingLevel)
@@ -670,6 +863,19 @@ internal class BuildCommand : CommandBase
 
         if (scanResults != null)
         {
+            DevirtualizationManager devirtualizationManager = scanResults.GetDevirtualizationManager();
+
+            builder.UseTypeMapManager(scanResults.GetTypeMapManager());
+
+            substitutions.AppendFrom(scanResults.GetBodyAndFieldSubstitutions());
+
+            substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+
+            ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager);
+
+            // Use a more precise IL provider that uses whole program analysis for dead branch elimination
+            builder.UseILProvider(ilProvider);
+
             // If we have a scanner, feed the vtable analysis results to the compilation.
             // This could be a command line switch if we really wanted to.
             builder.UseVTableSliceProvider(scanResults.GetVTableLayoutInfo());
@@ -681,7 +887,7 @@ internal class BuildCommand : CommandBase
             // If we have a scanner, we can drive devirtualization using the information
             // we collected at scanning time (effectively sealing unsealed types if possible).
             // This could be a command line switch if we really wanted to.
-            builder.UseDevirtualizationManager(scanResults.GetDevirtualizationManager());
+            builder.UseDevirtualizationManager(devirtualizationManager);
 
             // If we use the scanner's result, we need to consult it to drive inlining.
             // This prevents e.g. devirtualizing and inlining methods on types that were
@@ -698,8 +904,11 @@ internal class BuildCommand : CommandBase
             // has the whole program view.
             if (preinitStatics)
             {
-                preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy());
-                builder.UsePreinitializationManager(preinitManager);
+                var readOnlyFieldPolicy = scanResults.GetReadOnlyFieldPolicy();
+                preinitManager = new PreinitializationManager(typeSystemContext, compilationGroup, ilProvider, scanResults.GetPreinitializationPolicy(),
+                    readOnlyFieldPolicy, flowAnnotations);
+                builder.UsePreinitializationManager(preinitManager)
+                    .UseReadOnlyFieldPolicy(readOnlyFieldPolicy);
             }
 
             // If we have a scanner, we can inline threadstatics storage using the information
@@ -726,6 +935,7 @@ internal class BuildCommand : CommandBase
             dumpers.Add(new MstatObjectDumper(mstatFileName, typeSystemContext));
 
         string objectFilePath = Path.ChangeExtension(outputFilePath, targetOS is TargetOS.Windows or TargetOS.UEFI ? ".obj" : ".o");
+        string patchedFilePath = Path.ChangeExtension(outputFilePath, ".patched");
 
         PerfWatch compileWatch = new PerfWatch("Native compile");
         CompilationResults compilationResults = compilation.Compile(objectFilePath, ObjectDumper.Compose(dumpers));
@@ -738,7 +948,7 @@ internal class BuildCommand : CommandBase
             ExportsFileWriter defFileWriter = new ExportsFileWriter(typeSystemContext, exportsFile, []);
             foreach (var compilationRoot in compilationRoots)
             {
-                if (compilationRoot is UnmanagedEntryPointsRootProvider provider)
+                if (compilationRoot is UnmanagedEntryPointsRootProvider provider && !provider.Hidden)
                     defFileWriter.AddExportedMethods(provider.ExportedMethods);
             }
 
@@ -763,6 +973,11 @@ internal class BuildCommand : CommandBase
         //
         // Run the platform linker
         //
+
+        if (targetArchitecture == TargetArchitecture.RiscV64)
+        {
+            PatchRiscvAbi(objectFilePath);
+        }
 
         if (logger.IsVerbose)
             logger.LogMessage("Running the linker");
@@ -836,7 +1051,9 @@ internal class BuildCommand : CommandBase
 
                 if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86)
+                    if (targetArchitecture is TargetArchitecture.ARM64 or TargetArchitecture.X86
+                        or TargetArchitecture.RiscV64
+                        )
                         ldArgs.Append("zerolibnative.obj ");
                 }
             }
@@ -862,6 +1079,8 @@ internal class BuildCommand : CommandBase
         {
             ldArgs.Append("-flavor ld ");
 
+            string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
+
             string firstLib = null;
             foreach (var lpath in libPath.Split(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':'))
             {
@@ -870,11 +1089,11 @@ internal class BuildCommand : CommandBase
                     firstLib = lpath;
             }
 
-            ldArgs.Append("-z now -z relro -z noexecstack --hash-style=gnu --eh-frame-hdr ");
-            
+            ldArgs.Append("-z now -z relro -z noexecstack --hash-style=gnu --eh-frame-hdr -z nostart-stop-gc ");
+
             if (targetArchitecture == TargetArchitecture.ARM64)
                 ldArgs.Append("-EL --fix-cortex-a53-843419 ");
-            
+
             if (libc == "bionic")
                 ldArgs.Append("--warn-shared-textrel -z max-page-size=4096 --enable-new-dtags ");
 
@@ -885,10 +1104,28 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-dynamic-linker /system/bin/linker64 ");
                     ldArgs.Append($"\"{firstLib}/crtbegin_dynamic.o\" ");
                 }
+                else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+                {
+                    ldArgs.Append("-static ");
+                    if (libc == "zisk" || libc == "zisk_sim")
+                    {
+                        ldArgs.Append($"\"{ziskLibPath}/crt1.o\" ");
+                        PatchRiscvAbi(ziskLibPath + "/crt1.o");
+                    }
+                    else
+                        ldArgs.Append($"\"{firstLib}/crt1.o\" ");
+                    ldArgs.Append($"\"{firstLib}/crti.o\" ");
+                    if (libc == "zisk" || libc == "zisk_sim")
+                    {
+                        PatchRiscvAbi(firstLib + "/crti.o");
+                    }
+                }
                 else
                 {
                     if (targetArchitecture == TargetArchitecture.ARM64)
                         ldArgs.Append("-dynamic-linker /lib/ld-linux-aarch64.so.1 ");
+                    else if (targetArchitecture == TargetArchitecture.RiscV64)
+                        ldArgs.Append("-dynamic-linker /lib/ld-linux-riscv64-lp64d.so.1 ");
                     else
                         ldArgs.Append("-dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
                     ldArgs.Append($"\"{firstLib}/Scrt1.o\" ");
@@ -906,7 +1143,8 @@ internal class BuildCommand : CommandBase
 
             ldArgs.AppendFormat("-o \"{0}\" ", outputFilePath);
 
-            if (libc != "bionic")
+            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
+                libc != "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtbeginS.o\" ");
@@ -916,7 +1154,7 @@ internal class BuildCommand : CommandBase
             ldArgs.Append(objectFilePath);
             ldArgs.Append('"');
             ldArgs.Append(' ');
-            ldArgs.Append("--as-needed --discard-all --gc-sections ");
+            ldArgs.Append("--as-needed --gc-sections ");
             ldArgs.Append("-rpath \"$ORIGIN\" ");
 
             if (buildTargetType == BuildTargetType.Shared)
@@ -943,21 +1181,37 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append("-lSystem.Native ");
                 if (stdlib == StandardLibType.DotNet)
                 {
+                    ldArgs.Append("-latomic ");
+                    ldArgs.Append("-leventpipe-disabled ");
+                    ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
-                        ldArgs.Append("-lSystem.Globalization.Native -lSystem.Net.Security.Native ");
+                        ldArgs.Append("-lSystem.Globalization.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
                 {
-                    if (targetArchitecture == TargetArchitecture.ARM64)
+                    if (targetArchitecture == TargetArchitecture.ARM64 || targetArchitecture == TargetArchitecture.RiscV64)
                         ldArgs.Append($"\"{firstLib}/libzerolibnative.o\" ");
                 }
             }
-                
 
-            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections -lgcc -lc -lgcc ");
-            if (libc != "bionic")
-                ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed -lpthread ");
+            ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections ");
+            if (libc != "musl" && libc != "zisk" && libc != "zisk_sim")
+            {
+                ldArgs.Append("-lc -lgcc ");
+            }
+
+            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
+                libc != "zisk_sim")
+            {
+                ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
+                if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
+                    ldArgs.Append("-lpthread ");
+            }
+            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+            {
+                ldArgs.Append($"\"{firstLib}/libc.a\" ");
+            }
 
             if (libc == "bionic")
             {
@@ -970,10 +1224,134 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"\"{firstLib}/crtend_android.o\" ");
                 }
             }
+            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+            {
+                ldArgs.Append($"\"{firstLib}/crtn.o\" ");
+            }
             else
             {
                 ldArgs.Append($"\"{firstLib}/crtendS.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
+            }
+
+            foreach (var ldArg in extraLd)
+            {
+                ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
+            }
+
+            if (libc == "musl")
+            {
+                /* hack, no fp must be built properly */
+                ldArgs.Append($"\"{Path.Combine(firstLib, "nofp.o")}\" ");
+            }
+
+            if (libc == "zisk" || libc == "zisk_sim")
+            {
+                /* Zisk */
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "script.ld")}\" ");
+                }
+                else
+                {
+                    ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
+                }
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                ldArgs.Append($"--whole-archive ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
+
+                /* rhp */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
+                ldArgs.Append($"--wrap=RhpNewFast ");
+                ldArgs.Append($"--wrap=RhpNewObject ");
+                ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
+                ldArgs.Append($"--wrap=RhpNewArrayFast ");
+                ldArgs.Append($"--wrap=RhNewString ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
+                ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
+                ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
+                ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_CompilerHelpers_StartupCodeHelpers__InitializeCommandLineArgs ");
+                ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Enter ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0 ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
+                ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"--wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling ");
+                    ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
+                    ldArgs.Append($"--wrap=SystemNative_Write ");
+                }
+
+                /* rhp_native */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
+                ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
+                ldArgs.Append($"--wrap=RhpCidResolve ");
+
+                /* pal */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
+                ldArgs.Append($"--wrap=getenv ");
+                ldArgs.Append($"--wrap=getcwd ");
+                ldArgs.Append($"--wrap=getpid ");
+                ldArgs.Append($"--wrap=getegid ");
+                ldArgs.Append($"--wrap=geteuid ");
+                ldArgs.Append($"--wrap=sched_getaffinity ");
+                ldArgs.Append($"--wrap=open ");
+                ldArgs.Append($"--wrap=__libc_malloc_impl ");
+                ldArgs.Append($"--wrap=__libc_realloc ");
+                ldArgs.Append($"--wrap=__libc_free ");
+                ldArgs.Append($"--wrap=pthread_create ");
+                ldArgs.Append($"--wrap=pthread_sigmask ");
+                ldArgs.Append($"--wrap=__clock_gettime ");
+                ldArgs.Append($"--wrap=clock_gettime ");
+                ldArgs.Append($"--wrap=__malloc_allzerop ");
+                ldArgs.Append($"--wrap=mmap ");
+                ldArgs.Append($"--wrap=munmap ");
+                ldArgs.Append($"--wrap=mlock ");
+                ldArgs.Append($"--wrap=munlock ");
+                ldArgs.Append($"--wrap=mlockall ");
+                ldArgs.Append($"--wrap=munlockall ");
+                ldArgs.Append($"--wrap=sched_yield ");
+                ldArgs.Append($"--wrap=sigaction ");
+                ldArgs.Append($"--wrap=signal ");
+                ldArgs.Append($"--wrap=syscall ");
+                ldArgs.Append($"--wrap=sysconf ");
+                if (libc == "zisk")
+                {
+                    /* Hide write() in Zisk */
+                    ldArgs.Append($"--wrap=__stdio_write ");
+                }
+
+                /* tls */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
+                ldArgs.Append($"--wrap=__tls_get_addr ");
+                ldArgs.Append($"--wrap=__init_tls ");
+                ldArgs.Append($"--wrap=__init_tp ");
+                ldArgs.Append($"--wrap=__copy_tls ");
+                ldArgs.Append($"--no-whole-archive ");
+
+                /* rng */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
+                ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
+
+                /* ugc */
+                ldArgs.Append($"--wrap=GC_Initialize ");
+                ldArgs.Append($"--wrap=GC_VersionInfo ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHeap.cpp.obj")}\" ");
             }
         }
 
@@ -997,7 +1375,18 @@ internal class BuildCommand : CommandBase
         int exitCode = RunCommand(ld, ldArgs.ToString(), printCommands);
         linkWatch.Complete();
 
-        try { File.Delete(objectFilePath); } catch { }
+        if (libc == "zisk" && exitCode == 0)
+        {
+            int patchExitCode = RunCommand(patchElfPath,
+                outputFilePath + " " + patchedFilePath +
+                " --fix-init-array --fix-tdata --split-code-data --remove-eh ",
+                printCommands);
+        }
+        if (!result.GetValueForOption(CommonOptions.KeepObjectOption))
+        {
+            try { File.Delete(objectFilePath); } catch { }
+        }
+
         if (exportsFile != null)
             try { File.Delete(exportsFile); } catch { }
 

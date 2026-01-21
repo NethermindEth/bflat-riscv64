@@ -27,7 +27,7 @@ namespace System.Runtime.CompilerServices
     internal class RawArrayData
     {
         public uint Length;
-#if X64 || ARM64
+#if X64 || ARM64 || RISCV64
         public uint Padding;
 #elif X86 || ARM
         // No padding on 32bit

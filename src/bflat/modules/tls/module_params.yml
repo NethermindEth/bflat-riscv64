@@ -1,0 +1,6 @@
+options:
+  ld:
+    - value: --wrap=__init_tls
+    - value: --wrap=__init_tp
+    - value: --wrap=__copy_tls
+    - value: --wrap=__tls_get_addr

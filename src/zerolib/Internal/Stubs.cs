@@ -51,6 +51,9 @@ namespace Internal.Runtime.CompilerHelpers
         static void ThrowIndexOutOfRangeException() => Environment.FailFast(null);
         static void ThrowDivideByZeroException() => Environment.FailFast(null);
         static void ThrowPlatformNotSupportedException() => Environment.FailFast(null);
+#if NET10_0_OR_GREATER
+        static void ThrowOverflowException() => Environment.FailFast(null);
+#endif
     }
 
     // A class that the compiler looks for that has helpers to initialize the

@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.IO;
@@ -45,6 +46,7 @@ internal class ILBuildCommand : CommandBase
             CommonOptions.DefinedSymbolsOption,
             CommonOptions.ReferencesOption,
             CommonOptions.StdLibOption,
+            CommonOptions.NoStdLibRefsOption,
             CommonOptions.DeterministicOption,
             CommonOptions.VerbosityOption,
             CommonOptions.OutputOption,
@@ -66,7 +68,8 @@ internal class ILBuildCommand : CommandBase
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
         string[] references = CommonOptions.GetReferencePaths(
             result.GetValueForOption(CommonOptions.ReferencesOption),
-            result.GetValueForOption(CommonOptions.StdLibOption));
+            result.GetValueForOption(CommonOptions.StdLibOption),
+            result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
 
         OptimizationLevel optimizationLevel = result.GetValueForOption(OptimizeOption) ? OptimizationLevel.Release : OptimizationLevel.Debug;
 
@@ -147,6 +150,7 @@ internal class ILBuildCommand : CommandBase
                 TargetArchitecture.X64 => "X64",
                 TargetArchitecture.ARM => "ARM",
                 TargetArchitecture.ARM64 => "ARM64",
+                TargetArchitecture.RiscV64 => "RISCV64",
             },
             os switch
             {
@@ -242,7 +246,8 @@ internal class ILBuildCommand : CommandBase
             outputKind.Value,
             allowUnsafe: true,
             optimizationLevel: optimizationLevel,
-            deterministic: deterministic);
+            deterministic: deterministic,
+            metadataImportOptions: MetadataImportOptions.All);
         return CSharpCompilation.Create(moduleName, trees, metadataReferences, compilationOptions);
     }
 }

@@ -1,23 +1,28 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="bflat.variant.props" />
+  <Import Project="bflat.build.props" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net$(DotnetVersion).0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version Condition="'$(Version)' == ''">42.42.42.42</Version>
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <RuntimeVersion>8.0.2-rtm.24317.2</RuntimeVersion>
-    <RuntimeUri>https://github.com/bflattened/runtime/releases/download/</RuntimeUri>
+  <ItemGroup>
+    <!-- Remove ZisK from all the automatic download/extract tasks -->
+    <SupportedTarget Remove="linux-zisk-riscv64" />
+  </ItemGroup>
 
-    <BlobsVersion>1.3</BlobsVersion>
-    <BlobsUri>https://github.com/bflattened/blobs/releases/download/</BlobsUri>
-
-    <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
-  </PropertyGroup>
+  <ItemGroup>
+    <SdkBlob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- don’t attempt to download the ZisK *blob* either -->
+    <Blob Remove="libs-zisk-riscv64" />
+  </ItemGroup>
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
@@ -36,52 +41,6 @@
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <CompilerHost Condition="'$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'win-x64'">windows-x64</CompilerHost>
-    <CompilerHost Condition="'$(CompilerHost)' == '' and '$(NETCoreSdkRuntimeIdentifier)' == 'linux-x64'">linux-glibc-x64</CompilerHost>
-    <DownloadCachePath Condition="$(DownloadCachePath) == ''">$(BaseIntermediateOutputPath)</DownloadCachePath>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <SupportedHost Include="windows-x64">
-      <OS>windows</OS>
-      <Arch>x64</Arch>
-    </SupportedHost>
-    <SupportedHost Include="windows-arm64">
-      <OS>windows</OS>
-      <Arch>arm64</Arch>
-    </SupportedHost>
-    <SupportedHost Include="linux-glibc-x64">
-      <OS>linux</OS>
-      <Arch>x64</Arch>
-    </SupportedHost>
-    <SupportedHost Include="linux-glibc-arm64">
-      <OS>linux</OS>
-      <Arch>arm64</Arch>
-    </SupportedHost>
-  </ItemGroup>
-
-  <ItemGroup>
-    <SupportedTarget Include="windows-x64">
-      <LibPath>windows\x64\</LibPath>
-    </SupportedTarget>
-    <SupportedTarget Include="windows-arm64">
-      <LibPath>windows\arm64\</LibPath>
-    </SupportedTarget>
-    <SupportedTarget Include="windows-x86">
-      <LibPath>windows\x86\</LibPath>
-    </SupportedTarget>
-    <SupportedTarget Include="linux-glibc-x64">
-      <LibPath>linux\x64\glibc\</LibPath>
-    </SupportedTarget>
-    <SupportedTarget Include="linux-glibc-arm64">
-      <LibPath>linux\arm64\glibc</LibPath>
-    </SupportedTarget>
-    <SupportedTarget Include="linux-bionic-arm64">
-      <LibPath>linux\arm64\bionic</LibPath>
-    </SupportedTarget>
-  </ItemGroup>
-
   <ItemGroup>
     <RuntimeArtifact Include="bflat-compiler-native-$(CompilerHost)" />
     <RuntimeArtifact Include="@(SupportedTarget->'bflat-libs-%(Identity)')" />
@@ -89,21 +48,106 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Remove ZisK from all the automatic download/extract tasks -->
+    <RuntimeArtifact Remove="bflat-libs-zisk-riscv64" />
+  </ItemGroup>
+
+  <ItemGroup>
     <CompilerBlob Include="compiler-$(CompilerHost)" />
-    <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')" />
+
+    <SdkBlob Include="@(SupportedTarget->'libs-%(Identity)')">
+      <Os>%(Os)</Os>
+      <Lib>%(Lib)</Lib>
+      <Arch>%(Arch)</Arch>
+    </SdkBlob>
 
     <Blob Include="@(CompilerBlob);@(SdkBlob)" />
   </ItemGroup>
 
   <Target Name="CreateCompilerLayout"
-          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs" />
+          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk_sim" />
+
+    <!-- zisklib -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\zisklib\bin\Release\net10.0\linux-riscv64\zisklib.dll"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisklib.dll" />
+
+    <!-- Pure Zisk specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\entrypoint.o" />
+
+    <!-- Zisk Simulator specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\entrypoint.o" />
+
+    <!-- Generic modules -->
+
+    <!-- crt-musl patch -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\crt-musl\crt1.o"
+          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+
+    <!-- NoFP -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\musl\nofp.o" />
+
+    <!-- PAL -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />
+
+    <!-- RHP -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
+
+    <!-- RNG -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.o" />
+
+    <!-- stdcppshim -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />
+
+    <!-- tls -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.o" />
+
+    <!-- uBootstrap -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ubootstrap\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ubootstrap.o" />
+
+    <!-- ugc-zero -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGC.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGC.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleManager.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleManager.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleStore.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHeap.cpp.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
+
+    <!-- zerolibnative -->
+    <Copy SourceFiles="$(OutputPath)lib\linux\riscv64\musl\libzerolibnative.o"
+      DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+
+    <!-- patch-elf script -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"
+          DestinationFiles="$(OutputPath)patch_elf.py" />
+  </Target>
 
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"
           Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip'))"
           Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip')">
 
-    <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)/%(RuntimeArtifact.Identity).zip"
+    <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)$(RuntimeVersionPostfix)/%(RuntimeArtifact.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(RuntimeArtifact.Identity)-$(RuntimeVersion).zip" />
@@ -137,7 +181,7 @@
 
     <Unzip SourceFiles="$(DownloadCachePath)compiler-$(CompilerHost)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)" />
-    
+
     <Exec Command="chmod +x $(OutputPath)bin/lld" Condition="'$(OS)' != 'Windows_NT' and $(CompilerHost.StartsWith('linux'))" />
     <Exec Command="chmod +x $(OutputPath)bin/llvm-objcopy" Condition="'$(OS)' != 'Windows_NT' and $(CompilerHost.StartsWith('linux'))" />
 
@@ -175,8 +219,9 @@
           Inputs="@(SdkBlob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
           Outputs="@(SdkBlob->'$(IntermediateOutputPath)\%(Identity)-$(BlobsVersion).semaphore')">
 
+    <Message Text="Extracting SDK blob for os=%(SdkBlob.Os) arch=%(SdkBlob.Arch) lib=%(SdkBlob.Lib)..." Importance="High" />
     <Unzip SourceFiles="$(DownloadCachePath)%(SdkBlob.Identity)-$(BlobsVersion).zip"
-           DestinationFolder="$(OutputPath)" />
+           DestinationFolder="$(OutputPath)lib/%(SdkBlob.Os)/%(SdkBlob.Arch)/%(SdkBlob.Lib)" />
 
     <Touch Files="$(IntermediateOutputPath)\%(SdkBlob.Identity)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
@@ -231,21 +276,23 @@
     <MakeDir Directories="$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86"
              Condition="!Exists('$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86')" />
 
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\x64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\arm64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x64\zerolib.dll&quot;"
+    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d RISCV64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\linux\riscv64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X86 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\arm64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\x64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d WINDOWS -d X86 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\windows\x86\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\arm64\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\x64\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
-    <Exec Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\ref\zerolib.dll&quot;"
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d UEFI -d ARM64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\lib\uefi\arm64\zerolib.dll&quot;"
+          WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
+    <Exec Condition="false" Command="&quot;$(RunCommand)&quot; build-il --deterministic --stdlib:none -d LINUX -d X64 -o:&quot;$(LayoutsDirectory)%(SupportedHost.Identity)\ref\zerolib.dll&quot;"
           WorkingDirectory="$(MSBuildThisFileDirectory)..\zerolib" />
   </Target>
 
@@ -254,5 +301,9 @@
   <PropertyGroup>
     <BuildDependsOn>$(BuildDependsOn);CreateCompilerLayout</BuildDependsOn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove=".*.cs" />
+  </ItemGroup>
 
 </Project>
