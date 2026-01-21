@@ -2,9 +2,9 @@ name: Build RISC-V64
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, main]
   pull_request:
-    branches: [ master, main ]
+    branches: [master, main]
   workflow_dispatch:
 
 jobs:
@@ -27,7 +27,8 @@ jobs:
             binutils-riscv64-linux-gnu \
             wget \
             curl \
-            ca-certificates
+            ca-certificates \
+            yq
 
       - name: Install .NET 10
         run: |
