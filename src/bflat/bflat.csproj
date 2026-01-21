@@ -69,6 +69,10 @@
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk_sim" />
 
+    <!-- zisklib -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\zisklib\bin\Release\net10.0\linux-riscv64\zisklib.dll"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisklib.dll" />
+
     <!-- Pure Zisk specific -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\script.ld"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\script.ld" />
