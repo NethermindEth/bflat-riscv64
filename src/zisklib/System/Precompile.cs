@@ -20,9 +20,14 @@ using System.Runtime.InteropServices;
 
 namespace System
 {
-    public static unsafe class ZisKPrecompile
+    /// Implementation of ZisK precompiles
+    public static unsafe partial class ZisKPrecompile
     {
+        // The precompile stubs are expected to be linked into the main image, other variants
+        // will never work in NativeAOT for Nethermind binaries.
         private const string NativeLibraryName = "__Internal";
+
+        // Common low-level value types matching `syscalls/complex.rs` and `syscalls/point.rs`
 
         [StructLayout(LayoutKind.Sequential)]
         public struct SyscallComplex256
@@ -51,6 +56,8 @@ namespace System
             public fixed ulong x[6];
             public fixed ulong y[6];
         }
+
+        // Params structs matching `syscalls/*.rs`
 
         [StructLayout(LayoutKind.Sequential)]
         public struct SyscallArith256Params
@@ -161,64 +168,89 @@ namespace System
             public SyscallComplex384* f2; // &SyscallComplex384
         }
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_keccakf", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_keccakf(ulong* state25_u64);
+        // Native imports: must match symbol names from zkvm_zisk_precomp/module.S
+        // Using LibraryImport for NativeAOT source-generated (direct) P/Invoke.
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_arith256", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_arith256(SyscallArith256Params* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_keccakf")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_keccakf(ulong* state25_u64);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_arith256_mod", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_arith256_mod(SyscallArith256ModParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_arith256")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_arith256(SyscallArith256Params* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_secp256k1_add", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_secp256k1_add(SyscallSecp256k1AddParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_arith256_mod")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_arith256_mod(SyscallArith256ModParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_secp256k1_dbl", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_secp256k1_dbl(SyscallPoint256* p1);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_secp256k1_add")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_secp256k1_add(SyscallSecp256k1AddParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_sha256f", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_sha256f(SyscallSha256Params* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_secp256k1_dbl")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_secp256k1_dbl(SyscallPoint256* p1);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bn254_curve_add", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bn254_curve_add(SyscallBn254CurveAddParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_sha256f")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_sha256f(SyscallSha256Params* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bn254_curve_dbl", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bn254_curve_dbl(SyscallPoint256* p1);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bn254_curve_add")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bn254_curve_add(SyscallBn254CurveAddParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_add", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bn254_complex_add(SyscallBn254ComplexAddParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bn254_curve_dbl")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bn254_curve_dbl(SyscallPoint256* p1);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_sub", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bn254_complex_sub(SyscallBn254ComplexSubParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_add")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bn254_complex_add(SyscallBn254ComplexAddParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_mul", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bn254_complex_mul(SyscallBn254ComplexMulParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_sub")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bn254_complex_sub(SyscallBn254ComplexSubParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_arith384_mod", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_arith384_mod(SyscallArith384ModParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bn254_complex_mul")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bn254_complex_mul(SyscallBn254ComplexMulParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_curve_add", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bls12_381_curve_add(SyscallBls12_381CurveAddParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_arith384_mod")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_arith384_mod(SyscallArith384ModParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_curve_dbl", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bls12_381_curve_dbl(SyscallPoint384* p1);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_curve_add")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bls12_381_curve_add(SyscallBls12_381CurveAddParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_add", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bls12_381_complex_add(SyscallBls12_381ComplexAddParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_curve_dbl")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bls12_381_curve_dbl(SyscallPoint384* p1);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_sub", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bls12_381_complex_sub(SyscallBls12_381ComplexSubParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_add")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bls12_381_complex_add(SyscallBls12_381ComplexAddParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_mul", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern void zkvm_bls12_381_complex_mul(SyscallBls12_381ComplexMulParams* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_sub")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bls12_381_complex_sub(SyscallBls12_381ComplexSubParams* p);
 
-        [DllImport(NativeLibraryName, EntryPoint = "zkvm_add256", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        private static extern ulong zkvm_add256(SyscallAdd256Params* p);
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_bls12_381_complex_mul")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial void zkvm_bls12_381_complex_mul(SyscallBls12_381ComplexMulParams* p);
+
+        [LibraryImport(NativeLibraryName, EntryPoint = "zkvm_add256")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static partial ulong zkvm_add256(SyscallAdd256Params* p);
+
+        // Public API (wrappers)
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void KeccakF(Span<ulong> state25)
         {
-            if (state25.Length < 25) throw new ArgumentException("KeccakF state must be 25 u64 words (1600 bits).", nameof(state25));
+            if (state25.Length < 25)
+                throw new ArgumentException("KeccakF state must be 25 u64 words (1600 bits).", nameof(state25));
+
             fixed (ulong* p = state25)
                 zkvm_keccakf(p);
         }
