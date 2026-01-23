@@ -672,6 +672,18 @@ internal class BuildCommand : CommandBase
             directPinvokes.Add("libsokol");
         }
 
+        if (libc == "zisk")
+        {
+            directPinvokes.Add("__Internal");
+        }
+
+#if DEBUG
+        foreach (var dp in directPinvokes)
+        {
+            Console.WriteLine("Direct P/Invoke: " + dp);
+        }
+#endif
+
         PInvokeILEmitterConfiguration pinvokePolicy = new ConfigurablePInvokePolicy(typeSystemContext.Target, directPinvokes, directPinvokeList);
 
         var featureSwitches = new Dictionary<string, bool>()
