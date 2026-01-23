@@ -1245,6 +1245,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(firstLib, "nofp.o")}\" ");
             }
 
+
             if (libc == "zisk" || libc == "zisk_sim")
             {
                 /* Zisk */
@@ -1257,6 +1258,10 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "zisk_precomp.o")}\" ");
+                }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
