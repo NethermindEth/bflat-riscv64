@@ -18,6 +18,48 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+//
+// This is precompile support for the ZisK-flavor of bflat.
+// ZisK syscalls are implemented in the assembly. The direct P/Invoke is implemented here, in the managed code,
+// and then bflat has a special P/Invoke policy to link these functions without using the dynamic loader.
+//
+// Example of using precompiles in the client code:
+//
+//  using System;
+//
+//  public static unsafe void Example_Arith256()
+//  {
+//      ulong* a = stackalloc ulong[4];
+//      ulong* b = stackalloc ulong[4];
+//      ulong* c = stackalloc ulong[4];
+//      ulong* dl = stackalloc ulong[4];
+//      ulong* dh = stackalloc ulong[4];
+//
+//      a[0] = 3; a[1] = a[2] = a[3] = 0;
+//      b[0] = 7; b[1] = b[2] = b[3] = 0;
+//      c[0] = 5; c[1] = c[2] = c[3] = 0;
+//
+//      var p = new System.ZisKPrecompile.SyscallArith256Params
+//      {
+//          a = a,
+//          b = b,
+//          c = c,
+//          dl = dl,
+//          dh = dh
+//      };
+//
+//      System.ZisKPrecompile.Arith256(ref p);
+//
+//      bool isCorrect =
+//          dh[0] == 0 && dh[1] == 0 && dh[2] == 0 && dh[3] == 0 &&
+//          dl[0] == 26 && dl[1] == 0 && dl[2] == 0 && dl[3] == 0;
+//
+//      if (!isCorrect)
+//      {
+//          throw new System.Exception("Arith256 result is incorrect.");
+//      }
+//  }
+//
 namespace System
 {
     /// Implementation of ZisK precompiles
