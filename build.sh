@@ -79,7 +79,7 @@ case $flavor in
 	generic)
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj
-			on_fail "Failed to build bflat (generic)"
+			on_fail $? "Failed to build bflat (generic)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj -t:BuildLayouts -c:Release
@@ -97,7 +97,7 @@ case $flavor in
 		fi
 		if [ "${what}" == "zisklib" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/zisklib/zisklib.riscv64.csproj -c:Release
-			on_fail "Failed to build zisklib (generic)"
+			on_fail $? "Failed to build zisklib (generic)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -t:BuildLayouts -c:Release
