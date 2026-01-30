@@ -507,6 +507,11 @@ void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 {
 }
 
+int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *)
+{
+    return 1;
+}
+
 int __wrap__ZN6Thread10IsDetachedEv(void *)
 {
     return 0;
