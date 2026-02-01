@@ -490,6 +490,10 @@ void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
 {
 }
 
+void __wrap_S_P_CoreLib_System_Threading_Lock__EnterScope(long param_1)
+{
+}
+
 void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
 {
     return param_2;

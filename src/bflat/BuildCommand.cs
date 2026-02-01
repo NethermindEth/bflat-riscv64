@@ -1299,6 +1299,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Enter ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterScope ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
