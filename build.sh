@@ -92,6 +92,7 @@ case $flavor in
 			on_fail $? "Failed to build modules"
 		fi
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
+			./update_nupkg.sh
 			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64
 			on_fail $? "Failed to build bflat (riscv64)"
 		fi
