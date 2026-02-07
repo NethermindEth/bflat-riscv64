@@ -6,13 +6,13 @@
 
     <!-- Infer blob source -->
     <BlobSource>bflattened</BlobSource>
-    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10'">interpretica</BlobSource>
+    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10'">nethermind</BlobSource>
   </PropertyGroup>
 
   <!-- Infer blob sources -->
   <PropertyGroup>
-    <RuntimeUri Condition="'$(BlobSource)' == 'interpretica'">https://opensource.interpretica.io/bflat/</RuntimeUri>
-    <BlobsUri Condition="'$(BlobSource)' == 'interpretica'">https://opensource.interpretica.io/bflat/blobs/</BlobsUri>
+    <RuntimeUri Condition="'$(BlobSource)' == 'nethermind'">https://github.com/NethermindEth/dotnet-riscv/releases/download/</RuntimeUri>
+    <BlobsUri Condition="'$(BlobSource)' == 'nethermind'">https://github.com/NethermindEth/dotnet-riscv/releases/download/</BlobsUri>
     <RuntimeUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/runtime/releases/download/</RuntimeUri>
     <BlobsUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/blobs/releases/download/</BlobsUri>
   </PropertyGroup>
