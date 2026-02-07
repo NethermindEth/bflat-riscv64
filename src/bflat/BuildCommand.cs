@@ -31,6 +31,9 @@ using System.Xml;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
 
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
@@ -166,6 +169,11 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "Feature=[true|false]",
     };
 
+    private static Option<string[]> ExtLibOption = new Option<string[]>("--extlib", "Download and link external library from GitHub release (lib.a)")
+    {
+        ArgumentHelpName = "github-repo-url"
+    };
+
     public static Command Create()
     {
         var command = new Command("build", "Compiles the specified C# source files into native code")
@@ -205,13 +213,156 @@ internal class BuildCommand : CommandBase
             CommonOptions.LangVersionOption,
             CommonOptions.ExtraLd,
             CommonOptions.KeepObjectOption,
+            ExtLibOption,
         };
         command.Handler = new BuildCommand();
 
         return command;
     }
 
-    private static IEnumerable<string> EnumerateExpandedDirectories(string paths, string pattern)
+    private static async Task<string> DownloadLatestReleaseLibrary(string repoUrl, string tempDir, bool verbose, TargetArchitecture targetArch, TargetOS targetOS, string libc)
+    {
+        // Parse GitHub URL to extract owner and repo
+        // Expected formats: https://github.com/owner/repo or github.com/owner/repo
+        string[] parts = repoUrl.Replace("https://", "").Replace("http://", "").Split('/');
+        if (parts.Length < 3 || parts[0] != "github.com")
+        {
+            throw new Exception($"Invalid GitHub repository URL: {repoUrl}");
+        }
+
+        string owner = parts[1];
+        string repo = parts[2].TrimEnd('/');
+
+        if (verbose)
+            Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo}...");
+
+        using var httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.Add("User-Agent", "bflat-compiler");
+
+        // Get bflat-manifest.json from repository
+        string manifestUrl = $"https://raw.githubusercontent.com/{owner}/{repo}/main/bflat-manifest.json";
+        string manifestJson;
+        try
+        {
+            manifestJson = await httpClient.GetStringAsync(manifestUrl);
+        }
+        catch
+        {
+            // Try master branch if main doesn't exist
+            manifestUrl = $"https://raw.githubusercontent.com/{owner}/{repo}/master/bflat-manifest.json";
+            manifestJson = await httpClient.GetStringAsync(manifestUrl);
+        }
+
+        // Parse manifest
+        using JsonDocument manifestDoc = JsonDocument.Parse(manifestJson);
+        JsonElement manifestRoot = manifestDoc.RootElement;
+
+        // Convert target parameters to strings for comparison
+        string targetArchStr = targetArch switch
+        {
+            TargetArchitecture.X64 => "x64",
+            TargetArchitecture.X86 => "x86",
+            TargetArchitecture.ARM64 => "arm64",
+            TargetArchitecture.RiscV64 => "riscv64",
+            _ => throw new Exception($"Unsupported architecture: {targetArch}")
+        };
+
+        string targetOSStr = targetOS switch
+        {
+            TargetOS.Windows => "windows",
+            TargetOS.Linux => "linux",
+            TargetOS.UEFI => "uefi",
+            _ => throw new Exception($"Unsupported OS: {targetOS}")
+        };
+
+        // Find matching build configuration
+        string staticLibName = null;
+        if (manifestRoot.TryGetProperty("builds", out JsonElement builds))
+        {
+            foreach (JsonElement build in builds.EnumerateArray())
+            {
+                bool archMatch = build.TryGetProperty("arch", out JsonElement archElement) &&
+                                 archElement.GetString() == targetArchStr;
+                bool osMatch = build.TryGetProperty("os", out JsonElement osElement) &&
+                               osElement.GetString() == targetOSStr;
+
+                bool libcMatch = true;
+                if (!string.IsNullOrEmpty(libc) && build.TryGetProperty("libc", out JsonElement libcElement))
+                {
+                    libcMatch = libcElement.GetString() == libc;
+                }
+
+                if (archMatch && osMatch && libcMatch)
+                {
+                    if (build.TryGetProperty("static_lib", out JsonElement libElement))
+                    {
+                        staticLibName = libElement.GetString();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (staticLibName == null)
+        {
+            throw new Exception($"No matching library found in bflat-manifest.json for arch={targetArchStr}, os={targetOSStr}, libc={libc ?? "any"}");
+        }
+
+        if (verbose)
+            Console.WriteLine($"Found matching library: {staticLibName}");
+
+        // Get latest release info from GitHub API
+        string apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+        string releaseJson = await httpClient.GetStringAsync(apiUrl);
+
+        // Parse JSON to find the static library asset
+        using JsonDocument doc = JsonDocument.Parse(releaseJson);
+        JsonElement root = doc.RootElement;
+
+        string downloadUrl = null;
+
+        if (root.TryGetProperty("assets", out JsonElement assets))
+        {
+            foreach (JsonElement asset in assets.EnumerateArray())
+            {
+                if (asset.TryGetProperty("name", out JsonElement nameElement))
+                {
+                    string name = nameElement.GetString();
+                    if (name == staticLibName)
+                    {
+                        if (asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+                        {
+                            downloadUrl = urlElement.GetString();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (downloadUrl == null)
+        {
+            throw new Exception($"{staticLibName} not found in latest release of {owner}/{repo}");
+        }
+
+        if (verbose)
+            Console.WriteLine($"Downloading {staticLibName} from {downloadUrl}...");
+
+        // Create temp directory if it doesn't exist
+        Directory.CreateDirectory(tempDir);
+
+        // Download the library
+        string destPath = Path.Combine(tempDir, $"{owner}_{repo}_{staticLibName}");
+        byte[] fileBytes = await httpClient.GetByteArrayAsync(downloadUrl);
+        await File.WriteAllBytesAsync(destPath, fileBytes);
+
+        if (verbose)
+            Console.WriteLine($"Downloaded to {destPath}");
+
+        return destPath;
+    }
+
+    static IEnumerable<string> EnumerateExpandedDirectories(string paths, string pattern)
     {
         string[] split = paths.Split(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':');
         foreach (var dir in split)
@@ -327,6 +478,31 @@ internal class BuildCommand : CommandBase
             };
         }
 
+        bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
+
+        // Handle extlib downloads synchronously - after we know target arch/os/libc
+        string[] extLibUrls = result.GetValueForOption(ExtLibOption);
+        List<string> downloadedLibPaths = new List<string>();
+
+        if (extLibUrls != null && extLibUrls.Length > 0)
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "bflat-extlibs");
+
+            foreach (var url in extLibUrls)
+            {
+                try
+                {
+                    string tmpLibPath = DownloadLatestReleaseLibrary(url, tempDir, verbose, targetArchitecture, targetOS, libc).GetAwaiter().GetResult();
+                    downloadedLibPaths.Add(tmpLibPath);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Error downloading external library from {url}: {ex.Message}");
+                    return 1;
+                }
+            }
+        }
+
         OptimizationLevel optimizationLevel = nooptimize ? OptimizationLevel.Debug : OptimizationLevel.Release;
 
         string userSpecificedOutputFileName = result.GetValueForOption(CommonOptions.OutputOption);
@@ -334,7 +510,6 @@ internal class BuildCommand : CommandBase
             userSpecificedOutputFileName != null ? Path.GetFileNameWithoutExtension(userSpecificedOutputFileName) :
             CommonOptions.GetOutputFileNameWithoutSuffix(userSpecifiedInputFiles);
 
-        bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
         bool disableStackTraceData = result.GetValueForOption(NoStackTraceDataOption) || stdlib != StandardLibType.DotNet;
         string systemModuleName = DefaultSystemModule;
         string compiledModuleName = Path.GetFileName(outputNameWithoutSuffix);
@@ -481,6 +656,7 @@ internal class BuildCommand : CommandBase
             SettingsTunnel.EmitGSCookies = false;
         }
 
+        Console.WriteLine("Supports reflection: " + supportsReflection.ToString());
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0, ms, compiledModuleName);
 
@@ -761,7 +937,14 @@ internal class BuildCommand : CommandBase
 
             resBlockingPolicy = new ManifestResourceBlockingPolicy(logger, featureSwitches, resourceBlocks);
 
+            // When reflection is enabled, prefer a "just works" experience by default.
+            // This matches the most practical ILCompiler/ilc configurations (scan reflection + keep
+            // enough metadata to make common reflection scenarios succeed).
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.ReflectionILScanning;
+            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CompleteTypesOnly;
+            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CreateReflectableArtifacts;
+            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.RootDefaultAssemblies;
+
         }
         else
         {
@@ -774,7 +957,7 @@ internal class BuildCommand : CommandBase
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
-#if false
+#if true
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
@@ -791,7 +974,7 @@ internal class BuildCommand : CommandBase
             metadataOptions,
             logger,
             featureSwitches,
-            rootEntireAssembliesModules: Array.Empty<string>(),
+            rootEntireAssembliesModules: initAssemblies,
             additionalRootedAssemblies: Array.Empty<string>(),
             trimmedAssemblies: Array.Empty<string>(),
             satelliteAssemblyFilePaths: Array.Empty<string>());
@@ -1086,6 +1269,12 @@ internal class BuildCommand : CommandBase
                 }
             }
             ldArgs.Append("/opt:ref,icf /nodefaultlib:libcpmt.lib ");
+
+            // Add downloaded external libraries for Windows
+            foreach (var extLibPath in downloadedLibPaths)
+            {
+                ldArgs.Append($"\"{extLibPath}\" ");
+            }
         }
         else if (targetOS == TargetOS.Linux)
         {
@@ -1249,6 +1438,12 @@ internal class BuildCommand : CommandBase
             foreach (var ldArg in extraLd)
             {
                 ldArgs.Append(ldArg.Replace("{libpath}", firstLib) + " ");
+            }
+
+            // Add downloaded external libraries for Linux
+            foreach (var extLibPath in downloadedLibPaths)
+            {
+                ldArgs.Append($"\"{extLibPath}\" ");
             }
 
             if (libc == "musl")
