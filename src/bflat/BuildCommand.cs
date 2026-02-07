@@ -220,10 +220,26 @@ internal class BuildCommand : CommandBase
         return command;
     }
 
-    private static async Task<string> DownloadLatestReleaseLibrary(string repoUrl, string tempDir, bool verbose, TargetArchitecture targetArch, TargetOS targetOS, string libc)
+    private class ExtLibResult
     {
-        // Parse GitHub URL to extract owner and repo
-        // Expected formats: https://github.com/owner/repo or github.com/owner/repo
+        public string StaticLibPath { get; set; }
+        public string DotnetLibPath { get; set; }
+    }
+
+    private static async Task<ExtLibResult> DownloadLatestReleaseLibrary(string repoUrl, string tempDir, bool verbose, TargetArchitecture targetArch, TargetOS targetOS, string libc)
+    {
+        // Parse GitHub URL to extract owner, repo and optional version
+        // Expected formats: https://github.com/owner/repo or https://github.com/owner/repo:v1.0.0
+        string version = null;
+
+        // Look for version after the URL (after //)
+        int versionIndex = repoUrl.IndexOf(':', repoUrl.IndexOf("//") + 2);
+        if (versionIndex > 0)
+        {
+            version = repoUrl.Substring(versionIndex + 1);
+            repoUrl = repoUrl.Substring(0, versionIndex);
+        }
+
         string[] parts = repoUrl.Replace("https://", "").Replace("http://", "").Split('/');
         if (parts.Length < 3 || parts[0] != "github.com")
         {
@@ -234,7 +250,12 @@ internal class BuildCommand : CommandBase
         string repo = parts[2].TrimEnd('/');
 
         if (verbose)
-            Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo}...");
+        {
+            if (version != null)
+                Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo} (version: {version})...");
+            else
+                Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo} (latest)...");
+        }
 
         using var httpClient = new HttpClient();
         httpClient.DefaultRequestHeaders.Add("User-Agent", "bflat-compiler");
@@ -277,6 +298,8 @@ internal class BuildCommand : CommandBase
 
         // Find matching build configuration
         string staticLibName = null;
+        string dotnetLibName = null;
+
         if (manifestRoot.TryGetProperty("builds", out JsonElement builds))
         {
             foreach (JsonElement build in builds.EnumerateArray())
@@ -294,32 +317,56 @@ internal class BuildCommand : CommandBase
 
                 if (archMatch && osMatch && libcMatch)
                 {
-                    if (build.TryGetProperty("static_lib", out JsonElement libElement))
+                    // Get static_lib if present
+                    if (build.TryGetProperty("static_lib", out JsonElement staticLibElement))
                     {
-                        staticLibName = libElement.GetString();
-                        break;
+                        staticLibName = staticLibElement.GetString();
                     }
+
+                    // Get dotnet_lib if present
+                    if (build.TryGetProperty("dotnet_lib", out JsonElement dotnetLibElement))
+                    {
+                        dotnetLibName = dotnetLibElement.GetString();
+                    }
+
+                    break;
                 }
             }
         }
 
-        if (staticLibName == null)
+        if (staticLibName == null && dotnetLibName == null)
         {
             throw new Exception($"No matching library found in bflat-manifest.json for arch={targetArchStr}, os={targetOSStr}, libc={libc ?? "any"}");
         }
 
         if (verbose)
-            Console.WriteLine($"Found matching library: {staticLibName}");
+        {
+            if (staticLibName != null)
+                Console.WriteLine($"Found static library: {staticLibName}");
+            if (dotnetLibName != null)
+                Console.WriteLine($"Found dotnet library: {dotnetLibName}");
+        }
 
-        // Get latest release info from GitHub API
-        string apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+        // Get release info from GitHub API
+        string apiUrl;
+        if (version != null)
+        {
+            // Get specific version
+            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{version}";
+        }
+        else
+        {
+            // Get latest release
+            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+        }
         string releaseJson = await httpClient.GetStringAsync(apiUrl);
 
-        // Parse JSON to find the static library asset
+        // Parse JSON to find the library assets
         using JsonDocument doc = JsonDocument.Parse(releaseJson);
         JsonElement root = doc.RootElement;
 
-        string downloadUrl = null;
+        string staticLibDownloadUrl = null;
+        string dotnetLibDownloadUrl = null;
 
         if (root.TryGetProperty("assets", out JsonElement assets))
         {
@@ -328,38 +375,76 @@ internal class BuildCommand : CommandBase
                 if (asset.TryGetProperty("name", out JsonElement nameElement))
                 {
                     string name = nameElement.GetString();
-                    if (name == staticLibName)
+
+                    if (staticLibName != null && name == staticLibName)
                     {
                         if (asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
                         {
-                            downloadUrl = urlElement.GetString();
-                            break;
+                            staticLibDownloadUrl = urlElement.GetString();
+                        }
+                    }
+
+                    if (dotnetLibName != null && name == dotnetLibName)
+                    {
+                        if (asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+                        {
+                            dotnetLibDownloadUrl = urlElement.GetString();
                         }
                     }
                 }
             }
         }
 
-        if (downloadUrl == null)
+        // Check if we found what we need
+        if (staticLibName != null && staticLibDownloadUrl == null)
         {
-            throw new Exception($"{staticLibName} not found in latest release of {owner}/{repo}");
+            throw new Exception($"{staticLibName} not found in release of {owner}/{repo}");
         }
-
-        if (verbose)
-            Console.WriteLine($"Downloading {staticLibName} from {downloadUrl}...");
+        if (dotnetLibName != null && dotnetLibDownloadUrl == null)
+        {
+            if (verbose)
+                Console.WriteLine($"Warning: {dotnetLibName} not found in release, skipping dotnet library");
+            dotnetLibName = null; // Mark as not available
+        }
 
         // Create temp directory if it doesn't exist
         Directory.CreateDirectory(tempDir);
 
-        // Download the library
-        string destPath = Path.Combine(tempDir, $"{owner}_{repo}_{staticLibName}");
-        byte[] fileBytes = await httpClient.GetByteArrayAsync(downloadUrl);
-        await File.WriteAllBytesAsync(destPath, fileBytes);
+        var result = new ExtLibResult();
 
-        if (verbose)
-            Console.WriteLine($"Downloaded to {destPath}");
+        // Download static library if present
+        if (staticLibName != null && staticLibDownloadUrl != null)
+        {
+            if (verbose)
+                Console.WriteLine($"Downloading {staticLibName} from {staticLibDownloadUrl}...");
 
-        return destPath;
+            string destPath = Path.Combine(tempDir, $"{owner}_{repo}_{staticLibName}");
+            byte[] fileBytes = await httpClient.GetByteArrayAsync(staticLibDownloadUrl);
+            await File.WriteAllBytesAsync(destPath, fileBytes);
+
+            if (verbose)
+                Console.WriteLine($"Downloaded static library to {destPath}");
+
+            result.StaticLibPath = destPath;
+        }
+
+        // Download dotnet library if present
+        if (dotnetLibName != null && dotnetLibDownloadUrl != null)
+        {
+            if (verbose)
+                Console.WriteLine($"Downloading {dotnetLibName} from {dotnetLibDownloadUrl}...");
+
+            string destPath = Path.Combine(tempDir, $"{owner}_{repo}_{dotnetLibName}");
+            byte[] fileBytes = await httpClient.GetByteArrayAsync(dotnetLibDownloadUrl);
+            await File.WriteAllBytesAsync(destPath, fileBytes);
+
+            if (verbose)
+                Console.WriteLine($"Downloaded dotnet library to {destPath}");
+
+            result.DotnetLibPath = destPath;
+        }
+
+        return result;
     }
 
     static IEnumerable<string> EnumerateExpandedDirectories(string paths, string pattern)
@@ -387,6 +472,103 @@ internal class BuildCommand : CommandBase
             fs.WriteByte(0);
         }
         fs.Close();
+    }
+
+    void PatchRiscvAbiStaticLib(string libPath, bool verbose)
+    {
+        if (verbose)
+            Console.WriteLine($"Patching RISC-V ABI in static library: {libPath}");
+
+        // Create temp directory for extraction
+        string tempDir = Path.Combine(Path.GetTempPath(), $"bflat-patch-{Path.GetFileNameWithoutExtension(libPath)}-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            // Extract .a archive using ar
+            string ar = Environment.GetEnvironmentVariable("BFLAT_AR");
+            if (ar == null)
+            {
+                string toolSuffix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
+                string arPath = Path.Combine(CommonOptions.HomePath, "bin", "llvm-ar" + toolSuffix);
+
+                // If not found in HomePath, try system path
+                if (!File.Exists(arPath))
+                {
+                    arPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "llvm-ar.exe" : "llvm-ar";
+                }
+
+                ar = arPath;
+            }
+
+            // Extract archive
+            var extractProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = ar,
+                Arguments = $"x \"{libPath}\"",
+                WorkingDirectory = tempDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            });
+            extractProcess.WaitForExit();
+
+            if (extractProcess.ExitCode != 0)
+            {
+                if (verbose)
+                    Console.WriteLine($"Warning: Failed to extract {libPath}, skipping ABI patch");
+                return;
+            }
+
+            // Patch all .o files
+            var objectFiles = Directory.GetFiles(tempDir, "*.o");
+            foreach (var objFile in objectFiles)
+            {
+                if (verbose)
+                    Console.WriteLine($"  Patching {Path.GetFileName(objFile)}");
+                PatchRiscvAbi(objFile);
+            }
+
+            // Recreate archive with patched files
+            File.Delete(libPath);
+            var createArgs = new StringBuilder();
+            createArgs.Append($"rcs \"{libPath}\"");
+            foreach (var objFile in objectFiles)
+            {
+                createArgs.Append($" \"{Path.GetFileName(objFile)}\"");
+            }
+
+            var createProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = ar,
+                Arguments = createArgs.ToString(),
+                WorkingDirectory = tempDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            });
+            createProcess.WaitForExit();
+
+            if (createProcess.ExitCode != 0)
+            {
+                throw new Exception($"Failed to recreate static library {libPath}");
+            }
+
+            if (verbose)
+                Console.WriteLine($"Successfully patched {libPath}");
+        }
+        finally
+        {
+            // Clean up temp directory
+            try
+            {
+                Directory.Delete(tempDir, true);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
     }
 
     public override int Handle(ParseResult result)
@@ -422,20 +604,6 @@ internal class BuildCommand : CommandBase
         }
         string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
             result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
-
-        // Add zisklib.dll for zisk libc
-        if (libc == "zisk")
-        {
-            string ziskLibDll = Path.Combine(ziskLibPath, "zisklib.dll");
-
-            var referenceList = new List<string>(references ?? Array.Empty<string>());
-            referenceList.Add(ziskLibDll);
-            references = referenceList.ToArray();
-
-#if DEBUG
-            Console.WriteLine("Added zisklib reference: " + ziskLibDll);
-#endif
-        }
 
         string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
@@ -478,11 +646,11 @@ internal class BuildCommand : CommandBase
             };
         }
 
-        bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
-
         // Handle extlib downloads synchronously - after we know target arch/os/libc
         string[] extLibUrls = result.GetValueForOption(ExtLibOption);
         List<string> downloadedLibPaths = new List<string>();
+        List<string> downloadedDotnetLibPaths = new List<string>();
+        bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
 
         if (extLibUrls != null && extLibUrls.Length > 0)
         {
@@ -492,8 +660,25 @@ internal class BuildCommand : CommandBase
             {
                 try
                 {
-                    string tmpLibPath = DownloadLatestReleaseLibrary(url, tempDir, verbose, targetArchitecture, targetOS, libc).GetAwaiter().GetResult();
-                    downloadedLibPaths.Add(tmpLibPath);
+                    ExtLibResult extLibResult = DownloadLatestReleaseLibrary(url, tempDir, verbose, targetArchitecture, targetOS, libc).GetAwaiter().GetResult();
+
+                    // Handle static library
+                    if (extLibResult.StaticLibPath != null)
+                    {
+                        downloadedLibPaths.Add(extLibResult.StaticLibPath);
+
+                        // Patch RISC-V ABI if needed
+                        if (targetArchitecture == TargetArchitecture.RiscV64)
+                        {
+                            PatchRiscvAbiStaticLib(extLibResult.StaticLibPath, verbose);
+                        }
+                    }
+
+                    // Handle dotnet library
+                    if (extLibResult.DotnetLibPath != null)
+                    {
+                        downloadedDotnetLibPaths.Add(extLibResult.DotnetLibPath);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -502,6 +687,29 @@ internal class BuildCommand : CommandBase
                 }
             }
         }
+
+        // Add zisklib.dll and downloaded dotnet libraries to references
+        var referenceList = new List<string>(references ?? Array.Empty<string>());
+
+        if (libc == "zisk")
+        {
+            string ziskLibDll = Path.Combine(ziskLibPath, "zisklib.dll");
+            referenceList.Add(ziskLibDll);
+
+#if DEBUG
+            Console.WriteLine("Added zisklib reference: " + ziskLibDll);
+#endif
+        }
+
+        // Add downloaded dotnet libraries to references
+        foreach (var dotnetLibPath in downloadedDotnetLibPaths)
+        {
+            referenceList.Add(dotnetLibPath);
+            if (verbose)
+                Console.WriteLine($"Added external dotnet reference: {dotnetLibPath}");
+        }
+
+        references = referenceList.ToArray();
 
         OptimizationLevel optimizationLevel = nooptimize ? OptimizationLevel.Debug : OptimizationLevel.Release;
 
