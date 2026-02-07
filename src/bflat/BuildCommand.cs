@@ -1182,7 +1182,7 @@ internal class BuildCommand : CommandBase
             metadataOptions,
             logger,
             featureSwitches,
-            rootEntireAssembliesModules: initAssemblies,
+            rootEntireAssembliesModules: Array.Empty<string>(),
             additionalRootedAssemblies: Array.Empty<string>(),
             trimmedAssemblies: Array.Empty<string>(),
             satelliteAssemblyFilePaths: Array.Empty<string>());
