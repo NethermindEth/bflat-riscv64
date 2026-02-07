@@ -314,6 +314,11 @@ __wrap_syscall(long number, ...)
     }
 }
 
+int RhIsGCBridgeActive(void)
+{
+    return 0;
+}
+
 int
 __wrap___stdio_write(int fd, const void *buf, int count)
 {
