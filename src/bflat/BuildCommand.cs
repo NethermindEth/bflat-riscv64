@@ -252,29 +252,63 @@ internal class BuildCommand : CommandBase
         if (verbose)
         {
             if (version != null)
-                Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo} (version: {version})...");
+                Console.WriteLine($"Fetching release {version} for {owner}/{repo}...");
             else
-                Console.WriteLine($"Fetching bflat-manifest.json for {owner}/{repo} (latest)...");
+                Console.WriteLine($"Fetching latest release for {owner}/{repo}...");
         }
 
         using var httpClient = new HttpClient();
         httpClient.DefaultRequestHeaders.Add("User-Agent", "bflat-compiler");
 
-        // Get bflat-manifest.json from repository
-        string manifestUrl = $"https://raw.githubusercontent.com/{owner}/{repo}/main/bflat-manifest.json";
-        string manifestJson;
-        try
+        // Get release info from GitHub API
+        string apiUrl;
+        if (version != null)
         {
-            manifestJson = await httpClient.GetStringAsync(manifestUrl);
+            // Get specific version
+            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{version}";
         }
-        catch
+        else
         {
-            // Try master branch if main doesn't exist
-            manifestUrl = $"https://raw.githubusercontent.com/{owner}/{repo}/master/bflat-manifest.json";
-            manifestJson = await httpClient.GetStringAsync(manifestUrl);
+            // Get latest release
+            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+        }
+        string releaseJson = await httpClient.GetStringAsync(apiUrl);
+
+        // Parse JSON to find assets including manifest
+        using JsonDocument doc = JsonDocument.Parse(releaseJson);
+        JsonElement root = doc.RootElement;
+
+        // First, find and download the manifest
+        string manifestDownloadUrl = null;
+        if (root.TryGetProperty("assets", out JsonElement assetsForManifest))
+        {
+            foreach (JsonElement asset in assetsForManifest.EnumerateArray())
+            {
+                if (asset.TryGetProperty("name", out JsonElement nameElement))
+                {
+                    string name = nameElement.GetString();
+                    if (name == "bflat-manifest.json")
+                    {
+                        if (asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+                        {
+                            manifestDownloadUrl = urlElement.GetString();
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
-        // Parse manifest
+        if (manifestDownloadUrl == null)
+        {
+            throw new Exception($"bflat-manifest.json not found in release of {owner}/{repo}");
+        }
+
+        if (verbose)
+            Console.WriteLine($"Downloading bflat-manifest.json...");
+
+        // Download and parse manifest
+        string manifestJson = await httpClient.GetStringAsync(manifestDownloadUrl);
         using JsonDocument manifestDoc = JsonDocument.Parse(manifestJson);
         JsonElement manifestRoot = manifestDoc.RootElement;
 
@@ -347,24 +381,7 @@ internal class BuildCommand : CommandBase
                 Console.WriteLine($"Found dotnet library: {dotnetLibName}");
         }
 
-        // Get release info from GitHub API
-        string apiUrl;
-        if (version != null)
-        {
-            // Get specific version
-            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{version}";
-        }
-        else
-        {
-            // Get latest release
-            apiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
-        }
-        string releaseJson = await httpClient.GetStringAsync(apiUrl);
-
-        // Parse JSON to find the library assets
-        using JsonDocument doc = JsonDocument.Parse(releaseJson);
-        JsonElement root = doc.RootElement;
-
+        // Find the library assets in the release
         string staticLibDownloadUrl = null;
         string dotnetLibDownloadUrl = null;
 
