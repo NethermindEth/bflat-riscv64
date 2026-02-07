@@ -95,10 +95,6 @@ case $flavor in
 			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64
 			on_fail $? "Failed to build bflat (riscv64)"
 		fi
-		if [ "${what}" == "zisklib" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/zisklib/zisklib.riscv64.csproj -c:Release
-			on_fail $? "Failed to build zisklib (generic)"
-		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -t:BuildLayouts -c:Release
 			on_fail $? "Failed to build layouts (riscv64)"

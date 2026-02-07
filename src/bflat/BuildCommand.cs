@@ -604,7 +604,6 @@ internal class BuildCommand : CommandBase
         }
         string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
             result.GetValueForOption(CommonOptions.NoStdLibRefsOption));
-
         string[] extraLd = result.GetValueForOption(CommonOptions.ExtraLd);
 
         TargetOS targetOS;
@@ -688,20 +687,9 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        // Add zisklib.dll and downloaded dotnet libraries to references
+        // Add downloaded dotnet libraries to references
         var referenceList = new List<string>(references ?? Array.Empty<string>());
 
-        if (libc == "zisk")
-        {
-            string ziskLibDll = Path.Combine(ziskLibPath, "zisklib.dll");
-            referenceList.Add(ziskLibDll);
-
-#if DEBUG
-            Console.WriteLine("Added zisklib reference: " + ziskLibDll);
-#endif
-        }
-
-        // Add downloaded dotnet libraries to references
         foreach (var dotnetLibPath in downloadedDotnetLibPaths)
         {
             referenceList.Add(dotnetLibPath);
@@ -1673,10 +1661,6 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "zisk_precomp.o")}\" ");
-                }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");

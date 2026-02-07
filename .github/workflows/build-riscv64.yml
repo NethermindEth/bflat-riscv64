@@ -47,8 +47,5 @@ jobs:
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
 
-      - name: Build zisklib (riscv64)
-        run: ./build.sh zisklib riscv64
-
       - name: Build bflat (riscv64)
         run: ./build.sh bflat riscv64
