@@ -57,3 +57,4 @@ void __gesf2(void) {}
 void __ledf2(void) {}
 void __ltsf2(void) {}
 void __subsf3(void) {}
+void __eqsf2(void) {}
