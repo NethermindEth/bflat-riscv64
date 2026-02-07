@@ -44,6 +44,9 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Update nupkg
+        run: ./update-nupkg.sh
+
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
 
