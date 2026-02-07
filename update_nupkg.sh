@@ -11,7 +11,7 @@ fi
 mkdir -p src/packages
 pushd src/packages
     rm "$file"
-    wget "https://opensource.interpretica.io/bflat/$ver/$file"
+    wget "https://github.com/NethermindEth/dotnet-riscv/releases/download/$ver/$file"
 popd
 
 pushd ${TOP_DIR}/src/bflat
