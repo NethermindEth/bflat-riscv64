@@ -57,11 +57,17 @@ function build_modules()
 					fi
 					if [ -f module_params.yml ] ; then
 						repo="$(yq -r .options.repo module_params.yml)"
+						tag="$(yq -r .options.tag module_params.yml)"
 						build="$(yq -r .options.commands.build module_params.yml)"
 						if [ "$repo" != "null" ] && [ "$build" != "null" ]; then
 							if [ ! -d src ] ; then
-								git clone "${repo}" src
-								on_fail $? "Failed to clone repository ${repo}"
+								if [ "$tag" != "null" ] && [ "$tag" != "" ]; then
+									git clone --branch "${tag}" "${repo}" src
+									on_fail $? "Failed to clone repository ${repo} with tag ${tag}"
+								else
+									git clone "${repo}" src
+									on_fail $? "Failed to clone repository ${repo}"
+								fi
 							fi
 							pushd src
 								${build}
