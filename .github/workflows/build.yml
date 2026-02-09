@@ -52,6 +52,7 @@ jobs:
       - name: Publish to Docker Hub
         if: github.event.inputs.publish == 'true'
         run: |
-          docker build . \
+          docker buildx build . \
             -t nethermindeth/bflat-riscv64:latest \
-            -t nethermindeth/bflat-riscv64:$GITHUB_SHA
+            -t nethermindeth/bflat-riscv64:$GITHUB_SHA \
+            --push
