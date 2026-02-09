@@ -70,7 +70,7 @@ function build_modules()
 								fi
 							fi
 							pushd src
-								${build}
+								bash -c "${build}"
 								on_fail $? "Failed to build module ${module}"
 							popd
 						fi
