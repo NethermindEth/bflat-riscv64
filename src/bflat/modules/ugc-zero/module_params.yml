@@ -1,6 +1,6 @@
 options:
   extern: True
   repo: https://github.com/NethermindEth/uGC
-  tag: v1.0.2
+  tag: v1.0.3
   commands:
     build: ./build.sh docker
