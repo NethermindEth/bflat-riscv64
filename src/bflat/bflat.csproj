@@ -120,13 +120,13 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ubootstrap.o" />
 
     <!-- ugc-zero -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGC.cpp.obj"
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGC.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGC.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleManager.cpp.obj"
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHandleManager.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleManager.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHandleStore.cpp.obj"
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHandleStore.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\src\build\usr\lib\objects\ugc-zero\uGCHeap.cpp.obj"
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHeap.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
 
     <!-- zerolibnative -->

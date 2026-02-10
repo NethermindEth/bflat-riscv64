@@ -59,6 +59,9 @@ function build_modules()
 						repo="$(yq -r .options.repo module_params.yml)"
 						tag="$(yq -r .options.tag module_params.yml)"
 						build="$(yq -r .options.commands.build module_params.yml)"
+						release_file="$(yq -r .options.releases.file module_params.yml)"
+
+						# If commands are provided, build from repo
 						if [ "$repo" != "null" ] && [ "$build" != "null" ]; then
 							if [ ! -d src ] ; then
 								if [ "$tag" != "null" ] && [ "$tag" != "" ]; then
@@ -73,6 +76,38 @@ function build_modules()
 								bash -c "${build}"
 								on_fail $? "Failed to build module ${module}"
 							popd
+						# Otherwise, if release file is provided, download from release and unpack
+						elif [ "$repo" != "null" ] && [ "$tag" != "null" ] && [ "$tag" != "" ] && [ "$release_file" != "null" ] && [ "$release_file" != "" ]; then
+							repo_path="$(echo "$repo" | sed -E 's#https?://github\.com/##' | sed -E 's#\.git$##')"
+							on_fail $? "Failed to parse GitHub repository path from ${repo}"
+
+							asset_url="https://github.com/${repo_path}/releases/download/${tag}/${release_file}"
+							target_dir="${TOP_DIR}/src/bflat/modules/${mod}/release"
+
+							mkdir -p "${target_dir}"
+							on_fail $? "Failed to create release directory ${target_dir}"
+
+							tmp_archive="${target_dir}/${release_file}"
+							curl -L -o "${tmp_archive}" "${asset_url}"
+							on_fail $? "Failed to download release archive ${asset_url}"
+
+							case "${tmp_archive}" in
+								*.tar.gz|*.tgz)
+									tar -xzf "${tmp_archive}" -C "${target_dir}"
+									on_fail $? "Failed to unpack ${tmp_archive}"
+									;;
+								*.tar)
+									tar -xf "${tmp_archive}" -C "${target_dir}"
+									on_fail $? "Failed to unpack ${tmp_archive}"
+									;;
+								*.zip)
+									unzip -o "${tmp_archive}" -d "${target_dir}"
+									on_fail $? "Failed to unpack ${tmp_archive}"
+									;;
+								*)
+									fail "Unsupported release archive format: ${tmp_archive}"
+									;;
+							esac
 						fi
 					fi
 				popd
