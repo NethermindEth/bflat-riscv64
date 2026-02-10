@@ -30,7 +30,8 @@ jobs:
             curl \
             ca-certificates \
             yq \
-            docker.io
+            docker.io \
+            libicu-dev libicu76
 
       - name: Install .NET 10
         run: |
