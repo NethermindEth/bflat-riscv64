@@ -1,6 +1,6 @@
 options:
   extern: True
   repo: https://github.com/NethermindEth/uGC
-  tag: v1.0.3
-  commands:
-    build: ./build.sh docker
+  tag: v1.0.4
+  releases:
+    file: ugc-riscv64.tar.gz
