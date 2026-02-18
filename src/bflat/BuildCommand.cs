@@ -122,6 +122,7 @@ internal class BuildCommand : CommandBase
     private const string DefaultSystemModule = "System.Private.CoreLib";
     private BuildCommand() { }
 
+    private static Option<bool> RootDefaultAssemblies = new Option<bool>("--root-default-assemblies", "Root default assemblies");
     private static Option<bool> NoReflectionOption = new Option<bool>("--no-reflection", "Disable support for reflection");
     private static Option<bool> NoStackTraceDataOption = new Option<bool>("--no-stacktrace-data", "Disable support for textual stack traces");
     private static Option<bool> NoGlobalizationOption = new Option<bool>("--no-globalization", "Disable support for globalization (use invariant mode)");
@@ -1190,7 +1191,10 @@ internal class BuildCommand : CommandBase
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.ReflectionILScanning;
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CompleteTypesOnly;
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CreateReflectableArtifacts;
-            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.RootDefaultAssemblies;
+            if (result.GetValueForOption(RootDefaultAssemblies))
+            {
+                metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.RootDefaultAssemblies;
+            }
 
         }
         else
