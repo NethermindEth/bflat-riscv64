@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu python3 python3-pip
+RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm python3 python3-pip
 
 RUN wget https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-linux-x64.tar.gz
 
