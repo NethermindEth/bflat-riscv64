@@ -1189,13 +1189,12 @@ internal class BuildCommand : CommandBase
             // This matches the most practical ILCompiler/ilc configurations (scan reflection + keep
             // enough metadata to make common reflection scenarios succeed).
             metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.ReflectionILScanning;
-            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CompleteTypesOnly;
-            metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CreateReflectableArtifacts;
             if (result.GetValueForOption(RootDefaultAssemblies))
             {
+                metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CompleteTypesOnly;
+                metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.CreateReflectableArtifacts;
                 metadataGenerationOptions |= UsageBasedMetadataGenerationOptions.RootDefaultAssemblies;
             }
-
         }
         else
         {
