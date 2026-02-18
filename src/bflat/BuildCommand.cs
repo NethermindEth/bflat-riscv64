@@ -333,6 +333,7 @@ internal class BuildCommand : CommandBase
         // Find matching build configuration
         string staticLibName = null;
         string dotnetLibName = null;
+        string dotnetAssemblyName = null;
 
         if (manifestRoot.TryGetProperty("builds", out JsonElement builds))
         {
@@ -363,6 +364,12 @@ internal class BuildCommand : CommandBase
                         dotnetLibName = dotnetLibElement.GetString();
                     }
 
+                    // Get dotnet_assemblyname if present
+                    if (build.TryGetProperty("dotnet_assemblyname", out JsonElement dotnetAssemblyElement))
+                    {
+                        dotnetAssemblyName = dotnetAssemblyElement.GetString();
+                    }
+
                     break;
                 }
             }
@@ -379,6 +386,8 @@ internal class BuildCommand : CommandBase
                 Console.WriteLine($"Found static library: {staticLibName}");
             if (dotnetLibName != null)
                 Console.WriteLine($"Found dotnet library: {dotnetLibName}");
+            if (dotnetAssemblyName != null)
+                Console.WriteLine($"Found dotnet assembly name: {dotnetAssemblyName}");
         }
 
         // Find the library assets in the release
@@ -457,6 +466,31 @@ internal class BuildCommand : CommandBase
 
             if (verbose)
                 Console.WriteLine($"Downloaded dotnet library to {destPath}");
+
+            // If manifest specifies dotnet_assemblyname, rename the downloaded DLL so it matches the assembly name.
+            // This ensures the reference is shown/treated as e.g. ".../zisklib.dll" instead of ".../NethermindEth_bflat-libziskos_lib.dll".
+            if (!string.IsNullOrEmpty(dotnetAssemblyName))
+            {
+                string renamedDestPath = Path.Combine(tempDir, $"{dotnetAssemblyName}.dll");
+                try
+                {
+                    if (File.Exists(renamedDestPath))
+                    {
+                        File.Delete(renamedDestPath);
+                    }
+                    File.Move(destPath, renamedDestPath);
+                    destPath = renamedDestPath;
+
+                    if (verbose)
+                        Console.WriteLine($"Renamed dotnet library to match assembly name: {destPath}");
+                }
+                catch (Exception ex)
+                {
+                    if (verbose)
+                        Console.WriteLine($"Warning: Failed to rename dotnet library to '{dotnetAssemblyName}.dll': {ex.Message}");
+                    // Keep original destPath if rename fails.
+                }
+            }
 
             result.DotnetLibPath = destPath;
         }
