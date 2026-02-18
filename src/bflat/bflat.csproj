@@ -107,6 +107,10 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.o" />
 
+    <!-- security-stub -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\security-stub\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\security-stub.o" />
+
     <!-- stdcppshim -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />
