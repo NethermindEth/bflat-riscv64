@@ -534,3 +534,10 @@ int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
 {
     return bufferSize;
 }
+
+extern void *S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(int value);
+
+void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int value)
+{
+    return S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(value);
+}

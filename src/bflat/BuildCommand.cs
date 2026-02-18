@@ -1747,6 +1747,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber ");
                 ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
                 if (libc == "zisk")
                 {
