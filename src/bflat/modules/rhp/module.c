@@ -480,72 +480,6 @@ void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
 void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
 {
 }
-
-#define LOCK_MAX 10
-
-typedef struct {
-    void *key;   /* Lock object pointer; NULL = empty slot */
-    int   depth; /* recursion depth: 0 = free, >0 = held  */
-} LockSlot;
-
-static LockSlot g_lock_store[LOCK_MAX];
-static int g_lock_last = -1; /* index of last entered lock, for parameterless Exit */
-
-static LockSlot *
-lock_find(void *key)
-{
-    for (int i = 0; i < LOCK_MAX; i++)
-        if (g_lock_store[i].key == key)
-            return &g_lock_store[i];
-    return NULL;
-}
-
-static LockSlot *
-lock_find_or_alloc(void *key)
-{
-    LockSlot *s = lock_find(key);
-    if (s)
-        return s;
-    for (int i = 0; i < LOCK_MAX; i++)
-        if (!g_lock_store[i].key) {
-            g_lock_store[i].key = key;
-            return &g_lock_store[i];
-        }
-    return NULL; /* store full */
-}
-
-static void
-lock_enter(void *key)
-{
-    LockSlot *s = lock_find_or_alloc(key);
-    if (s) {
-        s->depth++;
-        g_lock_last = (int)(s - g_lock_store);
-    }
-}
-
-static void
-lock_exit_last(void)
-{
-#if defined(real_unlock)
-    if (g_lock_last >= 0 && g_lock_store[g_lock_last].depth > 0)
-        g_lock_store[g_lock_last].depth--;
-#else
-    /* In single-threaded zkVM, never release locks to avoid issues with
-    * nested GetCctor/EnsureClassConstructorRun sequences that would
-    * incorrectly decrement depth when g_lock_last is overwritten.
-    * Once a lock is acquired (depth > 0), it stays held forever. */
-    (void)g_lock_last;
-#endif
-}
-
-static void
-lock_exit_all(void)
-{
-    for (int i = 0; i < LOCK_MAX; i++)
-        g_lock_store[i].depth = 0;
-}
-
 int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
 {
     return 1;
@@ -553,69 +487,23 @@ int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
 {
-    lock_enter((void *)param_1);
 }
 
-void __wrap_S_P_CoreLib_System_Threading_Lock__EnterScope(long param_1)
+void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
 {
-    lock_enter((void *)param_1);
-}
-
-void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *lock, int timeout, int threadId)
-{
-    lock_enter(lock);
-    return (void *)threadId;
-}
-
-int __wrap_S_P_CoreLib_System_Threading_Lock__TryEnter_Outlined(void *lock, int timeout)
-{
-    return __wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(lock, timeout, 1) != 0;
-}
-
-int __wrap_S_P_CoreLib_System_Threading_Lock__TryEnter_0(void *lock, int timeout)
-{
-    return __wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(lock, timeout, 1) != 0;
+    return param_2;
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
 {
-    lock_exit_last();
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
 {
-    lock_exit_last();
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 {
-    lock_exit_all();
-}
-
-int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *this_ptr)
-{
-    LockSlot *s = lock_find(this_ptr);
-    return s ? (s->depth > 0) : 0;
-}
-
-int __wrap_S_P_CoreLib_System_Threading_ManagedThreadId__get_Current(void)
-{
-    /* Single-threaded zkVM: always return thread ID 1 */
-    return 1;
-}
-
-/* Monitor.Enter(object obj) - acquire lock on any object */
-void __wrap_S_P_CoreLib_System_Threading_Monitor__Enter(void *obj)
-{
-    if (obj)
-        lock_enter(obj);
-}
-
-/* Monitor.Exit(object obj) - release lock on object (no-op in zkVM) */
-void __wrap_S_P_CoreLib_System_Threading_Monitor__Exit(void *obj)
-{
-    /* In single-threaded zkVM, Exit is a no-op - locks stay held forever */
-    (void)obj;
 }
 
 int __wrap__ZN6Thread10IsDetachedEv(void *)
