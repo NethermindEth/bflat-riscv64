@@ -527,8 +527,16 @@ lock_enter(void *key)
 static void
 lock_exit_last(void)
 {
+#if defined(real_unlock)
     if (g_lock_last >= 0 && g_lock_store[g_lock_last].depth > 0)
         g_lock_store[g_lock_last].depth--;
+#else
+    /* In single-threaded zkVM, never release locks to avoid issues with
+    * nested GetCctor/EnsureClassConstructorRun sequences that would
+    * incorrectly decrement depth when g_lock_last is overwritten.
+    * Once a lock is acquired (depth > 0), it stays held forever. */
+    (void)g_lock_last;
+#endif
 }
 
 static void
