@@ -481,38 +481,118 @@ void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
 {
 }
 
+#define LOCK_MAX 10
+
+typedef struct {
+    void *key;   /* Lock object pointer; NULL = empty slot */
+    int   depth; /* recursion depth: 0 = free, >0 = held  */
+} LockSlot;
+
+static LockSlot g_lock_store[LOCK_MAX];
+static int g_lock_last = -1; /* index of last entered lock, for parameterless Exit */
+
+static LockSlot *
+lock_find(void *key)
+{
+    for (int i = 0; i < LOCK_MAX; i++)
+        if (g_lock_store[i].key == key)
+            return &g_lock_store[i];
+    return NULL;
+}
+
+static LockSlot *
+lock_find_or_alloc(void *key)
+{
+    LockSlot *s = lock_find(key);
+    if (s)
+        return s;
+    for (int i = 0; i < LOCK_MAX; i++)
+        if (!g_lock_store[i].key) {
+            g_lock_store[i].key = key;
+            return &g_lock_store[i];
+        }
+    return NULL; /* store full */
+}
+
+static void
+lock_enter(void *key)
+{
+    LockSlot *s = lock_find_or_alloc(key);
+    if (s) {
+        s->depth++;
+        g_lock_last = (int)(s - g_lock_store);
+    }
+}
+
+static void
+lock_exit_last(void)
+{
+    if (g_lock_last >= 0 && g_lock_store[g_lock_last].depth > 0)
+        g_lock_store[g_lock_last].depth--;
+}
+
+static void
+lock_exit_all(void)
+{
+    for (int i = 0; i < LOCK_MAX; i++)
+        g_lock_store[i].depth = 0;
+}
+
 int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
 {
-    return 0;
+    return 1;
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
 {
+    lock_enter((void *)param_1);
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__EnterScope(long param_1)
 {
+    lock_enter((void *)param_1);
 }
 
-void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
+void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *lock, int timeout, int threadId)
 {
-    return param_2;
+    lock_enter(lock);
+    return (void *)threadId;
+}
+
+int __wrap_S_P_CoreLib_System_Threading_Lock__TryEnter_Outlined(void *lock, int timeout)
+{
+    return __wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(lock, timeout, 1) != 0;
+}
+
+int __wrap_S_P_CoreLib_System_Threading_Lock__TryEnter_0(void *lock, int timeout)
+{
+    return __wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(lock, timeout, 1) != 0;
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
 {
+    lock_exit_last();
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
 {
+    lock_exit_last();
 }
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 {
+    lock_exit_all();
 }
 
-int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *)
+int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *this_ptr)
 {
+    LockSlot *s = lock_find(this_ptr);
+    return s ? (s->depth > 0) : 0;
+}
+
+int __wrap_S_P_CoreLib_System_Threading_ManagedThreadId__get_Current(void)
+{
+    /* Single-threaded zkVM: always return thread ID 1 */
     return 1;
 }
 
