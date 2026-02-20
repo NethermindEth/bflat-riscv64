@@ -604,6 +604,20 @@ int __wrap_S_P_CoreLib_System_Threading_ManagedThreadId__get_Current(void)
     return 1;
 }
 
+/* Monitor.Enter(object obj) - acquire lock on any object */
+void __wrap_S_P_CoreLib_System_Threading_Monitor__Enter(void *obj)
+{
+    if (obj)
+        lock_enter(obj);
+}
+
+/* Monitor.Exit(object obj) - release lock on object (no-op in zkVM) */
+void __wrap_S_P_CoreLib_System_Threading_Monitor__Exit(void *obj)
+{
+    /* In single-threaded zkVM, Exit is a no-op - locks stay held forever */
+    (void)obj;
+}
+
 int __wrap__ZN6Thread10IsDetachedEv(void *)
 {
     return 0;
