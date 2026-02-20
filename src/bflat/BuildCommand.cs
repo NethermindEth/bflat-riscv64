@@ -1207,7 +1207,7 @@ internal class BuildCommand : CommandBase
         var flowAnnotations = new ILLink.Shared.TrimAnalysis.FlowAnnotations(logger, ilProvider, compilerGenerateState);
 
         MetadataManagerOptions metadataOptions = default;
-#if true
+#if false
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
