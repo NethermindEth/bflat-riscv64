@@ -1,4 +1,11 @@
-
+/**
+ * @file
+ * @brief Trivial RNG implementation.
+ *
+ * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
+ *
+ * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
+ */
 static unsigned long _next = 0x34095153;
 
 static unsigned long get_val(void)
