@@ -17,6 +17,12 @@ def prepare_parser():
     parser.add_argument("input_file", help="Input ELF")
     parser.add_argument("output_file", help="Output ELF")
     parser.add_argument(
+        "--objdump",
+        help="objdump binary to use for disassembly (default: riscv64-linux-gnu-objdump, "
+             "falls back to llvm-objdump if not found)",
+        default=None,
+    )
+    parser.add_argument(
         "--fix-init-array",
         help="Fix up .init_array type to PROGBITS and set alignment to 8",
         action="store_true",
@@ -152,16 +158,42 @@ def find_fn_boundaries(args, print_report=False):
         )
 
         # 3. Collect function sizes from diassembly (yay!)
+        objdump_candidates = (
+            [args.objdump] if args.objdump
+            else ["riscv64-linux-gnu-objdump", "llvm-objdump", "objdump"]
+        )
+        objdump_bin = None
+        for candidate in objdump_candidates:
+            try:
+                probe = subprocess.run(
+                    [candidate, "--version"],
+                    capture_output=True, text=True, check=False,
+                )
+                if probe.returncode == 0:
+                    objdump_bin = candidate
+                    break
+            except FileNotFoundError:
+                continue
+        if objdump_bin is None:
+            print(
+                "WARNING: no usable objdump found "
+                f"(tried: {objdump_candidates}); skipping disasm pass",
+                file=sys.stderr,
+            )
         p = subprocess.run(
-            ["riscv64-linux-gnu-objdump", "-Cd", args.input_file],
+            [objdump_bin, "-Cd", args.input_file] if objdump_bin else [],
             capture_output=True,
             text=True,
             check=False,
-        )
+        ) if objdump_bin else type("R", (), {"stdout": ""})()
         lines = p.stdout.splitlines()
         hdr_re = re.compile(r"^\s*([0-9a-fA-Fx]+)\s+<[^>]+>:\s*$")
         insn_re = re.compile(r"^\s*([0-9a-fA-Fx]+):\s+[0-9a-fA-F ]+\s")
         unimp_re = re.compile(r"^\s*[0-9a-fA-Fx]+:\s+[0-9a-fA-F ]+\s+unimp\s*$")
+        # llvm-objdump shows undecodable data bytes as "<unknown>".
+        # These are data regions embedded in .text — do NOT add their addresses
+        # to addrs_in_block and flush the current code block when seen.
+        unknown_re = re.compile(r"<unknown>")
         cur_start = None
         addrs_in_block = []
         obj_sizes = {}
@@ -184,9 +216,10 @@ def find_fn_boundaries(args, print_report=False):
             if t0 <= s < t1:
                 e = min(end, t1)
                 if e > s:
-                    prev = obj_sizes[s] if s in obj_sizes.keys() else 0
+                    prev = obj_sizes.get(s, 0)
                     size = e - s
-                    obj_sizes[s] = min(prev, size) if prev else size
+                    # берём максимальный размер из всех flush для одного адреса
+                    obj_sizes[s] = max(prev, size)
             cur_start, addrs_in_block = None, []
 
         for ln in lines:
@@ -197,13 +230,31 @@ def find_fn_boundaries(args, print_report=False):
                 cur_start = int(m_hdr.group(1), 16)
                 addrs_in_block = []
                 continue
-            # Check for unimp instruction (marks data boundary)
-            if unimp_re.match(ln) and cur_start is not None:
-                # Found unimp - stop analyzing this block
+
+            # Check for unimp instruction (marks data boundary or diverging call end).
+            # We flush the current block up to this point, then start a NEW block
+            # immediately after the unimp (4 bytes), so that any unlabeled code
+            # that follows is still captured and not silently zeroed.
+            m_unimp = unimp_re.match(ln)
+            if m_unimp and cur_start is not None:
                 flush_disasm_block()
+                # restart: new synthetic block starts right after the unimp
+                m_addr = re.match(r"^\s*([0-9a-fA-F]+):", ln)
+                if m_addr:
+                    unimp_addr = int(m_addr.group(1), 16)
+                    next_addr = unimp_addr + 4  # unimp is always 4 bytes
+                    if t0 <= next_addr < t1:
+                        cur_start = next_addr
+                        addrs_in_block = []
                 continue
             m_insn = insn_re.match(ln)
             if m_insn and cur_start is not None:
+                # Skip data bytes shown as "<unknown>" by llvm-objdump — their
+                # addresses must not extend the code block into a data region.
+                # The block itself stays open; the end will be computed from the
+                # last *real* instruction address.
+                if unknown_re.search(ln):
+                    continue
                 a = int(m_insn.group(1), 16)
                 if t0 <= a < t1:
                     addrs_in_block.append(a)
@@ -229,6 +280,59 @@ def find_fn_boundaries(args, print_report=False):
             else:
                 merged[s] = 0
                 chosen_by[s] = "none"
+
+        # 4b. Residual objdump coverage:
+        # When EH was chosen for address S with size EH_sz, but objdump recorded a
+        # larger block (obj_sz > EH_sz), the range [S+EH_sz .. S+obj_sz) may contain
+        # real unlabeled code that has no EH/sym entry of its own.  For every byte in
+        # that residual range that is not already covered by any other merged entry,
+        # add a synthetic objdump-sourced entry.
+        ordered_m = sorted(merged.keys())
+        # Build a fast set of covered starts for the residual pass
+        new_entries = {}  # addr -> size, to be merged in after the loop
+        for s in list(merged.keys()):
+            if chosen_by.get(s) != "eh":
+                continue
+            obj_sz = obj_sizes.get(s, 0)
+            eh_sz = eh_sizes.get(s, 0)
+            if obj_sz <= eh_sz:
+                continue
+            residual_start = s + eh_sz
+            residual_end = s + obj_sz
+            # Walk through the residual range and find uncovered sub-ranges
+            cur = residual_start
+            for other_s in ordered_m:
+                if other_s >= residual_end:
+                    break
+                if other_s <= cur:
+                    # already-covered region: advance past it
+                    other_end = other_s + merged.get(other_s, 0)
+                    if other_end > cur:
+                        cur = other_end
+                    continue
+                # gap between cur and other_s: uncovered residual code.
+                # Only claim it if it is large enough to plausibly be real code
+                # (≥ 16 bytes = 4 RISC-V instructions).  Tiny gaps are almost
+                # always alignment padding or embedded data constants.
+                gap_s = cur
+                gap_e = min(other_s, residual_end)
+                if gap_e - gap_s >= 16:
+                    prev = new_entries.get(gap_s, 0)
+                    new_entries[gap_s] = max(prev, gap_e - gap_s)
+                # advance past other_s's range
+                cur = max(cur, other_s + merged.get(other_s, 0))
+            # tail residual after all known entries (same size threshold)
+            if residual_end - cur >= 16:
+                prev = new_entries.get(cur, 0)
+                new_entries[cur] = max(prev, residual_end - cur)
+
+        for s, sz in new_entries.items():
+            if sz > 0 and s not in merged:
+                merged[s] = sz
+                chosen_by[s] = "objdump+residual"
+            elif sz > 0 and merged.get(s, 0) == 0:
+                merged[s] = sz
+                chosen_by[s] = "objdump+residual"
 
         # 5. If any of sizes is 0, take size from next start address ---
         ordered_starts = sorted(merged.keys())
