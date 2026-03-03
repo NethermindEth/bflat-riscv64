@@ -1258,7 +1258,7 @@ internal class BuildCommand : CommandBase
             ILScannerBuilder scannerBuilder = builder.GetILScannerBuilder()
                 .UseCompilationRoots(compilationRoots)
                 .UseMetadataManager(metadataManager)
-                .UseParallelism(parallelism)
+                //.UseParallelism(parallelism)
                 .UseInteropStubManager(interopStubManager)
                 .UseTypeMapManager(typeMapManager)
                 .UseLogger(logger);
@@ -1298,7 +1298,7 @@ internal class BuildCommand : CommandBase
             .UseInstructionSetSupport(instructionSetSupport)
             .UseMethodBodyFolding(foldMethodBodies)
             .UseMetadataManager(metadataManager)
-            .UseParallelism(parallelism)
+            //.UseParallelism(parallelism)
             .UseInteropStubManager(interopStubManager)
             .UseLogger(logger)
             .UseDependencyTracking(trackingLevel)
@@ -1529,6 +1529,7 @@ internal class BuildCommand : CommandBase
         else if (targetOS == TargetOS.Linux)
         {
             ldArgs.Append("-flavor ld ");
+            ldArgs.Append("--no-relax ");
 
             string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
 
@@ -1811,6 +1812,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
                 ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
 
+                /* rust_sys */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
+                ldArgs.Append($"--wrap=sys_alloc_aligned ");
+
                 /* ugc */
                 ldArgs.Append($"--wrap=GC_Initialize ");
                 ldArgs.Append($"--wrap=GC_VersionInfo ");
@@ -1843,9 +1848,13 @@ internal class BuildCommand : CommandBase
 
         if (libc == "zisk" && exitCode == 0)
         {
+            var patchElfArgs = " --fix-init-array --fix-tdata --split-code-data --remove-eh ";
+            if (verbose)
+                patchElfArgs += "--print-fn-boundaries ";
+
             int patchExitCode = RunCommand(patchElfPath,
                 outputFilePath + " " + patchedFilePath +
-                " --fix-init-array --fix-tdata --split-code-data --remove-eh ",
+                patchElfArgs,
                 printCommands);
         }
         if (!result.GetValueForOption(CommonOptions.KeepObjectOption))
