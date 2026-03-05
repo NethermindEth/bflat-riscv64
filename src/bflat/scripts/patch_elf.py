@@ -187,7 +187,7 @@ def find_fn_boundaries(args, print_report=False):
             check=False,
         ) if objdump_bin else type("R", (), {"stdout": ""})()
         lines = p.stdout.splitlines()
-        hdr_re = re.compile(r"^\s*([0-9a-fA-Fx]+)\s+<[^>]+>:\s*$")
+        hdr_re = re.compile(r"^\s*([0-9a-fA-Fx]+)\s+<.+>:\s*$")
         insn_re = re.compile(r"^\s*([0-9a-fA-Fx]+):\s+[0-9a-fA-F ]+\s")
         unimp_re = re.compile(r"^\s*[0-9a-fA-Fx]+:\s+[0-9a-fA-F ]+\s+unimp\s*$")
         # llvm-objdump shows undecodable data bytes as "<unknown>".
