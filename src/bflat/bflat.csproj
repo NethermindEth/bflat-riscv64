@@ -64,6 +64,12 @@
     <Blob Include="@(CompilerBlob);@(SdkBlob)" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <_CompilerNupkgName>bflat.compiler.$(RuntimeVersion).nupkg</_CompilerNupkgName>
+    <_LocalPackagesDir>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', 'packages'))</_LocalPackagesDir>
+    <_CompilerNupkgLocalPath>$([MSBuild]::NormalizePath('$(_LocalPackagesDir)', '$(_CompilerNupkgName)'))</_CompilerNupkgLocalPath>
+  </PropertyGroup>
+
   <Target Name="CreateCompilerLayout"
           DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
@@ -171,6 +177,39 @@
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(Blob.Identity)-$(BlobsVersion).zip" />
+  </Target>
+
+  <!--
+    Download BFlat.Compiler nupkg into the local packages folder when it is
+    missing, then clear the global NuGet cache entry for that exact
+    package+version so the subsequent Restore re-extracts from our local
+    source instead of any stale cached copy.
+  -->
+  <Target Name="DownloadCompilerNupkg"
+          BeforeTargets="Restore"
+          Condition="!Exists('$(_CompilerNupkgLocalPath)')">
+
+    <Message Text="Downloading $(_CompilerNupkgName) ..." Importance="High" />
+
+    <MakeDir Directories="$(_LocalPackagesDir)" />
+
+    <DownloadFile SourceUrl="$(BlobsUri)v$(BlobsVersion)/$(_CompilerNupkgName)"
+                  Retries="3"
+                  DestinationFolder="$(_LocalPackagesDir)"
+                  DestinationFileName="$(_CompilerNupkgName)" />
+
+    <PropertyGroup>
+      <_NuGetGlobalPkgDir Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetGlobalPkgDir>
+      <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' != 'Windows_NT'">$(HOME)/.nuget/packages</_NuGetGlobalPkgDir>
+      <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' == 'Windows_NT'">$(USERPROFILE)\.nuget\packages</_NuGetGlobalPkgDir>
+      <_NuGetCacheEntry>$([MSBuild]::NormalizePath('$(_NuGetGlobalPkgDir)', 'bflat.compiler', '$(RuntimeVersion)'))</_NuGetCacheEntry>
+    </PropertyGroup>
+
+    <Message Text="Clearing NuGet cache: $(_NuGetCacheEntry)" Importance="High"
+             Condition="Exists('$(_NuGetCacheEntry)')" />
+    <RemoveDir Directories="$(_NuGetCacheEntry)"
+               Condition="Exists('$(_NuGetCacheEntry)')" />
+
   </Target>
 
   <Target Name="ExtractHostCompiler"
