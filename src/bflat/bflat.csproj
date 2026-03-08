@@ -83,9 +83,14 @@
 
     <!-- Generic modules -->
 
-    <!-- crt-musl patch -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\crt-musl\crt1.o"
-          DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
+    <!-- crt1 for zisk: patch musl crt1.o to rename _start/_start_c entry points -->
+    <PropertyGroup>
+      <_LlvmObjcopy>$([MSBuild]::NormalizePath($(OutputPath), 'bin', 'llvm-objcopy'))</_LlvmObjcopy>
+      <_MuslCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1.o'))</_MuslCrt1>
+      <_ZiskCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'zisk', 'crt1.o'))</_ZiskCrt1>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_ZiskCrt1)&quot;"
+          ConsoleToMSBuild="true" />
 
     <!-- NoFP -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
