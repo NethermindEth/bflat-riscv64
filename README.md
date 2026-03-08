@@ -100,7 +100,7 @@ Zisk linking includes additional postprocessing steps to generate the final bina
    ]
  }
  ```
- The matching is done by the content of `builds` array (`arch`, `os`, `libc` must match target platform in bflat). If the match is found, the `static_lib` is linked to the target binary, and the `dotnet_lib` is compiled and added to the target binary.
+ The matching is done by the content of `builds` array (`arch`, `os`, `libc` must match target platform in bflat). If the match is found, the `static_lib` is linked to the target binary, and the `dotnet_lib` is compiled and added to the target binary. Their paths are relative to bflat manifest path.
  
 ## Known issues
 
