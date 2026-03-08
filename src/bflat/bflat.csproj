@@ -91,7 +91,7 @@
 
     <!-- crt1 for zisk: patch musl crt1.o to rename _start/_start_c entry points -->
     <PropertyGroup>
-      <_LlvmObjcopy>$([MSBuild]::NormalizePath($(OutputPath), 'bin', 'llvm-objcopy'))</_LlvmObjcopy>
+      <_LlvmObjcopy>llvm-objcopy</_LlvmObjcopy>
       <_MuslCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1.o'))</_MuslCrt1>
       <_ZiskCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'zisk', 'crt1.o'))</_ZiskCrt1>
     </PropertyGroup>
