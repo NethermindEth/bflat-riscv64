@@ -1,11 +1,15 @@
 #!/bin/bash
 # Build Dockerfile for riscv64
+# Copyright (C) 2025 Demerzel Solutions Limited (Nethermind)
+#
+# Author: Maxim Menshikov <maksim.menshikov@nethermind.io>
+image_name="nethermindeth/bflat-riscv64-test"
 
 export TOP_DIR="$(cd "$(dirname "$(which "$0")")" ; pwd -P)"
 
 docker build --platform linux/amd64 .
 
-docker_image=$(docker build --platform linux/amd64 -t maximmenshikov/bflat-riscv64-zk -q .)
+docker_image=$(docker build --platform linux/amd64 -t "${image_name}" -q .)
 
 interactive=""
 arg=""
