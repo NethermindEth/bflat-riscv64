@@ -1,123 +1,115 @@
-# bflat
+# Bflat
 
 [![Build RISC-V64](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml/badge.svg)](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
 
-### https://flattened.net
+Nethermind's Bflat is a fork of C# NativeAOT compiler originally developed by [MichalStrehovsky](https://github.com/MichalStrehovsky).
 
-C# as you know it but with Go-inspired tooling that produces small, selfcontained, and native executables out of the box.
+The main feature of Nethermind's Bflat is that it addssupport for RISC-V64 fully static binaries. It is used for building [StatelessExecutor](https://github.com/NethermindEth/nethermind) on RISC-V64.
 
-```console
-$ echo 'System.Console.WriteLine("Hello World");' > hello.cs
-$ bflat build hello.cs
-$ ./hello
-Hello World
-$ bflat build hello.cs --os:windows
-$ file ./hello.exe
-hello.exe: PE32+ executable (console) x86-64, for MS Windows
-```
 
-## 🎻 What exactly is bflat
+## Motivation
 
-bflat is a concoction of Roslyn - the "official" C# compiler that produces .NET executables - and NativeAOT (née CoreRT) - the ahead of time compiler for .NET based on CoreCLR. Thanks to this, you get access to the latest C# features using the high performance CoreCLR GC and native code generator (RyuJIT).
+[Original bflat](https://github.com/bflattened/bflat) builds only dynamically linked binaries. In our fork, we aim to build fully native, fully static binaries for RISC-V64 without a single dependency, even on operating system. But it is still possible to run compiled binaries in user-mode QEMU or in the native RISC-V64 Linux.
 
-bflat merges the two components together into a single ahead of time crosscompiler and runtime for C#.
+However, the main mode is running compiled binaries inside zkVMs.
 
-bflat can currently target:
+## Supported zkVMs
 
-* x64/arm64 glibc-based Linux (2.17 or later on x64 (~CentOS 7), or 2.27 or later on arm64 (~Ubuntu 18.04))
-* arm64 bionic-based Linux (Android API level 21)
-* x64/arm64 Windows (Windows 7 or later)
-* x64/arm64 UEFI (only with `--stdlib:zero`)
+Currently, we support two main flavours. 
 
-Support for musl-based Linux is in the works.
+ - **riscv64** + [zisk](https://github.com/0xPolygonHermez/zisk). These binaries can be run natively inside Zisk. For that, please invoke bflat with `--os linux`, `--libc zisk`.
+ - **riscv64** + **zisk_sim**. These binaries can be run in user-mode QEMU or in the native RISC-V64 Linux, however, they carry almost all modules and workaround used for Zisk except, of course, support for **precompiles**. Please invoke bflat with `--os linux`, `--libc zisk_sim`.
 
-bflat can either produce native executables, or native shared libraries that can be called from other languages through FFI.
+## Design choices
 
-## 🥁 Where to get bflat
+### NB
 
-Look at the [Releases tab](https://github.com/bflattened/bflat/releases) of this repo and download a compiler that matches your host system. These are all crosscompilers and can target any of the supported OSes/architectures.
+zkVMs offer a limited subset of instructions. They typically don't even provide full riscv64 computing environment, so often they cannot run Linux (although, some may support it). Still, the agreed target doesn't include compressed instruction and floating point support. This is a significant limitation that drives our design choices.
 
-Unzip the archive to a convenient location and add the root to your PATH. You're all set. See the samples directory for a couple samples.
+### Compiler and ABI
 
-On Windows, you can also grab it from winget: `winget install bflat`.
+Typical Linux riscv64 toolchain based on GCC with ABI limitation is used. Note that we use lp64d ABI. This is not typical as zkVMs don't support floating point computations, however, this enhances compatibility with existing toolchains and libraries.
 
-The binary releases are licensed under the MIT license.
+### Runtime
 
-## 🎷 I don't see dotnet, MSBuild, or NuGet
+bflat uses a [custom runtime](https://github.com/NethermindEth/dotnet-riscv) based on musl. There are [many patches](https://github.com/NethermindEth/dotnet-riscv/tree/main/patches/bflat-runtime) that help get rid of instructions and dependencies that are not supported in zkVMs. Please refer to instructions in the runtime repository for more information how to build it.
 
-That's the point. bflat is to dotnet as VS Code is to VS.
+The built runtime is put as a release there and downloaded automatically by the bflat build process.
 
-## 🎙 Where is the source code
+### Operating system
 
-The source code is split between this repo and [bflattened/runtime](https://github.com/bflattened/runtime). The bflattened/runtime repo is a regularly updated fork of the [dotnet/runtime](https://github.com/dotnet/runtime) repo that contains non-upstreamable bflat-specific changes. The bflattened/runtime repo produces compiler and runtime binaries that this repo consumes.
+We use Linux as the target operating system. The main reason is that Linux has the vast number of libraries, and skipping all of them, or even just framing them as alien libraries, is quite meaningless. Instead, we rely on the standard Linux toolchain and libraries, yet we base out code on [musl](https://git.musl-libc.org/cgit/musl) instead of glibc and we phase out significant number of libraries through introduction of main function wrappers.
 
-## 📚 Two standard libraries
+The distribution of our choice is Alpine Linux. Please refer to our [Alpine Linux repository](https://github.com/NethermindEth/riscv-alpine-build) for more information on how to build and use it.
 
-bflat comes with two standard libraries. The first one (called `DotNet`) is the default and comes from the dotnet/runtime repo fork. It includes everything you know and love from .NET. The second one (called `Zero`) is a minimal standard library that doesn't have much more than just primitive types. The source code for it lives in this repo. Switch between those with `--stdlib:zero` argument.
+### Patches
 
-## 📻 How to stay up-to-date on bflat?
+We decided not to replace individual modules altogether, but rather patch them at link-time. This allows us to keep the original source code intact and only modify the build process, resulting in a smaller and more efficient build process.
 
-Follow me on [Bluesky](https://bsky.app/profile/migeel.sk).
+#### Modules
+We provide the following modules:
 
-## 🎺 Optimizing output for size
+| Module | Description |
+|--------|-------------|
+| nofp   | Remove floating point functions if they exist |
+| pal    | Replace operating system calls with no-op stubs |
+| rhp    | Patch internal dotnet functions for more compatibility |
+| rhp_native | Several assembly-based patches to riscv64 functions |
+| rng_stupid | Simple implementation of random number generator |
+| rust_sys | Trivial Rust compatibility layer |
+| security-stub | Stubs for security-related functions in .NET runtime |
+| stdcppshim | Replacements for C++ allocators |
+| tls | Simple TLS implementation not relying on ELF binary format |
+| ubootstrap | Bootstrap re-implementation for riscv64 |
+| ugc-zero | Module acting as a wrapper for Garbage Collection |
+| zkvm_zisk | Entrypoint and linker scripts for Zisk |
+| zkvm_zisk_sim | Entrypoint and linker scripts for Zisk simulator |
 
-By default, bflat produces executables that are between 1 MB and 2 MB in size, even for the simplest apps. There are multiple reasons for this:
+These modules are loaded automatically based on target `libc`, `arch` and `os`.
 
-* bflat includes stack trace data about all compiled methods so that it can print pretty exception stack traces
-* even the simplest apps might end up calling into reflection (to e.g. get the name of the `OutOfMemoryException` class), globalization, etc.
-* method bodies are aligned at 16-byte boundaries to optimize CPU cache line utilization
-* (Doesn't apply to Windows) DWARF debug information is included in the executable
+### Postprocessing
 
-The "bigger" defaults are chosen for friendliness and convenience. To get an experience that more closely matches low level programming languages, specify `--no-reflection`, `--no-stacktrace-data`, `--no-globalization`, and `--no-exception-messages` arguments to `bflat build`.
+Zisk linking includes additional postprocessing steps to generate the final binary. These steps effectively do the following operations:
 
-Best to show an example. Following program:
+ - Remove EH information.
+ - Get rid of data inside the `.text` section. It is needed because Zisk doesn't support putting data alongside the code, as many riscv64 compilers do. The postprocessing script creates a shadow `.text_overlay` section. In main `.text` section that remains executable, we nullify all gaps between functions. In `.text_overlay` that is kept read-only, we place the original code + data. That means Zisk is able to read these gaps, yet the instruction preprocessor sees only no-op instructions in the code section.
 
-```csharp
-using System.Diagnostics;
-using static System.Console;
+ Note that postprocessing is done through the disassembly (over objdump), comparing EH data and symbol table. Depending on the source of the input module, precision of either of these bits may be lost, therefore, the effort is made on unifying these three sources. Disassembly is the last resort as it is always the most accurate source of information.
+ 
+ ### External libraries
+ 
+ Bflat is able to link against NuGet packages, for example, [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos). This is quite useful for integrating bflat with existing .NET projects.
+ 
+ These packages have to be reflected in the bflat command line using `--extlib <path>:<version>` parameter, where `<path>` can be either a link to GitHub releases (in that case, bflat will look for the `nupkg` file among attachments), link to nupkg itself, or a local path to the nupkg file.
+ 
+ All NuGet packages have to have `*.bflat.manifest` files in their zip root:
+ 
+ ```json
+ {
+   "name": "libziskos",
+   "package_version": "1.0.0",
+   "builds": [
+     {
+       "arch": "riscv64",
+       "os": "linux",
+       "libc": "zisk",
+       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",
+       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",
+       "dotnet_assemblyname": "Nethermind.ZiskBindings"
+     }
+   ]
+ }
+ ```
+ The matching is done by the content of `builds` array (`arch`, `os`, `libc` must match target platform in bflat). If the match is found, the `static_lib` is linked to the target binary, and the `dotnet_lib` is compiled and added to the target binary.
+ 
+## Known issues
 
-WriteLine($"NullReferenceException message is: {new NullReferenceException().Message}");
-WriteLine($"The runtime type of int is named: {typeof(int)}");
-WriteLine($"Type of boxed integer is{(123.GetType() == typeof(int) ? "" : " not")} equal to typeof(int)");
-WriteLine($"Type of boxed integer is{(123.GetType() == typeof(byte) ? "" : " not")} equal to typeof(byte)");
-WriteLine($"Upper case of 'Вторник' is '{"Вторник".ToUpper()}'");
-WriteLine($"Current stack frame is {new StackTrace().GetFrame(0)}");
-```
+bflat doesn't support Generic Virtual Method dispatch properly, which limits how you can write your C# code.
 
-will print this by default:
+## License
 
-```
-NullReferenceException message is: Object reference not set to an instance of an object.
-The runtime type of int is named: System.Int32
-Type of boxed integer is equal to typeof(int)
-Type of boxed integer is not equal to typeof(byte)
-Upper case of 'Вторник' is 'ВТОРНИК'
-Current stack frame is <Program>$.<Main>$(String[]) + 0x154 at offset 340 in file:line:column <filename unknown>:0:0
-```
+Nethermind bflat follows original GNU Affero GPL v3 license that was used for the original bflat.
 
-But it will print this with all above arguments specified:
+## Contributing
 
-```
-NullReferenceException message is: Arg_NullReferenceException
-The runtime type of int is named: EETypeRva:0x00048BD0
-Type of boxed integer is equal to typeof(int)
-Type of boxed integer is not equal to typeof(byte)
-Upper case of 'Вторник' is 'Вторник'
-Current stack frame is ms!<BaseAddress>+0xb82d4 at offset 340 in file:line:column <filename unknown>:0:0
-```
-
-With all options turned on, one can comfortably fit useful programs under 1 MB. The above program is 708 kB on Windows at the time of writing this. The output executables are executables like any other. You can add `-Os --no-pie --separate-symbols` for even more savings and use a tool like UPX to compress them further (to ~300 kB range).
-
-If you're targeting a Unix-like system, you might want to pass `--separate-symbols` to place debug information into a separate file (debug information is big!). This is not needed on Windows because the platform convention is to place debug information in a separate PDB file already.
-
-## 🎸 Preprocessor definitions
-
-Besides the preprocessor definitions provided at the command line, bflat defines several other symbols: `BFLAT` (defined always), `DEBUG` (defined when not optimizing), `WINDOWS`/`LINUX`/`UEFI` (when the corresponding operating system is the target), `X64`/`ARM64` (when the corresponding architecture is targeted).
-
-## 🎹 Debugging bflat apps
-
-Apps compiled with bflat debug same as any other native code. Launch the produced executable under your favorite debugger (gdb or lldb on Linux, or Visual Studio or WinDbg on Windows) and you'll be able to set breakpoints, step, and see local variables.
-
-## ☝ Samples
-
-The repo has samples with README in the `samples` directory. Clone the repo and try the samples yourself!
+Contributions are welcome! Please open an issue or a pull request on GitHub.
