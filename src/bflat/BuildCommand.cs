@@ -968,7 +968,7 @@ internal class BuildCommand : CommandBase
             ILScannerBuilder scannerBuilder = builder.GetILScannerBuilder()
                 .UseCompilationRoots(compilationRoots)
                 .UseMetadataManager(metadataManager)
-                //.UseParallelism(parallelism)
+                .UseParallelism(parallelism)
                 .UseInteropStubManager(interopStubManager)
                 .UseTypeMapManager(typeMapManager)
                 .UseLogger(logger);
@@ -1008,7 +1008,7 @@ internal class BuildCommand : CommandBase
             .UseInstructionSetSupport(instructionSetSupport)
             .UseMethodBodyFolding(foldMethodBodies)
             .UseMetadataManager(metadataManager)
-            //.UseParallelism(parallelism)
+            .UseParallelism(parallelism)
             .UseInteropStubManager(interopStubManager)
             .UseLogger(logger)
             .UseDependencyTracking(trackingLevel)
