@@ -129,6 +129,7 @@ internal class BuildCommand : CommandBase
 
     private static Option<bool> NoLinkOption = new Option<bool>("-c", "Produce object file, but don't run linker");
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
+    private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
 
@@ -213,6 +214,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.ExtraLd,
             CommonOptions.KeepObjectOption,
             ExtLibOption,
+            SymChartOption,
         };
         command.Handler = new BuildCommand();
 
@@ -1584,6 +1586,11 @@ internal class BuildCommand : CommandBase
         if (exportsFile != null)
             try { File.Delete(exportsFile); } catch { }
 
+        if (exitCode == 0 && result.GetValueForOption(SymChartOption))
+        {
+            RunSymbolChart(outputFilePath, homePath, verbose, logger);
+        }
+
         if (exitCode == 0
             && targetOS is not TargetOS.Windows and not TargetOS.UEFI
             && result.GetValueForOption(SeparateSymbolsOption))
@@ -1609,5 +1616,60 @@ internal class BuildCommand : CommandBase
         }
 
         return exitCode;
+    }
+
+    private static void RunSymbolChart(string binaryPath, string homePath, bool verbose, Logger logger)
+    {
+        // ── Locate readelf ────────────────────────────────────────────────
+        string readelf = Environment.GetEnvironmentVariable("BFLAT_READELF");
+        if (readelf == null)
+        {
+            string toolSuffix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
+            string candidate = Path.Combine(homePath, "bin", "llvm-readelf" + toolSuffix);
+            readelf = File.Exists(candidate) ? candidate : "readelf";
+        }
+
+        if (verbose)
+            logger.LogMessage($"Running readelf on {binaryPath}");
+
+        string readelfOutput;
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(readelf, $"-sW \"{binaryPath}\"")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                UseShellExecute        = false,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            readelfOutput = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit();
+
+            if (proc.ExitCode != 0)
+            {
+                string err = proc.StandardError.ReadToEnd().Trim();
+                Console.Error.WriteLine($"Warning: readelf exited with code {proc.ExitCode}: {err}");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: could not run readelf ({readelf}): {ex.Message}");
+            return;
+        }
+
+        // ── Parse & generate ──────────────────────────────────────────────
+        var symbols  = ElfSymbolParser.Parse(readelfOutput);
+        string htmlPath = binaryPath + ".symbols.html";
+
+        try
+        {
+            SymbolChartGenerator.Generate(htmlPath, binaryPath, symbols);
+            Console.WriteLine($"Symbol chart: {htmlPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: could not write symbol chart: {ex.Message}");
+        }
     }
 }
