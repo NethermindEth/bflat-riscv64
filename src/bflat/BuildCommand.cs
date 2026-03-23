@@ -422,6 +422,7 @@ internal class BuildCommand : CommandBase
         // Handle extlib resolution synchronously - after we know target arch/os/libc
         string[] extLibSpecs = result.GetValueForOption(ExtLibOption);
         List<string> downloadedLibPaths = new List<string>();
+        var extLibWrapSymbols = new List<string>();
         bool verbose = result.GetValueForOption(CommonOptions.VerbosityOption);
 
         var referenceList = new List<string>(references ?? Array.Empty<string>());
@@ -451,6 +452,16 @@ internal class BuildCommand : CommandBase
                         referenceList.Add(extLibResult.DotnetLibPath);
                         if (verbose)
                             Console.WriteLine($"Added external dotnet reference: {extLibResult.DotnetLibPath}");
+                    }
+
+                    foreach (var sym in extLibResult.WrapSymbols)
+                    {
+                        if (!extLibWrapSymbols.Contains(sym))
+                        {
+                            extLibWrapSymbols.Add(sym);
+                            if (verbose)
+                                Console.WriteLine($"Will wrap symbol: {sym}");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1407,6 +1418,12 @@ internal class BuildCommand : CommandBase
             foreach (var extLibPath in downloadedLibPaths)
             {
                 ldArgs.Append($"\"{extLibPath}\" ");
+            }
+
+            // Add --wrap flags for symbols requested by external libraries
+            foreach (var sym in extLibWrapSymbols)
+            {
+                ldArgs.Append($"--wrap={sym} ");
             }
 
             if (libc == "musl")

@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -40,7 +41,8 @@ using Internal.TypeSystem;
 //       "libc": "zisk",
 //       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",   <- relative to manifest
 //       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",     <- relative to manifest
-//       "dotnet_assemblyname": "Nethermind.ZiskBindings"
+//       "dotnet_assemblyname": "Nethermind.ZiskBindings",
+//       "wrap_symbols": ["memcpy", "memset", "memmove", "memcmp"]    <- optional
 //     }
 //   ]
 // }
@@ -54,6 +56,9 @@ internal static class ExtLibResolver
 
         // Absolute path to the .NET reference assembly (.dll), or null if not present.
         public string DotnetLibPath { get; set; }
+
+        // Symbols to wrap via the linker --wrap flag, or empty if none.
+        public List<string> WrapSymbols { get; set; } = new List<string>();
     }
 
     // -------------------------------------------------------------------------
@@ -305,6 +310,7 @@ internal static class ExtLibResolver
         string staticLibRel    = null;
         string dotnetLibRel    = null;
         string dotnetAssemblyName = null;
+        var wrapSymbols = new List<string>();
 
         if (manifestRoot.TryGetProperty("builds", out JsonElement builds))
         {
@@ -327,6 +333,16 @@ internal static class ExtLibResolver
                         dotnetLibRel = dlEl.GetString();
                     if (build.TryGetProperty("dotnet_assemblyname", out JsonElement danEl))
                         dotnetAssemblyName = danEl.GetString();
+                    if (build.TryGetProperty("wrap_symbols",        out JsonElement wsEl) &&
+                        wsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement sym in wsEl.EnumerateArray())
+                        {
+                            string symStr = sym.GetString();
+                            if (!string.IsNullOrEmpty(symStr))
+                                wrapSymbols.Add(symStr);
+                        }
+                    }
                     break;
                 }
             }
@@ -337,7 +353,7 @@ internal static class ExtLibResolver
                 $"No matching build in manifest '{manifestPath}' " +
                 $"for arch={targetArchStr}, os={targetOSStr}, libc={libc ?? "any"}");
 
-        var result = new Result();
+        var result = new Result { WrapSymbols = wrapSymbols };
 
         if (staticLibRel != null)
         {
