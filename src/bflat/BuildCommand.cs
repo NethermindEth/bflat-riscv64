@@ -1450,15 +1450,6 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
 
-                if (libc == "zisk")
-                {
-                    /* zisk dma */
-                    ldArgs.Append($"--wrap=memcmp ");
-                    ldArgs.Append($"--wrap=memcpy ");
-                    ldArgs.Append($"--wrap=memmove ");
-                    ldArgs.Append($"--wrap=memset ");
-                }
-
                 /* rhp */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
                 ldArgs.Append($"--wrap=RhpNewFast ");
