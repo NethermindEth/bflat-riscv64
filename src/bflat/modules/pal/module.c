@@ -21,7 +21,8 @@ extern char *
 __wrap_getenv(char *var)
 {
     if (strcmp(var, "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT") == 0 ||
-        strcmp(var, "DOTNET_SYSTEM_GLOBALIZATION_PREDEFINED_CULTURES_ONLY") == 0)
+        strcmp(var, "DOTNET_SYSTEM_GLOBALIZATION_PREDEFINED_CULTURES_ONLY") == 0 ||
+        strcmp(var, "DOTNET_SYSTEM_BUFFERS_SHAREDARRAYPOOL_MAXPARTITIONCOUNT") == 0)
     {
         return "1";
     }
@@ -55,7 +56,20 @@ __wrap_geteuid()
 }
 
 int
-__wrap_sched_getaffinity(int, int, void *)
+__wrap_sched_getaffinity(int pid, int cpusetsize, void *mask)
+{
+    /* Zero out the entire buffer so __sched_cpucount doesn't count garbage */
+    memset(mask, 0, (size_t)cpusetsize);
+
+    /* Set bit 0 (CPU 0) directly in the raw buffer */
+    if (cpusetsize > 0)
+        ((unsigned char *)mask)[0] |= 0x01;
+
+    return 0;
+}
+
+int
+__wrap_sched_getcpu(void)
 {
     return 0;
 }
@@ -328,9 +342,20 @@ __wrap___stdio_write(int fd, const void *buf, int count)
 int
 __wrap_sysconf(int n)
 {
-    if (n == 1)
+    switch (n) {
+    case 1:  /* _SC_CHILD_MAX */
         return 100;
-    if (n == 2)
+    case 2:  /* _SC_CLK_TCK */
+        return 100;
+    case 30: /* _SC_PAGESIZE / _SC_PAGE_SIZE */
         return 4096;
-    return 0;
+    case 83: /* _SC_NPROCESSORS_CONF */
+        return 1;
+    case 84: /* _SC_NPROCESSORS_ONLN */
+        return 1;
+    case 85: /* _SC_PHYS_PAGES */
+        return 65536;
+    default:
+        return 0;
+    }
 }

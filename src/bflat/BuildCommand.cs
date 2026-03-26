@@ -1503,6 +1503,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=getegid ");
                 ldArgs.Append($"--wrap=geteuid ");
                 ldArgs.Append($"--wrap=sched_getaffinity ");
+                ldArgs.Append($"--wrap=sched_getcpu ");
                 ldArgs.Append($"--wrap=open ");
                 ldArgs.Append($"--wrap=__libc_malloc_impl ");
                 ldArgs.Append($"--wrap=__libc_realloc ");

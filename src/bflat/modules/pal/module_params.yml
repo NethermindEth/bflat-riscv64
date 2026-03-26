@@ -6,6 +6,7 @@ options:
     - value: --wrap=getegid
     - value: --wrap=geteuid
     - value: --wrap=sched_getaffinity
+    - value: --wrap=sched_getcpu
     - value: --wrap=open
     - value: --wrap=__libc_malloc_impl
     - value: --wrap=__libc_realloc
