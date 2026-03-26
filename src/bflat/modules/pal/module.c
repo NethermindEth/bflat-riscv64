@@ -359,3 +359,9 @@ __wrap_sysconf(int n)
         return 0;
     }
 }
+
+void *
+__wrap__RNvNtNtCsakQiG9XjPeS_6ziskos5alloc5alloc25inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
+{
+    return __wrap___libc_malloc_impl(bytes);
+}

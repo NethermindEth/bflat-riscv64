@@ -1449,7 +1449,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
-
+                if (libc == "zisk")
+                {
+                    ldArgs.Append($"--wrap=_RNvNtNtCsakQiG9XjPeS_6ziskos5alloc5alloc25inline_bump_alloc_aligned ");
+                }
                 /* rhp */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
                 ldArgs.Append($"--wrap=RhpNewFast ");
