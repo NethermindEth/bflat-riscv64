@@ -158,9 +158,21 @@ __wrap___libc_malloc_impl(unsigned long n)
     }
 #endif
 
-    /* Commit bump pointer (include optional diagnostic gap) */
+    /* Bounds check: if the new pointers go below heap bottom, the heap is
+     * exhausted.  Return NULL instead of writing to stack/ROM memory and
+     * silently corrupting the caller's saved registers (the historic pc=0
+     * crash where ra was zeroed by the subsequent calloc memset). */
+    if (new_len_u < bottom || new_tmp_u > top)
+    {
+#if _DEBUG
+        printf("malloc OOM: new_tmp=%#" PRIxPTR " new_len=%#" PRIxPTR
+               " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
+               new_tmp_u, new_len_u, bottom, top);
+#endif
+        return NULL;
+    }
+
     mem = (uint8_t *)new_len_u;
-    mem -= 0x40; /* diagnostic gap (keep if you still want it) */
 
     /* Store allocation size header */
     *len = (uint64_t)req_aligned;
