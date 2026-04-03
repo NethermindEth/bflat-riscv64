@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define POISONED_POINTER ((void *)0xF)
+
 #define _DEBUG (0)
 
 extern void *RhpNewObject(void *methodTable, int allocFlags);
@@ -530,4 +532,14 @@ extern void *S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(int va
 void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int value)
 {
     return S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(value);
+}
+
+void __wrap_RhpThrowEx(void)
+{
+    *(int *)POISONED_POINTER = 5;
+}
+
+void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
+{
+    __wrap_RhpThrowEx();
 }
