@@ -1492,6 +1492,8 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
                     ldArgs.Append($"--wrap=SystemNative_Write ");
                 }
+                ldArgs.Append($"--wrap=RhpThrowEx ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
 
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
