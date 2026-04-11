@@ -29,7 +29,7 @@ using Internal.TypeSystem;
 // Supported spec formats:
 //   1. https://github.com/owner/repo:tag   – GitHub release containing a single .nupkg
 //   2. path or URL ending in .nupkg        – extract the package and read *.bflat.manifest inside
-//   3. path or URL ending in .bflat.manifest – use the manifest directly (paths relative to it)
+//   3. path or URL ending in .bflat.manifest – use the manifest directly (paths relative to manifest dir)
 //
 // The *.bflat.manifest format is:
 // {
@@ -39,8 +39,8 @@ using Internal.TypeSystem;
 //       "arch": "riscv64",
 //       "os": "linux",
 //       "libc": "zisk",
-//       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",   <- relative to manifest
-//       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",     <- relative to manifest
+//       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",   <- relative to nupkg root
+//       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",     <- relative to nupkg root
 //       "dotnet_assemblyname": "Nethermind.ZiskBindings",
 //       "wrap_symbols": ["memcpy", "memset", "memmove", "memcmp"]    <- optional
 //     }
@@ -86,7 +86,7 @@ internal static class ExtLibResolver
             string nupkgPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
             string extractDir = ExtractNupkg(nupkgPath, verbose);
             string manifestPath = FindManifestInDirectory(extractDir);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
+            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir, nupkgRoot: extractDir);
         }
 
         // Case 3: .bflat.manifest (URL or local path)
@@ -225,7 +225,7 @@ internal static class ExtLibResolver
         // Extract and locate the manifest
         string extractDir = ExtractNupkg(nupkgPath, verbose);
         string manifestPath = FindManifestInDirectory(extractDir);
-        return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
+        return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir, nupkgRoot: extractDir);
     }
 
     // -------------------------------------------------------------------------
@@ -278,13 +278,15 @@ internal static class ExtLibResolver
 
     // Parse a *.bflat.manifest file, match the build entry against the target,
     // and return absolute paths to static_lib / dotnet_lib.
-    // All paths in the manifest are relative to the manifest file's directory.
+    // When nupkgRoot is provided (nupkg-based cases), paths in the manifest are resolved
+    // relative to the nupkg root directory.  For standalone manifests (nupkgRoot == null),
+    // paths are resolved relative to the manifest file's own directory.
     private static Result ParseManifestAndResolveFiles(
         string manifestPath, bool verbose,
         TargetArchitecture targetArch, TargetOS targetOS, string libc,
-        string tempDir)
+        string tempDir, string nupkgRoot = null)
     {
-        string manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
+        string manifestDir = nupkgRoot ?? Path.GetDirectoryName(Path.GetFullPath(manifestPath));
         string manifestJson = File.ReadAllText(manifestPath);
 
         using JsonDocument doc = JsonDocument.Parse(manifestJson);
