@@ -1347,7 +1347,9 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                     ldArgs.Append($"\"{firstLib}/libbootstrapper.o\" ");
 
-                if (!result.GetValueForOption(NoPieOption))
+                if (result.GetValueForOption(NoPieOption))
+                    ldArgs.Append("--no-pie ");
+                else
                     ldArgs.Append("-pie ");
             }
 
