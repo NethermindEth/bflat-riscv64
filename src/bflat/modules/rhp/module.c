@@ -53,7 +53,7 @@ __wrap_RhpNewFast(void *methodTable)
     /* Align allocation size to 8 bytes */
     total = (total + 7u) & ~(size_t)7u;
 
-    void *obj = calloc(1, total);
+    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
     if (!obj)
         return 0;
 
@@ -79,7 +79,7 @@ __wrap_RhpNewObject(void *methodTable, int allocFlags)
     /* Align allocation size to 8 bytes */
     total = (total + 7u) & ~(size_t)7u;
 
-    void *obj = calloc(1, total);
+    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
     if (!obj)
         return 0;
 
@@ -132,7 +132,7 @@ __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
     size_t total = (size_t)SZARRAY_BASE_SIZE + ((size_t)numElements << 3);
 
-    void *obj = calloc(1, total);
+    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
     if (!obj)
         return 0;
 
@@ -147,7 +147,7 @@ __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
     size_t comp = (size_t)mt_component_size(methodTable);
     size_t total = align_up_8((size_t)SZARRAY_BASE_SIZE + ((size_t)numElements * comp));
 
-    void *obj = calloc(1, total);
+    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
     if (!obj)
         return 0;
 
@@ -161,7 +161,7 @@ __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
     size_t total = align_up_8((size_t)STRING_BASE_SIZE + ((size_t)numElements * (size_t)STRING_COMPONENT_SIZE));
 
-    void *obj = calloc(1, total);
+    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
     if (!obj)
         return 0;
 
@@ -359,8 +359,8 @@ __rhp_cid_resolve_nocache(void *callerTransitionBlockParam, void *pCell)
     return (void *)0;
 }
 
-#define TSS_MAX_TYPEMANAGERS 1024
-#define TSS_MAX_SLOTS        4096
+#define TSS_MAX_TYPEMANAGERS 32
+#define TSS_MAX_SLOTS        256
 
 typedef struct ThreadStaticsKeyedStore
 {
