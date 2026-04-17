@@ -496,6 +496,12 @@ void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, vo
     return param_2;
 }
 
+/* Bypass the TypeLoader lock assertion */
+void __wrap_S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld(void)
+{
+}
+
+
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
 {
 }

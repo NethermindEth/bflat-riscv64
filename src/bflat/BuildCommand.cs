@@ -1480,7 +1480,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread ");
+                ldArgs.Append($"--wrap=S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
