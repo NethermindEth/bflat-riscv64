@@ -18,9 +18,8 @@
 #define TLS_CNT         (1)
 #define TLS_ALIGN       (4)
 
-__attribute__((section(".data")))
 static uint8_t  tls_storage_static[HEAP_SIZE]
-    __attribute__((aligned(64))) = { 0 };
+    __attribute__((aligned(64)));
 
 /*
  * tls_base points to the actual TLS data area (after pthread data).
