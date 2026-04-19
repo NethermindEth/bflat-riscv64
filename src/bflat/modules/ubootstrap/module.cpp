@@ -6,7 +6,14 @@
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
+
 #include <stdint.h>
+
+/* Fake command-line arguments for the managed runtime. */
+static char s_argv0[] = "app";
+static char *s_argv_arr[] = { s_argv0, nullptr };
+extern "C" int   g_bootstrap_argc = 1;
+extern "C" char **g_bootstrap_argv = s_argv_arr;
 
 #if defined(__APPLE__)
 
@@ -142,5 +149,5 @@ uBootstrap_main(int argc, char* argv[])
     if (ret != 0)
         return ret;
 
-    return __managed__Main(argc, argv);
+    return __managed__Main(g_bootstrap_argc, g_bootstrap_argv);
 }

@@ -1468,7 +1468,6 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
                 ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_CompilerHelpers_StartupCodeHelpers__InitializeCommandLineArgs ");
                 ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Enter ");

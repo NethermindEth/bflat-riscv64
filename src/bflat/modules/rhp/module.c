@@ -471,10 +471,6 @@ void __wrap__Z16InitializeCGroupv(void)
 {
 }
 
-void __wrap_S_P_CoreLib_Internal_Runtime_CompilerHelpers_StartupCodeHelpers__InitializeCommandLineArgs(void)
-{
-}
-
 void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
 {
 }
