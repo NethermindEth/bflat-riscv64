@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Trivial RNG implementation.
+ * @brief Trivial RNG implementation with OpenSSL stub.
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  *
@@ -20,4 +20,18 @@ __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer, 
     for (int i = 0; i < bufferLength; i++)
         buffer[i] = (unsigned char)(get_val() % 0x100);
     return 0;
+}
+
+int
+__wrap_CryptoNative_EnsureOpenSslInitialized(void)
+{
+    return 0;
+}
+
+int
+__wrap_CryptoNative_GetRandomBytes(unsigned char *buffer, int length)
+{
+    for (int i = 0; i < length; i++)
+        buffer[i] = (unsigned char)(get_val() % 0x100);
+    return 1;
 }

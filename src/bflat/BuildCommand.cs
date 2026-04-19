@@ -1545,6 +1545,8 @@ internal class BuildCommand : CommandBase
                 /* rng */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
                 ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
+                ldArgs.Append($"--wrap=CryptoNative_EnsureOpenSslInitialized ");
+                ldArgs.Append($"--wrap=CryptoNative_GetRandomBytes ");
 
                 /* rust_sys */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");

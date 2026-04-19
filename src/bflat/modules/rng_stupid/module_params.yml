@@ -1,3 +1,5 @@
 options:
   ld:
     - value: --wrap=minipal_get_cryptographically_secure_random_bytes
+    - value: --wrap=CryptoNative_EnsureOpenSslInitialized
+    - value: --wrap=CryptoNative_GetRandomBytes
