@@ -25,7 +25,7 @@ SECTIONS
     *(.text .text.*)
   } :text
 
-  .rodata : ALIGN(16)
+  .rodata : ALIGN(0x1000)
   {
     *(.rodata .rodata.*)
   } :rodata
