@@ -1,7 +1,7 @@
 # Bflat
 
 [![Build RISC-V64](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml/badge.svg)](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
-[![ZK Tests](https://zk-testing.nethermind.dev/api/v2/badge/project/?project=bflat-ts)](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1)
+[![ZK Tests](https://zk-testing.nethermind.dev/api/v2/projects/bflat-ts/badge)](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1)
 
 Nethermind's Bflat is a fork of C# NativeAOT compiler originally developed by [MichalStrehovsky](https://github.com/MichalStrehovsky).
 
