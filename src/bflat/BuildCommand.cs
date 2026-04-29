@@ -1584,7 +1584,7 @@ internal class BuildCommand : CommandBase
 
         if (libc == "zisk" && exitCode == 0)
         {
-            var patchElfArgs = " --fix-init-array --fix-tdata --split-code-data --remove-eh ";
+            var patchElfArgs = " --fix-init-array --fix-tdata --split-code-data --remove-eh --trim-bss ";
             if (verbose)
                 patchElfArgs += "--print-fn-boundaries ";
 
