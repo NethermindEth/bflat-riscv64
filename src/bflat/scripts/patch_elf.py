@@ -49,6 +49,9 @@ def prepare_parser():
     parser.add_argument(
         "--remove-eh", help="Remove EH sections", action="store_true", default=False
     )
+    parser.add_argument(
+        "--trim-bss", help="Remove .bss section", action="store_true", default=False
+    )
     return parser
 
 
@@ -452,6 +455,9 @@ if args.remove_eh:
     elf.remove_section(".dotnet_eh_table", clear=False)
     elf.remove_section(".eh_frame_hdr", clear=False)
     elf.remove_section(".eh_frame", clear=False)
+
+if args.trim_bss:
+    elf.remove_section(".bss", clear=False)
 
 elf.write(args.output_file)
 print("ELF file postprocessed")
