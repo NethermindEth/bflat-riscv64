@@ -1451,7 +1451,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
                 if (libc == "zisk")
                 {
-                    ldArgs.Append($"--wrap=_RNvNtNtCsakQiG9XjPeS_6ziskos5alloc5alloc25inline_bump_alloc_aligned ");
+                    ldArgs.Append($"--wrap=inline_bump_alloc_aligned ");
                 }
                 /* rhp */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
