@@ -1,0 +1,24 @@
+<nav class="docs-nav" aria-label="Documentation">
+  {% assign current = page.url | replace: '/index.html', '/' %}
+  {% for group in site.nav %}
+    <p class="nav-section">{{ group.section }}</p>
+    <ul>
+      {% for item in group.items %}
+        <li>
+          <a href="{{ item.url | relative_url }}"
+             class="{% if current == item.url %}is-active{% endif %}">
+            {{ item.title }}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+
+  <p class="nav-section">Resources</p>
+  <ul>
+    <li><a href="https://github.com/NethermindEth/bflat-riscv64" rel="noopener">bflat-riscv64</a></li>
+    <li><a href="https://github.com/NethermindEth/dotnet-riscv" rel="noopener">dotnet-riscv</a></li>
+    <li><a href="https://github.com/NethermindEth/riscv-alpine-build" rel="noopener">riscv-alpine-build</a></li>
+    <li><a href="https://github.com/0xPolygonHermez/zisk" rel="noopener">Zisk zkVM</a></li>
+  </ul>
+</nav>

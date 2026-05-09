@@ -1,0 +1,517 @@
+---
+layout: landing
+title: bflat-riscv64 — NativeAOT C# for RISC-V64 zkVMs
+description: A fork of bflat that compiles C# straight to fully static RISC-V64 binaries running inside zkVMs such as Zisk. Used in production by Nethermind's StatelessExecutor.
+---
+
+<!-- ============================================================= HERO -->
+<section class="landing-hero">
+  <div>
+    <p class="eyebrow">Nethermind · zkVM tooling</p>
+    <h1>Native&nbsp;C# for <span class="accent">RISC-V64 zkVMs.</span></h1>
+    <p class="lead">
+      bflat-riscv64 compiles C# straight to fully static RISC-V64 ELF
+      binaries — runnable inside the Zisk prover, under
+      <code>qemu-riscv64</code>, or on real RISC-V64 Linux. One source,
+      three targets.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Get building →</a>
+      <a class="btn btn-ghost-cyan" href="{{ '/architecture/' | relative_url }}">See the architecture</a>
+    </div>
+    <div class="badges">
+      <span class="badge badge--accent">RISC-V64</span>
+      <span class="badge">rv64ima · lp64d</span>
+      <span class="badge badge--accent2">Zisk · zisk_sim</span>
+      <span class="badge">musl-based</span>
+      <span class="badge">Statically linked</span>
+    </div>
+  </div>
+  <div class="hero-figure">
+    {% include hero-illustration.html %}
+  </div>
+</section>
+
+<!-- ============================================================ NATIVE -->
+<div class="native-pitch">
+  <div class="container">
+    <p class="eyebrow">How it executes</p>
+    <h2 class="native-pitch-h">
+      What <span class="accent-token">NativeAOT</span> emits is what the prover proves.
+    </h2>
+    <p class="native-pitch-lead">
+      A native RISC-V64 binary with full AOT optimization applied to
+      your C# end-to-end. No IL interpreter, no JIT, no managed runtime
+      in the loop — the prover walks the same instructions a C or Rust
+      toolchain would have produced.
+    </p>
+  </div>
+</div>
+
+<!-- ====================================================== STAT STRIP -->
+<section class="stat-strip">
+  <div class="stat">
+    <div class="stat-value">12<span class="unit">modules</span></div>
+    <p class="stat-label">Link-time patches</p>
+  </div>
+  <div class="stat">
+    <div class="stat-value">2<span class="unit">targets</span></div>
+    <p class="stat-label">zisk · zisk_sim</p>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0<span class="unit">syscalls</span></div>
+    <p class="stat-label">In Zisk builds</p>
+  </div>
+  <div class="stat">
+    <div class="stat-value">1<span class="unit">command</span></div>
+    <p class="stat-label">Source → ELF</p>
+  </div>
+</section>
+
+<!-- ============================================================ RUN IT -->
+<div class="run-it">
+  <div class="container">
+    <p class="eyebrow">Run it now</p>
+    <h2>No install. One command. Current directory mounted.</h2>
+    <p class="lead">
+      Drop a <code>.cs</code> file next to your shell and let the official
+      container do the rest — compiler, patched runtime, link-time modules,
+      and postprocessor are all already inside the image.
+    </p>
+
+    <div class="run-toggle" role="tablist" aria-label="Build target">
+      <button type="button" class="run-toggle-btn is-active"
+              data-target="zisk" role="tab" aria-selected="true">
+        <span class="badge-dot" aria-hidden="true"></span>
+        Zisk
+      </button>
+      <button type="button" class="run-toggle-btn"
+              data-target="qemu" role="tab" aria-selected="false">
+        <span class="badge-dot" aria-hidden="true"></span>
+        QEMU
+      </button>
+    </div>
+
+    <div class="codeshot codeshot--hero">
+      <div class="codeshot-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="label">your shell — bash</span>
+      </div>
+<pre class="run-pane is-active" data-pane="zisk"><code><span class="comment-token"># Build for the Zisk zkVM — fully postprocessed, ready to prove</span>
+<span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
+    nethermindeth/bflat-riscv64:latest \
+    bflat build hello.cs --os linux --libc zisk
+</code></pre>
+<pre class="run-pane" data-pane="qemu"><code><span class="comment-token"># Build for the simulator — same source, runs under QEMU or native RISC-V64 Linux</span>
+<span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
+    nethermindeth/bflat-riscv64:latest \
+    bflat build hello.cs --os linux --libc zisk_sim
+</code></pre>
+    </div>
+
+    <p class="codeshot-meta run-pane is-active" data-pane="zisk">
+      The image is published on
+      <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64" rel="noopener">Docker Hub</a>.
+      Output ELF lands in the directory you mounted — already postprocessed
+      and ready to feed straight into the Zisk prover.
+    </p>
+    <p class="codeshot-meta run-pane" data-pane="qemu">
+      The image is published on
+      <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64" rel="noopener">Docker Hub</a>.
+      Output ELF lands in the directory you mounted — runs under
+      <code>qemu-riscv64</code> or natively on RISC-V64 Linux, useful for
+      debugging before proving.
+    </p>
+  </div>
+</div>
+
+<!-- ============================================================ WHAT -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">What it is</p>
+    <div>
+      <h2>A thin compiler driver around .NET NativeAOT, with the missing pieces a zkVM needs.</h2>
+      <p>
+        The original <a href="https://github.com/bflattened/bflat">bflat</a>
+        compiles C# to native code via NativeAOT but produces dynamically
+        linked binaries. None of those dependencies are acceptable inside a
+        zkVM. Our fork adds two new libc targets, twelve link-time modules,
+        per-target linker scripts, and an ELF postprocessor — all without
+        touching upstream sources.
+      </p>
+    </div>
+  </div>
+
+  <div class="feature-grid">
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"/></svg>
+      </div>
+      <h3>Two new libc targets</h3>
+      <p><code>zisk</code> for proving inside Zisk; <code>zisk_sim</code>
+      for a Zisk-shaped binary that still runs in QEMU or on real hardware.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
+      </div>
+      <h3>Twelve link-time modules</h3>
+      <p>Small C / C++ / asm objects plug into the linker via
+      <code>--wrap=</code> overrides. No upstream code is patched in place.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
+      </div>
+      <h3>Custom linker scripts</h3>
+      <p>Per-target memory layout: a fixed ROM/RAM split for Zisk and a
+      single-segment layout for the simulator.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h8M19 18l2 2-2 2M21 20h-8"/></svg>
+      </div>
+      <h3>ELF postprocessor</h3>
+      <p>A Python script that fixes <code>.init_array</code> and
+      <code>.tdata</code> attributes for the Zisk loader, removes EH
+      tables, and trims sections the prover doesn't load.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16zM3.3 7L12 12l8.7-5M12 22V12"/></svg>
+      </div>
+      <h3>NuGet integration</h3>
+      <p><code>--extlib</code> understands manifest-tagged NuGet packages,
+      including precompiled native libraries like <code>libziskos</code>.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">
+        <svg viewBox="0 0 24 24"><path d="M22 12A10 10 0 1 1 12 2M22 4 12 14.01l-3-3"/></svg>
+      </div>
+      <h3>Production-validated</h3>
+      <p>Drives Nethermind's <a href="https://github.com/NethermindEth/nethermind">StatelessExecutor</a>
+      — a real Ethereum state-transition function — under continuous
+      proof-time regression.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================== FOUNDATION -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">Foundation</p>
+    <div>
+      <h2>Two sibling projects build the base — bflat sits on top.</h2>
+      <p>
+        Before bflat compiles a single line of C#, two upstream-derived
+        projects ensure every byte of the underlying environment respects
+        the zkVM constraints — no compressed instructions, no FP, one
+        ABI across the stack. Both ship as release artifacts, downloaded
+        and unpacked at bflat build time.
+      </p>
+    </div>
+  </div>
+
+  <div class="cards">
+    <a class="card" href="{{ '/alpine/' | relative_url }}">
+      <h3>Alpine — riscv-alpine-build</h3>
+      <p>The whole Alpine distribution rebuilt from source. GCC
+      reconfigured to drop compressed and floating-point instruction
+      emission while keeping the <code>lp64d</code> ABI. ~320 lines of
+      patches do the entire system-wide rebuild.</p>
+    </a>
+    <a class="card" href="{{ '/runtime/' | relative_url }}">
+      <h3>.NET — dotnet-riscv</h3>
+      <p>Pulls a tagged upstream .NET VMR, applies 20 focused patches
+      (RISC-V64 ISA constraints, NativeAOT startup, determinism for
+      proofs) and packages CoreLib, runtime libraries, GC, and bflat-side
+      objects as a downloadable release.</p>
+    </a>
+  </div>
+
+  <div class="divergence">
+    <div class="divergence-head">
+      <h2>The .NET we ship is upstream — <em>almost untouched</em>.</h2>
+      <p>
+        A short, focused patch series sits between Microsoft's release
+        branch and the runtime artifacts bflat consumes. Bumping to a
+        new .NET version is a rebase, not a fork.
+      </p>
+    </div>
+
+    <div class="divergence-stats">
+      <div class="div-stat">
+        <div class="div-stat-num">20<span class="unit">patches</span></div>
+        <p class="div-stat-note">19 against the runtime VMR · 1 against the SDK</p>
+      </div>
+      <div class="div-stat">
+        <div class="div-stat-num">70<span class="unit">files touched</span></div>
+        <p class="div-stat-note">Out of <strong>56,796</strong> tracked in <code>dotnet/runtime</code><br>= <strong class="ratio-orange">0.12 %</strong> · about 1 file in 811</p>
+      </div>
+      <div class="div-stat">
+        <div class="div-stat-num">+493<span class="unit">net lines</span></div>
+        <p class="div-stat-note">Out of <strong>11.1 M</strong> in upstream sources<br>= <strong class="ratio-cyan">0.004 %</strong> · +1 013 / −520</p>
+      </div>
+      <div class="div-stat">
+        <div class="div-stat-num">5<span class="unit">categories</span></div>
+        <p class="div-stat-note">ISA · NativeAOT startup · zerolib · determinism · build infra</p>
+      </div>
+    </div>
+
+    <div class="divergence-bar" aria-hidden="true">
+      <div class="divergence-bar-track">
+        <div class="divergence-bar-fill"></div>
+      </div>
+      <div class="divergence-bar-legend">
+        <span class="left">our patches · 70 files</span>
+        <span class="right">upstream <code>dotnet/runtime</code> · 56,796 files</span>
+      </div>
+      <p class="divergence-bar-note">
+        Sliver scaled for visibility — the actual share is so small it
+        wouldn't render at 1 px wide.
+      </p>
+    </div>
+
+    <p class="divergence-foot">
+      <a href="{{ '/runtime/' | relative_url }}">See every patch, grouped by purpose →</a>
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ PIPELINE -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">bflat pipeline</p>
+    <div>
+      <h2>From <code>.cs</code> source to a Zisk-ready ELF in four stages.</h2>
+      <p>
+        On top of that foundation, bflat itself orchestrates four stages
+        — all driven by <code>BuildCommand.cs</code> in
+        <code>src/bflat/</code>. The C#-to-object compile uses
+        Microsoft's stock NativeAOT; everything Nethermind contributes
+        in this repo happens at link time and after.
+      </p>
+    </div>
+  </div>
+
+  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
+    {% include pipeline-diagram.html %}
+  </div>
+
+  <ol style="margin-top: 32px; counter-reset: step; list-style: none; padding: 0;">
+    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
+      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">01</div>
+      <div>
+        <h3 style="margin: 0 0 4px;">Microsoft's NativeAOT (ILC) emits an object</h3>
+        <p style="margin: 0; color: var(--text-muted);">Stock, unmodified ILC compiles C# to a single RISC-V64 ELF relocatable containing managed code, type-system metadata, and module init tables. Using upstream Microsoft tooling keeps the C#-to-native step safe and universal — we inherit the same testing and portability the rest of .NET enjoys.</p>
+      </div>
+    </li>
+    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
+      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">02</div>
+      <div>
+        <h3 style="margin: 0 0 4px;">ld.lld links the binary statically</h3>
+        <p style="margin: 0; color: var(--text-muted);">Twelve module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
+      </div>
+    </li>
+    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
+      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">03</div>
+      <div>
+        <h3 style="margin: 0 0 4px;">patch_elf.py rewrites the ELF</h3>
+        <p style="margin: 0; color: var(--text-muted);">Fixes <code>.init_array</code> and <code>.tdata</code> attributes for the Zisk loader, removes EH frames, trims <code>.bss</code>. Only runs for <code>--libc zisk</code>.</p>
+      </div>
+    </li>
+    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">04</div>
+      <div>
+        <h3 style="margin: 0 0 4px;">Run anywhere — prove with Zisk</h3>
+        <p style="margin: 0; color: var(--text-muted);">The output is a single ELF. It runs natively on RISC-V64 Linux, under <code>qemu-riscv64</code>, and inside the Zisk prover. The same source builds for all three.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ====================================================== ARCHITECTURE -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">Architecture</p>
+    <div>
+      <h2>A small surface that touches what it doesn't own.</h2>
+      <p>
+        Everything Nethermind contributes to <em>this</em> repo lives in
+        one place: the compiler driver, the link-time modules, the
+        linker scripts, and the postprocessor. The .NET runtime is built
+        and patched separately by
+        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a>;
+        the underlying distribution is rebuilt from source by
+        <a href="{{ '/alpine/' | relative_url }}">riscv-alpine-build</a>
+        with no compressed and no FP instructions emitted, while keeping
+        the <code>lp64d</code> ABI for toolchain compatibility. Both
+        ship as release artifacts consumed at build time.
+      </p>
+    </div>
+  </div>
+
+  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
+    {% include architecture-stack.html %}
+  </div>
+
+  <div class="module-grid">
+    <a class="mod" href="{{ '/modules/#ubootstrap' | relative_url }}">
+      <div class="mod-name">ubootstrap</div>
+      <p class="mod-desc">Runtime entry point. Calls <code>RhInitialize</code>, registers the managed-code range, runs module initialisers, jumps to <code>__managed__Main</code>.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#pal' | relative_url }}">
+      <div class="mod-name">pal</div>
+      <p class="mod-desc">Platform abstraction. <code>getenv</code>, <code>sched_*</code>, <code>mmap</code>, malloc/realloc/free, <code>syscall</code> — wrapped or routed to a downward bump allocator.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#rhp' | relative_url }}">
+      <div class="mod-name">rhp</div>
+      <p class="mod-desc">Object allocators on top of <code>calloc</code>, EventPipe stubs, default-locale, lock no-ops, custom <code>RhpCidResolve</code>, thread-static storage.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#rhp-native' | relative_url }}">
+      <div class="mod-name">rhp_native</div>
+      <p class="mod-desc">Hand-written RISC-V64 asm: write-without-write-barrier ref assignment and the <code>RhpCidResolve</code> trampoline.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#tls' | relative_url }}">
+      <div class="mod-name">tls</div>
+      <p class="mod-desc">Minimal thread-local storage. A static 100 KiB buffer copies <code>.tdata</code> on first access and serves <code>__tls_get_addr</code>.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#nofp' | relative_url }}">
+      <div class="mod-name">nofp</div>
+      <p class="mod-desc">Empty bodies for soft-float compiler-RT helpers. Lets the binary link cleanly when the AOT pass eliminates floating point.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#rng-stupid' | relative_url }}">
+      <div class="mod-name">rng_stupid</div>
+      <p class="mod-desc">Deterministic LCG-based PRNG that satisfies <code>RandomNumberGenerator</code> and <code>OpenSSL</code> requests.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#security-stub' | relative_url }}">
+      <div class="mod-name">security-stub</div>
+      <p class="mod-desc">GSS / NetSecurity functions that all return <code>-1</code>. Prevents link errors for never-executed network paths.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#stdcppshim' | relative_url }}">
+      <div class="mod-name">stdcppshim</div>
+      <p class="mod-desc">C++ allocator shims. <code>operator new[]</code> and <code>operator new</code> forwarded to <code>malloc</code>.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#rust-sys' | relative_url }}">
+      <div class="mod-name">rust_sys</div>
+      <p class="mod-desc">Rust compatibility layer. <code>sys_alloc_aligned</code> wired to the bump allocator for adjacent precompiles.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#ugc-zero' | relative_url }}">
+      <div class="mod-name">ugc-zero</div>
+      <p class="mod-desc">Drop-in GC that never collects. Acceptable because each proof is short-lived with a known working set.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#zkvm-zisk' | relative_url }}">
+      <div class="mod-name">zkvm_zisk · zkvm_zisk_sim</div>
+      <p class="mod-desc"><code>_start</code> in asm + linker scripts. Sets <code>gp</code>, <code>sp</code>, tail-calls <code>__libc_start_main</code>.</p>
+    </a>
+  </div>
+</section>
+
+<!-- ===================================================== VERIFICATION -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">Verification</p>
+    <div>
+      <h2>Every commit walks the full pipeline.</h2>
+      <p>
+        Two CI jobs run on every push: <strong>build-riscv64</strong> rebuilds
+        the compiler and all modules from source; <strong>zk-testing</strong>
+        runs the bundled samples and the Nethermind StatelessExecutor end-to-end
+        through Zisk. If any link-time wrap, postprocessing pass, or runtime
+        shim breaks, the dashboard turns red within minutes.
+      </p>
+    </div>
+  </div>
+
+  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
+    {% include verify-flow.html %}
+  </div>
+
+  <div class="verify-ribbon">
+    <div class="item">
+      <h4>Build CI</h4>
+      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> compiles every module and bflat itself. Artifacts are signed and reproducible.</p>
+    </div>
+    <div class="item">
+      <h4>Sample regression</h4>
+      <p>Each sample under <code>samples/</code> is built and run under <code>zisk_sim</code>.</p>
+    </div>
+    <div class="item">
+      <h4>End-to-end proofs</h4>
+      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard runs the full Nethermind StatelessExecutor through Zisk on every commit and surfaces proof timings as a public badge.</p>
+    </div>
+  </div>
+
+  <p style="margin-top: 28px; color: var(--text-muted);">
+    See <a href="{{ '/verification/' | relative_url }}">Verification</a> for the
+    full list of automated checks, the manual smoke tests, and how to read
+    the dashboard.
+  </p>
+</section>
+
+<!-- ============================================================ QUICK START -->
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">Quick start</p>
+    <div>
+      <h2>One command, source to ELF.</h2>
+      <p>Assuming you have a built bflat in your <code>$PATH</code>:</p>
+    </div>
+  </div>
+
+  <div class="codeshot">
+    <div class="codeshot-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="label">~/work/hello — bash</span>
+    </div>
+    <pre><code><span style="color:#6b738c"># Compile a C# program for Zisk</span>
+$ bflat build hello.cs --os linux --libc zisk
+$ ls -lh hello
+-rwxr-xr-x  1 user  staff   2.5M hello
+
+<span style="color:#6b738c"># Same source, simulator-friendly target</span>
+$ bflat build hello.cs --os linux --libc zisk_sim
+$ qemu-riscv64 ./hello
+Hello world!
+
+<span style="color:#6b738c"># With an external Zisk-precompile library from NuGet</span>
+$ bflat build app.cs --os linux --libc zisk \
+      --extlib NethermindEth/bflat-libziskos:1.0.0
+</code></pre>
+  </div>
+
+  <div class="cta">
+    <h2>Build something for a zkVM.</h2>
+    <p>
+      The runtime is downloaded automatically. The samples build in seconds.
+      The pipeline is the same one Nethermind uses in production.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Read the build guide →</a>
+      <a class="btn btn-ghost-cyan" href="https://github.com/{{ site.repository }}" rel="noopener">Browse the source</a>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  var toggle = document.querySelector('.run-toggle');
+  if (!toggle) return;
+  var btns  = document.querySelectorAll('.run-toggle-btn');
+  var panes = document.querySelectorAll('.run-pane');
+
+  toggle.addEventListener('click', function (e) {
+    var btn = e.target.closest('.run-toggle-btn');
+    if (!btn) return;
+    var target = btn.getAttribute('data-target');
+    btns.forEach(function (b) {
+      var on = b === btn;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    panes.forEach(function (p) {
+      p.classList.toggle('is-active', p.getAttribute('data-pane') === target);
+    });
+  });
+})();
+</script>

@@ -1,0 +1,26 @@
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="{{ '/' | relative_url }}" aria-label="Nethermind bflat-riscv64">
+      <span class="brand-mark">
+        <img src="{{ '/assets/img/nm-mark.svg' | relative_url }}" alt="" aria-hidden="true">
+      </span>
+      <span class="brand-text">
+        <span class="brand-org">Nethermind</span>
+        <span class="brand-product">bflat-riscv64</span>
+      </span>
+    </a>
+
+    <nav class="primary-nav">
+      <a href="{{ '/alpine/' | relative_url }}">Alpine</a>
+      <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a>
+      <a href="{{ '/architecture/' | relative_url }}">Architecture</a>
+      <a href="{{ '/modules/' | relative_url }}">Modules</a>
+      <a href="{{ '/build/' | relative_url }}">Build</a>
+      <a href="{{ '/verification/' | relative_url }}">Verification</a>
+    </nav>
+
+    <div class="header-actions">
+      <a class="btn btn-ghost" href="https://github.com/{{ site.repository }}" rel="noopener">GitHub →</a>
+    </div>
+  </div>
+</header>
