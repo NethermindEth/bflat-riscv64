@@ -3,8 +3,8 @@ tagline: NativeAOT C# for RISC-V64 zkVMs
 description: >-
   Nethermind's fork of bflat. Compile C# straight to fully static
   RISC-V64 binaries that run inside zkVMs such as Zisk.
-url: ""
-baseurl: ""
+url: "https://nethermindeth.github.io"
+baseurl: "/bflat-riscv64"
 repository: NethermindEth/bflat-riscv64
 
 author:
