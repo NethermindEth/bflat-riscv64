@@ -13,3 +13,4 @@ msbuild.binlog
 /src/bflat/modules/ugc-zero/src
 /src/bflat/modules/ugc-zero/release
 /src/packages
+_site
