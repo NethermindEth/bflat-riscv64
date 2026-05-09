@@ -126,6 +126,10 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\security-stub\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\security-stub.o" />
 
+    <!-- gs_cookie -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\gs_cookie.o" />
+
     <!-- stdcppshim -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />

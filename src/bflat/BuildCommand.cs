@@ -1496,6 +1496,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpThrowEx ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
 
+                /* gs_cookie */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
+                ldArgs.Append($"--wrap=__security_cookie ");
+
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
                 ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
