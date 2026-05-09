@@ -1,0 +1,115 @@
+<svg viewBox="0 0 720 460" xmlns="http://www.w3.org/2000/svg" class="stack-svg" role="img" aria-label="bflat-riscv64 layered architecture">
+  <defs>
+    <linearGradient id="layerBase" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1d2230"/>
+      <stop offset="100%" stop-color="#11141b"/>
+    </linearGradient>
+    <linearGradient id="layerAccent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,153,0,0.18)"/>
+      <stop offset="100%" stop-color="rgba(255,153,0,0.04)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Layer 1: User C# -->
+  <g>
+    <rect x="40" y="20" width="640" height="60" rx="8" fill="url(#layerBase)" stroke="#313a52"/>
+    <text x="60" y="45" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#ff9900">YOUR PROGRAM</text>
+    <text x="60" y="68" font-family="Inter, sans-serif" font-size="14" fill="#e6e9f2">C# state-transition function · NethermindEth/nethermind</text>
+    <g font-family="JetBrains Mono, monospace" font-size="10" fill="#97a0b8">
+      <text x="500" y="45">extlib: libziskos</text>
+      <text x="500" y="60">extlib: ssz</text>
+    </g>
+  </g>
+
+  <!-- Layer 2: NativeAOT-emitted code -->
+  <g>
+    <rect x="40" y="92" width="640" height="60" rx="8" fill="url(#layerBase)" stroke="#313a52"/>
+    <text x="60" y="117" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#ff9900">NATIVEAOT OUTPUT</text>
+    <text x="60" y="140" font-family="Inter, sans-serif" font-size="14" fill="#e6e9f2">Compiled managed code · type system · module init tables · GC integration</text>
+  </g>
+
+  <!-- Layer 3: link-time modules (the fork's contribution) -->
+  <g>
+    <rect x="40" y="164" width="640" height="160" rx="8" fill="url(#layerAccent)" stroke="#ff9900"/>
+    <text x="60" y="189" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#ff9900">LINK-TIME MODULES · src/bflat/modules/</text>
+
+    <!-- Module pills -->
+    <g font-family="JetBrains Mono, monospace" font-size="10" fill="#e6e9f2">
+      <g>
+        <rect x="60" y="206" width="92" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="106" y="223" text-anchor="middle">ubootstrap</text>
+      </g>
+      <g>
+        <rect x="160" y="206" width="56" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="188" y="223" text-anchor="middle">pal</text>
+      </g>
+      <g>
+        <rect x="224" y="206" width="56" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="252" y="223" text-anchor="middle">rhp</text>
+      </g>
+      <g>
+        <rect x="288" y="206" width="92" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="334" y="223" text-anchor="middle">rhp_native</text>
+      </g>
+      <g>
+        <rect x="388" y="206" width="56" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="416" y="223" text-anchor="middle">tls</text>
+      </g>
+      <g>
+        <rect x="452" y="206" width="68" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="486" y="223" text-anchor="middle">nofp</text>
+      </g>
+      <g>
+        <rect x="528" y="206" width="92" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="574" y="223" text-anchor="middle">rng_stupid</text>
+      </g>
+
+      <g>
+        <rect x="60" y="240" width="120" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="120" y="257" text-anchor="middle">security-stub</text>
+      </g>
+      <g>
+        <rect x="188" y="240" width="92" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="234" y="257" text-anchor="middle">stdcppshim</text>
+      </g>
+      <g>
+        <rect x="288" y="240" width="80" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="328" y="257" text-anchor="middle">rust_sys</text>
+      </g>
+      <g>
+        <rect x="376" y="240" width="80" height="26" rx="4" fill="#11141b" stroke="#313a52"/>
+        <text x="416" y="257" text-anchor="middle">ugc-zero</text>
+      </g>
+      <g>
+        <rect x="464" y="240" width="92" height="26" rx="4" fill="#11141b" stroke="#ff9900"/>
+        <text x="510" y="257" text-anchor="middle" fill="#ff9900">zkvm_zisk</text>
+      </g>
+      <g>
+        <rect x="564" y="240" width="116" height="26" rx="4" fill="#11141b" stroke="#00b3ff"/>
+        <text x="622" y="257" text-anchor="middle" fill="#00b3ff">zkvm_zisk_sim</text>
+      </g>
+    </g>
+
+    <text x="60" y="288" font-family="Inter, sans-serif" font-size="11" fill="#97a0b8">Wired with</text>
+    <text x="120" y="288" font-family="JetBrains Mono, monospace" font-size="11" fill="#ff9900">--wrap=symbol</text>
+    <text x="222" y="288" font-family="Inter, sans-serif" font-size="11" fill="#97a0b8">overrides on a stock musl-based runtime.</text>
+
+    <text x="60" y="308" font-family="Inter, sans-serif" font-size="11" fill="#97a0b8">12 modules · 380 LoC at the largest · each one orthogonal · upstream sources unmodified.</text>
+  </g>
+
+  <!-- Layer 4: musl-based runtime (cyan: runtime/output side; clickable) -->
+  <a href="{{ '/runtime/' | relative_url }}">
+    <g>
+      <rect x="40" y="336" width="640" height="50" rx="8" fill="url(#layerBase)" stroke="#313a52"/>
+      <text x="60" y="361" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#00b3ff">.NET RUNTIME · musl libc</text>
+      <text x="60" y="378" font-family="Inter, sans-serif" font-size="13" fill="#e6e9f2">NethermindEth/dotnet-riscv · 20 patches · built out-of-tree</text>
+    </g>
+  </a>
+
+  <!-- Layer 5: hardware (cyan: target machine) -->
+  <g>
+    <rect x="40" y="398" width="640" height="50" rx="8" fill="#0b0d12" stroke="#313a52"/>
+    <text x="60" y="423" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#00b3ff">RISC-V64 · rv64ima · lp64d</text>
+    <text x="60" y="440" font-family="Inter, sans-serif" font-size="13" fill="#97a0b8">Zisk prover · zisk_sim · QEMU user-mode · native Linux</text>
+  </g>
+</svg>

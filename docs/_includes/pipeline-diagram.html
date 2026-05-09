@@ -1,0 +1,104 @@
+<svg viewBox="0 0 1100 240" xmlns="http://www.w3.org/2000/svg" class="pipeline-svg" role="img" aria-label="bflat-riscv64 build pipeline">
+  <defs>
+    <linearGradient id="pipeStage" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#161a23"/>
+      <stop offset="100%" stop-color="#11141b"/>
+    </linearGradient>
+    <linearGradient id="pipeArrow1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff9900" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ff9900" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="pipeArrow2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff9900" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#00b3ff" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="pipeArrow3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00b3ff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#00b3ff" stop-opacity="1"/>
+    </linearGradient>
+    <marker id="pipeHeadO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#ff9900"/>
+    </marker>
+    <marker id="pipeHeadC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#00b3ff"/>
+    </marker>
+  </defs>
+
+  <!-- arrows between stages: orange (build) → cyan (output/deploy) -->
+  <g stroke-width="2" fill="none">
+    <line x1="280" y1="100" x2="340" y2="100" stroke="url(#pipeArrow1)" marker-end="url(#pipeHeadO)"/>
+    <line x1="560" y1="100" x2="620" y2="100" stroke="url(#pipeArrow2)" marker-end="url(#pipeHeadC)"/>
+    <line x1="840" y1="100" x2="900" y2="100" stroke="url(#pipeArrow3)" marker-end="url(#pipeHeadC)"/>
+  </g>
+
+  <!-- stage 1: NativeAOT (Microsoft ILC) -->
+  <g>
+    <rect x="40" y="40" width="240" height="120" rx="10" fill="url(#pipeStage)" stroke="#313a52"/>
+    <text x="160" y="68" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#ff9900">NATIVE AOT</text>
+    <g transform="translate(70 84)">
+      <circle cx="20" cy="22" r="18" fill="none" stroke="#ff9900" stroke-width="1.4"/>
+      <path d="M14 22 L18 26 L26 16" fill="none" stroke="#ff9900" stroke-width="1.6"/>
+      <text x="56" y="14" font-family="Inter, sans-serif" font-size="11" fill="#e6e9f2">Microsoft ILC</text>
+      <text x="56" y="28" font-family="JetBrains Mono, monospace" font-size="9" fill="#97a0b8">.cs → .o</text>
+      <text x="56" y="42" font-family="JetBrains Mono, monospace" font-size="9" fill="#97a0b8">stock, unpatched</text>
+    </g>
+    <text x="160" y="150" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#e6e9f2" font-weight="600">RISC-V64 object</text>
+  </g>
+
+  <!-- stage 2: linker -->
+  <g>
+    <rect x="340" y="40" width="220" height="120" rx="10" fill="url(#pipeStage)" stroke="#313a52"/>
+    <text x="450" y="68" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#ff9900">LD.LLD</text>
+    <g transform="translate(376 84)">
+      <rect x="0" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#313a52"/>
+      <rect x="26" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#313a52"/>
+      <rect x="52" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#313a52"/>
+      <rect x="78" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#ff9900"/>
+      <rect x="104" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#313a52"/>
+      <rect x="130" y="0" width="20" height="36" rx="2" fill="#0b0d12" stroke="#313a52"/>
+      <rect x="156" y="0" width="6"  height="36" rx="1" fill="#ff9900" opacity="0.6"/>
+      <text x="78" y="50" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#97a0b8">--wrap=*  --whole-archive</text>
+    </g>
+    <text x="450" y="150" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#e6e9f2" font-weight="600">Static ELF</text>
+  </g>
+
+  <!-- stage 3: postprocess (transition: orange → cyan) -->
+  <g>
+    <rect x="620" y="40" width="220" height="120" rx="10" fill="url(#pipeStage)" stroke="#313a52"/>
+    <text x="730" y="68" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#00b3ff">PATCH ELF</text>
+    <g transform="translate(650 82)" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#97a0b8">
+      <text x="0" y="0">--fix-init-array</text>
+      <text x="0" y="14">--fix-tdata</text>
+      <text x="0" y="28">--remove-eh</text>
+      <text x="0" y="42">--trim-bss</text>
+    </g>
+    <text x="730" y="150" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#e6e9f2" font-weight="600">Loader-ready</text>
+  </g>
+
+  <!-- stage 4: zkvm-ready (output side: cyan) -->
+  <g>
+    <rect x="900" y="40" width="160" height="120" rx="10" fill="#161a23" stroke="#00b3ff"/>
+    <text x="980" y="68" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" letter-spacing="0.14em" fill="#00b3ff">DEPLOY</text>
+    <g transform="translate(910 80)">
+      <rect x="0" y="0" width="140" height="22" rx="3" fill="#0b0d12" stroke="#313a52"/>
+      <text x="70" y="15" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#e6e9f2">Zisk prover</text>
+      <rect x="0" y="28" width="140" height="22" rx="3" fill="#0b0d12" stroke="#313a52"/>
+      <text x="70" y="43" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#97a0b8">qemu-riscv64</text>
+    </g>
+    <text x="980" y="150" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#e6e9f2" font-weight="600">Run anywhere</text>
+  </g>
+
+  <!-- bottom labels -->
+  <g font-family="Inter, sans-serif" font-size="10" fill="#6b738c" text-anchor="middle">
+    <text x="160" y="200">1</text>
+    <text x="450" y="200">2</text>
+    <text x="730" y="200">3</text>
+    <text x="980" y="200">4</text>
+  </g>
+  <g font-family="Inter, sans-serif" font-size="11" fill="#97a0b8" text-anchor="middle">
+    <text x="160" y="220">stock Microsoft ILC</text>
+    <text x="450" y="220">12 link-time modules</text>
+    <text x="730" y="220">patch_elf.py</text>
+    <text x="980" y="220">zkVM · simulator</text>
+  </g>
+</svg>

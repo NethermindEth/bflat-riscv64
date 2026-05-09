@@ -1,0 +1,131 @@
+<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg" class="hero-svg" role="img" aria-label="C# code compiled into a Zisk-ready RISC-V chip">
+  <defs>
+    <linearGradient id="chipGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1d2230"/>
+      <stop offset="100%" stop-color="#0e1118"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff9900"/>
+      <stop offset="100%" stop-color="#00b3ff"/>
+    </linearGradient>
+    <radialGradient id="chipGlow" cx="0.5" cy="0.5" r="0.6">
+      <stop offset="0%" stop-color="#ff9900" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#ff9900" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#ff9900" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="chipGlow2" cx="0.5" cy="0.5" r="0.6">
+      <stop offset="0%" stop-color="#00b3ff" stop-opacity="0.32"/>
+      <stop offset="60%" stop-color="#00b3ff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#00b3ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- background grid -->
+  <g opacity="0.18" stroke="#313a52" stroke-width="0.5">
+    <path d="M0 60 H640 M0 120 H640 M0 180 H640 M0 240 H640 M0 300 H640 M0 360 H640 M0 420 H640"/>
+    <path d="M60 0 V480 M140 0 V480 M220 0 V480 M300 0 V480 M380 0 V480 M460 0 V480 M540 0 V480"/>
+  </g>
+
+  <!-- chip glows: orange + cyan, mirroring brand mark -->
+  <ellipse cx="280" cy="240" rx="220" ry="160" fill="url(#chipGlow)"/>
+  <ellipse cx="380" cy="260" rx="200" ry="150" fill="url(#chipGlow2)"/>
+
+  <!-- traces feeding the chip — orange = inputs, cyan = outputs -->
+  <g stroke="#ff9900" stroke-width="1.4" fill="none" opacity="0.85">
+    <path d="M40 80  H140 V200 H230" stroke-dasharray="3 3"/>
+    <path d="M40 160 H180 V220"/>
+    <path d="M40 280 H180 V280"/>
+    <path d="M40 360 H140 V300 H230" stroke-dasharray="3 3"/>
+  </g>
+  <g stroke="#00b3ff" stroke-width="1.4" fill="none" opacity="0.85">
+    <path d="M600 100 H520 V200 H410"/>
+    <path d="M600 200 H460"/>
+    <path d="M600 300 H460"/>
+    <path d="M600 380 H520 V300 H410"/>
+  </g>
+
+  <!-- side input pads -->
+  <g fill="#161a23" stroke="#313a52">
+    <rect x="20" y="70" width="22" height="22" rx="3"/>
+    <rect x="20" y="150" width="22" height="22" rx="3"/>
+    <rect x="20" y="270" width="22" height="22" rx="3"/>
+    <rect x="20" y="350" width="22" height="22" rx="3"/>
+    <rect x="598" y="90" width="22" height="22" rx="3"/>
+    <rect x="598" y="190" width="22" height="22" rx="3"/>
+    <rect x="598" y="290" width="22" height="22" rx="3"/>
+    <rect x="598" y="370" width="22" height="22" rx="3"/>
+  </g>
+  <g fill="#97a0b8" font-family="JetBrains Mono, monospace" font-size="10">
+    <text x="50" y="86">C#</text>
+    <text x="50" y="166">IL</text>
+    <text x="50" y="286">.cs</text>
+    <text x="50" y="366">refs</text>
+    <text x="554" y="106" text-anchor="end">ELF</text>
+    <text x="554" y="206" text-anchor="end">.text</text>
+    <text x="554" y="306" text-anchor="end">.rodata</text>
+    <text x="554" y="386" text-anchor="end">PROGBITS</text>
+  </g>
+
+  <!-- chip body -->
+  <rect x="200" y="140" width="240" height="200" rx="14"
+        fill="url(#chipGrad)" stroke="#313a52" stroke-width="1.5"/>
+
+  <!-- chip pins -->
+  <g fill="#313a52">
+    <rect x="220" y="134" width="6" height="8"/>
+    <rect x="240" y="134" width="6" height="8"/>
+    <rect x="260" y="134" width="6" height="8"/>
+    <rect x="280" y="134" width="6" height="8"/>
+    <rect x="300" y="134" width="6" height="8"/>
+    <rect x="320" y="134" width="6" height="8"/>
+    <rect x="340" y="134" width="6" height="8"/>
+    <rect x="360" y="134" width="6" height="8"/>
+    <rect x="380" y="134" width="6" height="8"/>
+    <rect x="400" y="134" width="6" height="8"/>
+    <rect x="220" y="338" width="6" height="8"/>
+    <rect x="240" y="338" width="6" height="8"/>
+    <rect x="260" y="338" width="6" height="8"/>
+    <rect x="280" y="338" width="6" height="8"/>
+    <rect x="300" y="338" width="6" height="8"/>
+    <rect x="320" y="338" width="6" height="8"/>
+    <rect x="340" y="338" width="6" height="8"/>
+    <rect x="360" y="338" width="6" height="8"/>
+    <rect x="380" y="338" width="6" height="8"/>
+    <rect x="400" y="338" width="6" height="8"/>
+  </g>
+
+  <!-- chip surface texture -->
+  <g stroke="#232838" stroke-width="0.6" fill="none">
+    <path d="M214 168 H426 M214 184 H426 M214 200 H426 M214 216 H426 M214 232 H426 M214 248 H426 M214 264 H426 M214 280 H426 M214 296 H426 M214 312 H426"/>
+  </g>
+
+  <!-- inner core -->
+  <rect x="248" y="180" width="144" height="120" rx="8"
+        fill="#0b0d12" stroke="url(#accentGrad)" stroke-width="1.5"
+        filter="url(#softGlow)"/>
+
+  <!-- chip label -->
+  <g font-family="Inter, sans-serif" text-anchor="middle">
+    <text x="320" y="220" font-size="13" font-weight="700" letter-spacing="0.18em" fill="#97a0b8">RISC-V64</text>
+    <text x="320" y="252" font-size="22" font-weight="700" fill="#e6e9f2">bflat</text>
+    <text x="320" y="278" font-size="11" letter-spacing="0.16em" fill="#00b3ff">ZK · READY</text>
+  </g>
+
+  <!-- connection nodes — match the trace colors -->
+  <g fill="#ff9900">
+    <circle cx="230" cy="200" r="3.5"/>
+    <circle cx="230" cy="220" r="3.5"/>
+    <circle cx="230" cy="280" r="3.5"/>
+    <circle cx="230" cy="300" r="3.5"/>
+  </g>
+  <g fill="#00b3ff">
+    <circle cx="410" cy="200" r="3.5"/>
+    <circle cx="460" cy="200" r="3.5" opacity="0.6"/>
+    <circle cx="460" cy="280" r="3.5" opacity="0.6"/>
+    <circle cx="410" cy="300" r="3.5"/>
+  </g>
+</svg>
