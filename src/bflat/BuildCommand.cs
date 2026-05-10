@@ -130,6 +130,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> NoLinkOption = new Option<bool>("-c", "Produce object file, but don't run linker");
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
     private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
+    private static Option<bool> WrapCheckOption = new Option<bool>("--wrap-check", "Verify every --wrap= linker flag points to a real symbol; fails the build if any is missing");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
 
@@ -215,6 +216,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.KeepObjectOption,
             ExtLibOption,
             SymChartOption,
+            WrapCheckOption,
         };
         command.Handler = new BuildCommand();
 
@@ -1582,6 +1584,14 @@ internal class BuildCommand : CommandBase
             var p = Process.Start(command, args);
             p.WaitForExit();
             return p.ExitCode;
+        }
+
+        if (targetOS == TargetOS.Linux && result.GetValueForOption(WrapCheckOption))
+        {
+            string checkWrapPath = Path.Combine(homePath, "check_wrap_symbols.py");
+            int checkExitCode = RunCommand(checkWrapPath, "-- " + ldArgs.ToString(), printCommands);
+            if (checkExitCode != 0)
+                return checkExitCode;
         }
 
         PerfWatch linkWatch = new PerfWatch("Link");
