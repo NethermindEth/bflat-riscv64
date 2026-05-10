@@ -471,6 +471,10 @@ void __wrap__Z16InitializeCGroupv(void)
 {
 }
 
+void __wrap__Z19InitializeCpuCGroupv(void)
+{
+}
+
 void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
 {
 }
