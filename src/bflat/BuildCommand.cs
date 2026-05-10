@@ -1490,6 +1490,7 @@ internal class BuildCommand : CommandBase
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber ");
                 ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
+                ldArgs.Append($"--wrap=_Z24PalGetMaximumStackBoundsPPvS0_ ");
                 if (libc == "zisk")
                 {
                     ldArgs.Append($"--wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling ");
