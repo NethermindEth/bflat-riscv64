@@ -165,6 +165,8 @@
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"
           DestinationFiles="$(OutputPath)patch_elf.py" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\check_wrap_symbols.py"
+          DestinationFiles="$(OutputPath)check_wrap_symbols.py" />
   </Target>
 
   <Target Name="DownloadRuntimeArtifacts"
