@@ -13,7 +13,14 @@ ENTRY(_start)
 MEMORY {
   /* biosrom (xa) : ORIGIN = 0x00001000, LENGTH = 0x1000 */
   rom   (xa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
-  ram   (wxa) : ORIGIN = 0xa0020000, LENGTH = 0xFFE0000
+  /*
+   * Zisk RAM map (zisk/core/src/mem.rs):
+   *   RAM_ADDR            = 0xa0000000
+   *   AVAILABLE_MEM_ADDR  = 0xa0030000
+   *   FLOAT_LIB_RAM_ADDR  = 0xbfff0000
+   *   RAM end             = 0xc0000000
+   */
+  ram   (wxa) : ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
 }
 
 PHDRS {
