@@ -14,14 +14,16 @@ __wrap_RhpAssignRefRiscV64:
     addi t3, t3, 8
     ret
 
-/*
- * RhpCidResolve trampoline
- *
- * This wrapper is intended to bypass the CachedInterfaceDispatch fast path and
- * route interface dispatch resolution through a non-cached resolver.
- */
 .globl __wrap_RhpCidResolve
 .type  __wrap_RhpCidResolve, @function
 __wrap_RhpCidResolve:
-    /* Tail-call into the C helper. Arguments already in a0/a1. */
-    tail __rhp_cid_resolve_nocache
+    tail __real_RhpCidResolve
+
+.globl __wrap_RhpInterfaceDispatchSlow
+.type  __wrap_RhpInterfaceDispatchSlow, @function
+__wrap_RhpInterfaceDispatchSlow:
+    la t0, RhpCidResolve
+    mv t1, t5
+1:
+    auipc t2, %pcrel_hi(RhpUniversalTransition_DebugStepTailCall)
+    jalr  x0, t2, %pcrel_lo(1b)
