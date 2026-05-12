@@ -961,7 +961,7 @@ internal class BuildCommand : CommandBase
         bool useScanner = optimizationMode != OptimizationMode.None;
 
         // Enable static data preinitialization in optimized builds.
-        bool preinitStatics = false; //optimizationMode != OptimizationMode.None;
+        bool preinitStatics = optimizationMode != OptimizationMode.None;
 
         TypePreinit.TypePreinitializationPolicy preinitPolicy = preinitStatics ?
                 new TypePreinit.TypeLoaderAwarePreinitializationPolicy() : new TypePreinit.DisabledPreinitializationPolicy();
