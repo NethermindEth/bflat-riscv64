@@ -1508,6 +1508,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
                 ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
                 ldArgs.Append($"--wrap=RhpCidResolve ");
+                ldArgs.Append($"--wrap=RhpInterfaceDispatchSlow ");
 
                 /* pal */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
