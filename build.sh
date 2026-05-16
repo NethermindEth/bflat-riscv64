@@ -31,29 +31,53 @@ cd $TOP_DIR
 
 function build_modules()
 {
+	local sysroot="/usr/riscv64-linux-gnu"
+	# -mabi=lp64 (soft-float ABI) must match zisk crt1.o / libc.a, which are
+	# soft-float. Without this clang defaults to lp64d when -march=rv64imad,
+	# and the bitcode metadata clashes with crt1.o at LTO link time.
+	# -mcmodel=medany is required because zisk linker-script places .text at
+	# 0x80000000 and .data at 0xa0000000, both outside medlow's reach. medany
+	# uses pc-relative auipc+addi with ±2GB range, which spans this layout.
+	local cflags_common="--target=riscv64-linux-gnu --sysroot=${sysroot} -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -O3"
+
+	# gcc-riscv64-linux-gnu only ships stubs-lp64d.h (hard-float glibc).
+	# With -mabi=lp64, glibc's gnu/stubs.h looks up gnu/stubs-lp64.h, which
+	# doesn't exist on Ubuntu. The file is just an empty marker, so create
+	# an empty one if missing. Errors are ignored — read-only sysroot is fine
+	# as long as the file already exists.
+	local stubs_dir="${sysroot}/include/gnu"
+	if [ -d "${stubs_dir}" ] && [ ! -f "${stubs_dir}/stubs-lp64.h" ] ; then
+		touch "${stubs_dir}/stubs-lp64.h" 2>/dev/null || \
+			sudo touch "${stubs_dir}/stubs-lp64.h" 2>/dev/null || true
+	fi
+
 	pushd ${TOP_DIR}/src/bflat/modules
 		for mod in $(ls) ; do
 			if [ -d "$mod" ] ; then
 				echo Building module $mod
 				pushd $mod
 					if [ -f module.c ] ; then
-						# Compile module as C
-						riscv64-linux-gnu-gcc -march=rv64imad -c module.c -o module.o
+						# Compile module as C (clang + LTO so lld can do cross-module opt)
+						clang ${cflags_common} -c module.c -o module.o
 						on_fail $? "Failed to compile module $mod (C)"
 					fi
 					if [ -f module.S ] ; then
-						# Compile module as assembly
+						# Compile module as assembly (no LTO — bitcode doesn't apply)
 						riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 module.S -o module.o
 						on_fail $? "Failed to compile module $mod (Assembly)"
 					fi
 					if [ -f module.cpp ] ; then
-						# Compile module as C++
-						riscv64-linux-gnu-g++ -march=rv64imad -c module.cpp -o module.o
+						# Compile module as C++ (clang + LTO)
+						clang++ ${cflags_common} -c module.cpp -o module.o
 						on_fail $? "Failed to compile module $mod (C++)"
 					fi
 					if [ -f module.o ] ; then
-						# Fix up ABI marker
-						printf '\x00' | dd of="module.o" bs=1 seek=$((0x30)) count=1 conv=notrunc
+						# Fix up ABI marker — only meaningful for ELF objects;
+						# LTO bitcode files are not ELF, ABI is handled at LTO link time.
+						magic=$(head -c 4 module.o | xxd -p)
+						if [ "$magic" = "7f454c46" ] ; then
+							printf '\x00' | dd of="module.o" bs=1 seek=$((0x30)) count=1 conv=notrunc status=none
+						fi
 					fi
 					if [ -f module_params.yml ] ; then
 						repo="$(yq -r .options.repo module_params.yml)"
