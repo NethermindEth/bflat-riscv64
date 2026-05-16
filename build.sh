@@ -38,7 +38,10 @@ function build_modules()
 	# -mcmodel=medany is required because zisk linker-script places .text at
 	# 0x80000000 and .data at 0xa0000000, both outside medlow's reach. medany
 	# uses pc-relative auipc+addi with ±2GB range, which spans this layout.
-	local cflags_common="--target=riscv64-linux-gnu --sysroot=${sysroot} -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -O3"
+	# -funified-lto: another input to the final link is unified-LTO bitcode,
+	# which puts lld into unified-LTO mode; modules must match or lld errors
+	# with "unified LTO compilation must use compatible bitcode modules".
+	local cflags_common="--target=riscv64-linux-gnu --sysroot=${sysroot} -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -funified-lto -O3"
 
 	# gcc-riscv64-linux-gnu only ships stubs-lp64d.h (hard-float glibc).
 	# With -mabi=lp64, glibc's gnu/stubs.h looks up gnu/stubs-lp64.h, which
