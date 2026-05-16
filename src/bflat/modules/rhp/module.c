@@ -365,6 +365,43 @@ void __wrap_S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__Ve
 {
 }
 
+/*
+ * Every Lock is conceptually held by the only thread.
+ */
+int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *self)
+{
+    (void)self;
+    return 1;
+}
+
+/* DeadlockAwareAcquire decides whether to run a cctor body. Real CoreLib uses
+ * Lock.IsHeldByCurrentThread to detect recursive entry (A's cctor accesses B,
+ * B's cctor accesses A → second call returns 0 and breaks the cycle). Our
+ * Lock wraps are no-ops, so the real check is useless and we must track
+ * "currently running" cctor contexts ourselves. Without this, recursive cctor
+ * chains keep re-running their bodies and blow the stack. */
+#define ACTIVE_CCTOR_MAX 4096
+static void *g_active_cctors[ACTIVE_CCTOR_MAX];
+static int   g_active_cctor_count = 0;
+
+int __wrap_S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire(
+    void *cctorChain, int idx, void *ctx)
+{
+    (void)cctorChain;
+    (void)idx;
+
+    /* Linear search — list is small in practice (one entry per unique cctor
+     * ever touched). Once a cctor completes, the runtime zeroes *ctx and the
+     * caller (EnsureClassConstructorRun) short-circuits without ever reaching
+     * this wrap again, so we never need to pop. */
+    for (int i = 0; i < g_active_cctor_count; i++)
+        if (g_active_cctors[i] == ctx)
+            return 0; /* recursive — break the cycle */
+
+    if (g_active_cctor_count < ACTIVE_CCTOR_MAX)
+        g_active_cctors[g_active_cctor_count++] = ctx;
+    return 1;
+}
 
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
 {

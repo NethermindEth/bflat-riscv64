@@ -6,3 +6,5 @@ options:
     - value: --wrap=RhNewString
     - value: --wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny
     - value: --wrap=RhpCidResolve
+    - value: --wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread
+    - value: --wrap=S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire
