@@ -25,19 +25,26 @@ jobs:
           apt-get update
           apt-get install -y \
             git \
-            build-essential \
-            gcc \
-            g++ \
             gcc-riscv64-linux-gnu \
             g++-riscv64-linux-gnu \
             binutils-riscv64-linux-gnu \
             llvm \
+            clang \
+            lld \
+            xxd \
+            python3 \
+            python3-pip \
             wget \
             curl \
             ca-certificates \
             yq \
             docker.io \
             libicu-dev libicu76
+          pip3 install lief pyelftools --break-system-packages
+          # gcc-riscv64-linux-gnu only ships hard-float (lp64d) glibc stubs. We
+          # compile native modules with -mabi=lp64 (soft-float) to match zisk's
+          # crt1.o, so we need an empty gnu/stubs-lp64.h marker.
+          touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
 
       - name: Install .NET 10
         run: |
