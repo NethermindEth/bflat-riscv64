@@ -227,6 +227,23 @@ __wrap___libc_realloc(void *p, unsigned long n)
     return tmp;
 }
 
+/*
+ * Optimized calloc
+ */
+void *
+__wrap_calloc(unsigned long nmemb, unsigned long size)
+{
+    size_t total = (size_t)nmemb * (size_t)size;
+
+    if (nmemb != 0 && total / nmemb != size)
+        return NULL;
+
+    void *p = __wrap___libc_malloc_impl((unsigned long)total);
+    if (p)
+        __builtin_memset(p, 0, total);
+    return p;
+}
+
 int
 __wrap_pthread_create(void *, void *, void *, void *)
 {
