@@ -144,6 +144,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> OptimizeSizeOption = new Option<bool>(new string[] { "-Os", "--optimize-space" }, "Favor code space when optimizing");
     private static Option<bool> OptimizeSpeedOption = new Option<bool>(new string[] { "-Ot", "--optimize-time" }, "Favor code speed when optimizing");
     private static Option<bool> DisableOptimizationOption = new Option<bool>(new string[] { "-O0", "--no-optimization" }, "Disable optimizations");
+    private static Option<bool> LtoOption = new Option<bool>("--lto", "Enable link-time optimization (passes --lto=full --lto-O3 to lld; only effective for native libs built with -flto)");
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
@@ -195,6 +196,7 @@ internal class BuildCommand : CommandBase
             OptimizeSizeOption,
             OptimizeSpeedOption,
             DisableOptimizationOption,
+            LtoOption,
             NoReflectionOption,
             NoStackTraceDataOption,
             NoGlobalizationOption,
@@ -1019,8 +1021,16 @@ internal class BuildCommand : CommandBase
 
         compilationRoots.Add(metadataManager);
         compilationRoots.Add(interopStubManager);
+
+        var backendOptions = new List<string>();
+        if (optimizationMode != OptimizationMode.None)
+        {
+            backendOptions.Add("JitObjectStackAllocation=1");
+        }
+
         builder
             .UseInstructionSetSupport(instructionSetSupport)
+            .UseBackendOptions(backendOptions)
             .UseMethodBodyFolding(foldMethodBodies)
             .UseMetadataManager(metadataManager)
             .UseParallelism(parallelism)
@@ -1041,7 +1051,7 @@ internal class BuildCommand : CommandBase
 
             substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
 
-            ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager);
+            ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
 
             // Use a more precise IL provider that uses whole program analysis for dead branch elimination
             builder.UseILProvider(ilProvider);
@@ -1082,11 +1092,13 @@ internal class BuildCommand : CommandBase
             }
 
             // If we have a scanner, we can inline threadstatics storage using the information
-            // we collected at scanning time.
-            // Inlined storage implies a single type manager, thus we do not do it in multifile case.
-            // This could be a command line switch if we really wanted to.
-            //if (libc != "bionic")
-            //    builder.UseInlinedThreadStatics(scanResults.GetInlinedThreadStatics());
+            // we collected at scanning time. Only supported on Linux/Windows x64/ARM64 by RyuJIT;
+            // RISC-V (incl. zisk) uses a different TLS model and is not covered.
+            if ((targetOS == TargetOS.Linux || targetOS == TargetOS.Windows)
+                && (targetArchitecture == TargetArchitecture.X64 || targetArchitecture == TargetArchitecture.ARM64))
+            {
+                builder.UseInlinedThreadStatics(scanResults.GetInlinedThreadStatics());
+            }
         }
 
         ICompilation compilation = builder.ToCompilation();
@@ -1245,6 +1257,11 @@ internal class BuildCommand : CommandBase
             }
             ldArgs.Append("/opt:ref,icf /nodefaultlib:libcpmt.lib ");
 
+            if (result.GetValueForOption(LtoOption))
+            {
+                ldArgs.Append("/ltcg ");
+            }
+
             // Add downloaded external libraries for Windows
             foreach (var extLibPath in downloadedLibPaths)
             {
@@ -1255,6 +1272,11 @@ internal class BuildCommand : CommandBase
         {
             ldArgs.Append("-flavor ld ");
             ldArgs.Append("--no-relax ");
+
+            if (result.GetValueForOption(LtoOption))
+            {
+                ldArgs.Append("--lto=full --lto-O3 ");
+            }
 
             string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
 
@@ -1484,6 +1506,8 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire ");
                 ldArgs.Append($"--wrap=S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
@@ -1523,6 +1547,7 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=__libc_malloc_impl ");
                 ldArgs.Append($"--wrap=__libc_realloc ");
                 ldArgs.Append($"--wrap=__libc_free ");
+                ldArgs.Append($"--wrap=calloc ");
                 ldArgs.Append($"--wrap=pthread_create ");
                 ldArgs.Append($"--wrap=pthread_sigmask ");
                 ldArgs.Append($"--wrap=__clock_gettime ");
