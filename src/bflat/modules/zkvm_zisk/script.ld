@@ -109,7 +109,10 @@ SECTIONS
   PROVIDE(_global_pointer = .);
 
   . = ALIGN(8);
-  PROVIDE(_init_stack_top = . + 0x100000);
+  /* Stack grows down from _init_stack_top. With deep NativeAOT call chains
+   * (TypeLoader, cctor recursion) 1 MiB overflowed into .bss and corrupted
+   * static state (notably pal/module.c:mem). 4 MiB gives ample headroom. */
+  PROVIDE(_init_stack_top = . + 0x400000);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);
   PROVIDE(_kernel_heap_top = ORIGIN(ram) + LENGTH(ram));
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
