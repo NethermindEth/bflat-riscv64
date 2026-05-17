@@ -64,9 +64,27 @@ jobs:
       - name: Build bflat (riscv64)
         run: ./build.sh bflat riscv64
 
-      - name: Set up Docker Buildx
-        if: github.event.inputs.publish == 'true'
-        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: |
+          EXTRA_TAGS=""
+          if [ "${{ github.event.inputs.publish }}" = "true" ]; then
+            EXTRA_TAGS="-t nethermindeth/bflat-riscv64:latest -t nethermindeth/bflat-riscv64:$GITHUB_SHA"
+          fi
+          docker build --platform linux/amd64 \
+            -t nethermindeth/bflat-riscv64:test \
+            $EXTRA_TAGS \
+            .
+
+      - name: Smoke test bflat (zisk + zisk_sim)
+        run: |
+          set -e
+          for libc in zisk zisk_sim; do
+            echo "::group::Smoke build for libc=$libc"
+            docker run --rm --platform linux/amd64 \
+              nethermindeth/bflat-riscv64:test \
+              bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'"
+            echo "::endgroup::"
+          done
 
       - name: Log in to Docker Hub
         if: github.event.inputs.publish == 'true'
@@ -78,7 +96,5 @@ jobs:
       - name: Publish to Docker Hub
         if: github.event.inputs.publish == 'true'
         run: |
-          docker buildx build . \
-            -t nethermindeth/bflat-riscv64:latest \
-            -t nethermindeth/bflat-riscv64:$GITHUB_SHA \
-            --push
+          docker push nethermindeth/bflat-riscv64:latest
+          docker push "nethermindeth/bflat-riscv64:$GITHUB_SHA"
