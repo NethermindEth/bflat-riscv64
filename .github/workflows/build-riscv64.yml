@@ -16,7 +16,7 @@ jobs:
   build_riscv64:
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:25.04
+      image: ubuntu:26.04
       options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
     name: Build RISC-V64 on Ubuntu 25.04
     steps:
@@ -39,7 +39,7 @@ jobs:
             ca-certificates \
             yq \
             docker.io \
-            libicu-dev libicu76
+            libicu-dev
           pip3 install lief pyelftools --break-system-packages
           # gcc-riscv64-linux-gnu only ships hard-float (lp64d) glibc stubs. We
           # compile native modules with -mabi=lp64 (soft-float) to match zisk's

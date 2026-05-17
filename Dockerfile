@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm clang lld xxd python3 python3-pip
 
