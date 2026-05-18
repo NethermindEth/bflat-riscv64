@@ -18,12 +18,3 @@ __wrap_RhpAssignRefRiscV64:
 .type  __wrap_RhpCidResolve, @function
 __wrap_RhpCidResolve:
     tail __real_RhpCidResolve
-
-.globl __wrap_RhpInterfaceDispatchSlow
-.type  __wrap_RhpInterfaceDispatchSlow, @function
-__wrap_RhpInterfaceDispatchSlow:
-    la t0, RhpCidResolve
-    mv t1, t5
-1:
-    auipc t2, %pcrel_hi(RhpUniversalTransition_DebugStepTailCall)
-    jalr  x0, t2, %pcrel_lo(1b)
