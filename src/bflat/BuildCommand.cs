@@ -1495,6 +1495,9 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
                 ldArgs.Append($"--wrap=RhpNewArrayFast ");
                 ldArgs.Append($"--wrap=RhNewString ");
+                ldArgs.Append($"--wrap=RhpPInvoke ");
+                ldArgs.Append($"--wrap=RhpPInvokeReturn ");
+                ldArgs.Append($"--wrap=RhBulkMoveWithWriteBarrier ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
@@ -1540,7 +1543,9 @@ internal class BuildCommand : CommandBase
                 /* rhp_native */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
                 ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
-                ldArgs.Append($"--wrap=RhpCidResolve ");
+                ldArgs.Append($"--wrap=RhpCheckedAssignRef ");
+                ldArgs.Append($"--wrap=RhpByRefAssignRef ");
+                ldArgs.Append($"--wrap=RhpAssignRef ");
 
                 /* pal */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
