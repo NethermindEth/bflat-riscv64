@@ -17,6 +17,62 @@
 
 #define _DEBUG (0)
 
+/* zkVM RAM is zero-initialised and the bump allocator never reuses memory,
+ * so a freshly malloc'd block is already all-zero. ZKVM_FAST_ALLOC=1
+ * (default) drops the redundant per-object/array memset; set to 0 to
+ * restore the explicit zeroing. Kept in sync with pal/module.c. */
+#ifndef ZKVM_FAST_ALLOC
+#define ZKVM_FAST_ALLOC 1
+#endif
+
+/* RhpPInvoke / RhpPInvokeReturn build and tear down a PInvokeTransitionFrame
+ * so the GC can scan/suspend a thread that has entered native code. The
+ * zkVM guest is single-threaded, uGC never collects (so threads are never
+ * suspended and the frame is never scanned), and RhpThrowEx fails fast
+ * instead of unwinding (so the frame is never walked for EH). The whole
+ * transition is therefore dead weight. ZKVM_STUB_PINVOKE=1 (default)
+ * replaces both helpers with no-ops; set to 0 to restore the real ones. */
+#ifndef ZKVM_STUB_PINVOKE
+#define ZKVM_STUB_PINVOKE 1
+#endif
+
+#if ZKVM_STUB_PINVOKE
+void
+__wrap_RhpPInvoke(void *pFrame)
+{
+    (void)pFrame;
+}
+
+void
+__wrap_RhpPInvokeReturn(void *pFrame)
+{
+    (void)pFrame;
+}
+#else
+extern void __real_RhpPInvoke(void *pFrame);
+extern void __real_RhpPInvokeReturn(void *pFrame);
+
+void
+__wrap_RhpPInvoke(void *pFrame)
+{
+    __real_RhpPInvoke(pFrame);
+}
+
+void
+__wrap_RhpPInvokeReturn(void *pFrame)
+{
+    __real_RhpPInvokeReturn(pFrame);
+}
+#endif
+
+/* Bulk reference copy. uGC has no write barrier, so this is just a move.
+ * memmove resolves to the libziskos DMA-accelerated wrapper. */
+void
+__wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
+{
+    memmove(dest, src, len);
+}
+
 extern void *RhpNewObject(void *methodTable, int allocFlags);
 extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
     unsigned long numElements, void * pTransitionFrame);
@@ -42,7 +98,10 @@ __wrap_RhpNewFast(void *methodTable)
     /* Align allocation size to 8 bytes */
     total = (total + 7u) & ~(size_t)7u;
 
-    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
+    void *obj = malloc(total);
+#if !ZKVM_FAST_ALLOC
+    if (obj) __builtin_memset(obj, 0, total);
+#endif
     if (!obj)
         return 0;
 
@@ -68,7 +127,10 @@ __wrap_RhpNewObject(void *methodTable, int allocFlags)
     /* Align allocation size to 8 bytes */
     total = (total + 7u) & ~(size_t)7u;
 
-    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
+    void *obj = malloc(total);
+#if !ZKVM_FAST_ALLOC
+    if (obj) __builtin_memset(obj, 0, total);
+#endif
     if (!obj)
         return 0;
 
@@ -121,7 +183,10 @@ __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
     size_t total = (size_t)SZARRAY_BASE_SIZE + ((size_t)numElements << 3);
 
-    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
+    void *obj = malloc(total);
+#if !ZKVM_FAST_ALLOC
+    if (obj) __builtin_memset(obj, 0, total);
+#endif
     if (!obj)
         return 0;
 
@@ -136,7 +201,10 @@ __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
     size_t comp = (size_t)mt_component_size(methodTable);
     size_t total = align_up_8((size_t)SZARRAY_BASE_SIZE + ((size_t)numElements * comp));
 
-    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
+    void *obj = malloc(total);
+#if !ZKVM_FAST_ALLOC
+    if (obj) __builtin_memset(obj, 0, total);
+#endif
     if (!obj)
         return 0;
 
@@ -150,7 +218,10 @@ __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
     size_t total = align_up_8((size_t)STRING_BASE_SIZE + ((size_t)numElements * (size_t)STRING_COMPONENT_SIZE));
 
-    void *obj = malloc(total); if (obj) __builtin_memset(obj, 0, total);
+    void *obj = malloc(total);
+#if !ZKVM_FAST_ALLOC
+    if (obj) __builtin_memset(obj, 0, total);
+#endif
     if (!obj)
         return 0;
 
