@@ -1,3 +1,6 @@
 options:
   ld:
     - value: --wrap=RhpAssignRefRiscV64
+    - value: --wrap=RhpCheckedAssignRef
+    - value: --wrap=RhpByRefAssignRef
+    - value: --wrap=RhpAssignRef
