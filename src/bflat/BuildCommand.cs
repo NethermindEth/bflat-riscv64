@@ -132,6 +132,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
     private static Option<bool> WrapCheckOption = new Option<bool>("--wrap-check", "Verify every --wrap= linker flag points to a real symbol; fails the build if any is missing");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
+    private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
 
     private static Option<bool> SeparateSymbolsOption = new Option<bool>("--separate-symbols", "Separate debugging symbols (Linux)");
@@ -188,6 +189,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.OutputOption,
             NoLinkOption,
             LdFlagsOption,
+            MibcOption,
             PrintCommandsOption,
             TargetArchitectureOption,
             TargetOSOption,
@@ -802,6 +804,13 @@ internal class BuildCommand : CommandBase
         CompilationBuilder builder = new RyuJitCompilationBuilder(typeSystemContext, compilationGroup);
 
         builder.UseCompilationUnitPrefix("");
+
+        // Profile-guided optimization: feed MIBC profile(s) to the RyuJit compilation.
+        string[] mibcFiles = result.GetValueForOption(MibcOption);
+        if (mibcFiles != null && mibcFiles.Length > 0)
+        {
+            ((RyuJitCompilationBuilder)builder).UseProfileData(mibcFiles);
+        }
 
         List<string> directPinvokeList = new List<string>();
         List<string> directPinvokes = new List<string>(result.GetValueForOption(DirectPInvokesOption));
