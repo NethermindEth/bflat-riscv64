@@ -14,6 +14,14 @@
 
 #define _DEBUG (0)
 
+/* zkVM RAM is zero-initialised and the downward bump allocator never reuses
+ * memory, so a freshly handed-out block is already all-zero — the per-object
+ * memset is redundant.
+ */
+#ifndef ZKVM_FAST_ALLOC
+#define ZKVM_FAST_ALLOC 1
+#endif
+
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
 
@@ -94,6 +102,21 @@ extern uint32_t rhp_tss_counter;
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
+#if ZKVM_FAST_ALLOC
+    if (mem == 0)
+        mem = (uint8_t *)_kernel_heap_top;
+
+    size_t req_aligned = ((size_t)n + 7u) & ~(size_t)7u;
+    uintptr_t new_tmp = align_down_8_uintptr((uintptr_t)mem - req_aligned);
+    uintptr_t new_len = new_tmp - 8u;
+
+    if (new_len < (uintptr_t)_kernel_heap_bottom)
+        return NULL;
+
+    mem = (uint8_t *)new_len;
+    *(uint64_t *)new_len = (uint64_t)req_aligned;
+    return (void *)new_tmp;
+#else
     /* NOTE: This allocator is a simple downward bump allocator.
      * It is intentionally verbose for diagnostics. */
     void     *tmp;
@@ -179,6 +202,7 @@ __wrap___libc_malloc_impl(unsigned long n)
 
     /* Return pointer to usable payload */
     return tmp;
+#endif
 }
 
 void
@@ -239,8 +263,12 @@ __wrap_calloc(unsigned long nmemb, unsigned long size)
         return NULL;
 
     void *p = __wrap___libc_malloc_impl((unsigned long)total);
+#if !ZKVM_FAST_ALLOC
+    /* Fast path: the bump allocator hands out fresh zero RAM, so the block
+     * is already zero. Only the safe path needs to clear it explicitly. */
     if (p)
         __builtin_memset(p, 0, total);
+#endif
     return p;
 }
 
