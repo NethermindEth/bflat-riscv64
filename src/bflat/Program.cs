@@ -50,6 +50,7 @@ class Program
         {
             BuildCommand.Create(),
             ILBuildCommand.Create(),
+            RebakeCommand.Create(),
             InfoOption,
         };
         root.SetHandler(ctx =>

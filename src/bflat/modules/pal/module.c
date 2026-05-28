@@ -99,6 +99,25 @@ align_down_8_uintptr(uintptr_t x)
 
 extern uint32_t rhp_tss_counter;
 
+/*
+ * Heap mark/reset: used by the preinit warmup to drop ephemeral allocations
+ * (block/tx/witness/EvmStack buffers from the warmup Execute) after type
+ * loading and dispatch-cell resolution have happened. Caller is responsible
+ * for ensuring no live reference points into the released region.
+ */
+void *
+zk_heap_mark(void)
+{
+    return (void *)mem;
+}
+
+void
+zk_heap_reset(void *m)
+{
+    if (m != 0)
+        mem = (uint8_t *)m;
+}
+
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
