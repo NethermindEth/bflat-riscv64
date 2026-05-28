@@ -8,7 +8,7 @@
  */
 OUTPUT_FORMAT("elf64-littleriscv")
 OUTPUT_ARCH("riscv")
-ENTRY(_start)
+ENTRY(_zkvm_restore)
 
 MEMORY {
   /* biosrom (xa) : ORIGIN = 0x00001000, LENGTH = 0x1000 */
