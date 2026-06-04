@@ -1035,6 +1035,36 @@ internal class BuildCommand : CommandBase
         if (optimizationMode != OptimizationMode.None)
         {
             backendOptions.Add("JitObjectStackAllocation=1");
+
+            // zkVM RyuJIT codegen tuning, fixed into bflat. RyuJIT parses these
+            // integer values as HEXADECIMAL with no 0x prefix
+            // (JitConfigProvider.getIntConfigValue uses NumberStyles.AllowHexSpecifier),
+            // so "2000" == 0x2000 == 8192.
+
+            // Max stack-allocatable object size (knob default 528 / 0x210).
+            // Lifting the in-loop heap restriction needs runtime patch
+            // 25_stackalloc_aggressive_riscv64.patch.
+            backendOptions.Add("JitObjectStackAllocationSize=2000"); // 0x2000 = 8192
+
+            // Inlining caps, raised moderately. Stays on ExtendedDefaultPolicy
+            // (weighs code growth) rather than JitAggressiveInlining, which
+            // overflows the fixed ZisK ROM. Lower MaxIL if ROM overflows.
+            backendOptions.Add("JitExtDefaultPolicyMaxIL=200"); // 0x200 = 512 (default 0x80 = 128) max inlinee IL
+            backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
+
+            // Lower constant-size SpanHelpers.SequenceEqual to the inline
+            // `csrs 0x814, src ; addi rd, dst, count` idiom that the ZisK
+            // transpiler folds into one dma_xmemcmp step. ZisK-only (a plain
+            // riscv64 CPU would mis-execute the addi). Needs runtime patch
+            // 30_dma_memcmp_inline_riscv64.
+            backendOptions.Add("JitRiscV64DmaCompare=1");
+
+            // Elide RA spill/reload + frame in leaf methods. RyuJIT riscv64 uses
+            // REG_RA as a hardcoded scratch for branch/compare constants, far-jump
+            // targets and 64-bit mul-high, so patch 31 refuses to elide methods
+            // whose LIR contains those shapes (GT_JCMP / GT_LT/LE/GT/GE / GT_MULHI)
+            // or use FP. Needs runtime patches 23+31.
+            backendOptions.Add("RiscV64ElideLeafRaSave=1");
         }
 
         builder
