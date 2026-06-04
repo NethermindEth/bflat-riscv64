@@ -89,7 +89,13 @@ __wrap_open(const char *path, int flags, int mode)
 }
 
 
-static uint8_t *mem = 0;
+/* The downward bump pointer lives in a FIXED-address cell (top 8 bytes of RAM,
+ * 0xbffefff8) provided by the linker script (g_zk_bump_ptr), so JIT-emitted
+ * inline allocation can reference it by a hardcoded constant address and share
+ * it with this C allocator. zkVM RAM is zero at boot, so it starts as 0 and is
+ * lazily initialised to _kernel_heap_top on first use, exactly as before. */
+extern uint8_t *g_zk_bump_ptr;
+#define mem g_zk_bump_ptr
 
 static inline uintptr_t
 align_down_8_uintptr(uintptr_t x)
@@ -224,9 +230,55 @@ __wrap___libc_malloc_impl(unsigned long n)
 #endif
 }
 
-void
-__wrap___libc_free(void *mem)
+/* Tight fixed-size object allocator (the hot path, RhpNewFast).
+ *
+ * Defined here, in the same translation unit as the bump pointer `mem`, the
+ * heap bounds and align_down_8_uintptr, so the downward bump is inlined
+ * directly: NO nested malloc call, a SINGLE alignment step, and a leaf body
+ * (eligible for frameless-leaf). This mirrors how x64/arm64 get fast
+ * allocation - a tight RhpNewFast helper - rather than per-site JIT inlining
+ * (which RyuJIT does on no target). --wrap=RhpNewFast (rhp module) redirects
+ * managed callers here regardless of which .o defines the symbol. */
+void *
+__wrap_RhpNewFast(void *methodTable)
 {
+    const size_t MT_BASE_SIZE_OFFSET = 0x4;
+    const size_t MIN_OBJECT_SIZE     = 0x18;
+
+    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
+    size_t   total    = (size_t)baseSize;
+    if (total < MIN_OBJECT_SIZE)
+        total = MIN_OBJECT_SIZE;
+
+#if ZKVM_FAST_ALLOC
+    /* Inlined downward bump (mirrors __wrap___libc_malloc_impl fast path):
+     * one alignment, no call. zkVM RAM is zero so no memset is needed. */
+    if (mem == 0)
+        mem = (uint8_t *)_kernel_heap_top;
+    size_t    req        = (total + 7u) & ~(size_t)7u;
+    uintptr_t new_tmp    = align_down_8_uintptr((uintptr_t)mem - req);
+    uintptr_t new_len    = new_tmp - 8u;
+    if (new_len < (uintptr_t)_kernel_heap_bottom)
+        return 0;
+    mem                  = (uint8_t *)new_len;
+    *(uint64_t *)new_len = (uint64_t)req;        /* size header */
+    void *obj            = (void *)new_tmp;
+#else
+    total     = (total + 7u) & ~(size_t)7u;
+    void *obj = malloc(total);
+    if (obj) __builtin_memset(obj, 0, total);
+    if (!obj)
+        return 0;
+#endif
+
+    *(void **)obj = methodTable;                 /* MethodTable header at offset 0 */
+    return obj;
+}
+
+void
+__wrap___libc_free(void *p)
+{
+    (void)p;
     rhp_tss_counter = 0;
 }
 
