@@ -73,7 +73,13 @@ SECTIONS
   {
     _kernel_heap_bottom = .;
     . = . + (150 * 1024 * 1024);
-    _kernel_heap_top = .;
+    /* zkVM per-site inline allocator: reserve the top 8 bytes of the heap region as a
+     * FIXED-address cell holding the downward bump pointer, shared by the C allocator
+     * (pal/module.c, which references g_zk_bump_ptr) and JIT-emitted inline allocation.
+     * Heap top is lowered by 16 so the cell never overlaps the heap. zisk_sim reuses the
+     * zisk pal.o, so it needs the same symbol; mirrors modules/zkvm_zisk/script.ld. */
+    _kernel_heap_top = . - 16;
+    PROVIDE(g_zk_bump_ptr = . - 8);
   } :data
 
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
