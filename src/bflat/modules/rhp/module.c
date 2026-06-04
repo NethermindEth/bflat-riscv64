@@ -82,32 +82,10 @@ extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
     unsigned int *param_1, unsigned int **param_2);
 extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void);
 
-void *
-__wrap_RhpNewFast(void *methodTable)
-{
-    const size_t MT_BASE_SIZE_OFFSET = 0x4;
-    const size_t OBJ_EETYPE_OFFSET   = 0x0;
-    const size_t MIN_OBJECT_SIZE     = 0x18;
-
-    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
-    size_t total = (size_t)baseSize;
-
-    if (total < MIN_OBJECT_SIZE)
-        total = MIN_OBJECT_SIZE;
-
-    /* Align allocation size to 8 bytes */
-    total = (total + 7u) & ~(size_t)7u;
-
-    void *obj = malloc(total);
-#if !ZKVM_FAST_ALLOC
-    if (obj) __builtin_memset(obj, 0, total);
-#endif
-    if (!obj)
-        return 0;
-
-    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
-    return obj;
-}
+/* __wrap_RhpNewFast moved to pal/module.c so the downward bump allocator is
+ * inlined directly into it (same translation unit as `mem` and the heap
+ * bounds): no nested malloc call, single alignment step, leaf function.
+ * --wrap=RhpNewFast (rhp/module_params.yml) still redirects callers there. */
 
 void *
 __wrap_RhpNewObject(void *methodTable, int allocFlags)
