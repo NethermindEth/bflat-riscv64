@@ -23,4 +23,8 @@ pushd "${base_folder}"
 docker build --platform linux/amd64 -f Dockerfile.build -t bflat-riscv64 .
 popd
 
-docker run --platform linux/amd64 -w "${cur}" -v "${base_folder}:${base_folder}" -it bflat-riscv64 /bin/bash
+if [ "$#" -gt 0 ] ; then
+    docker run --platform linux/amd64 -w "${cur}" -v "${base_folder}:${base_folder}" bflat-riscv64 /bin/bash -c "$*"
+else
+    docker run --platform linux/amd64 -w "${cur}" -v "${base_folder}:${base_folder}" -it bflat-riscv64 /bin/bash
+fi
