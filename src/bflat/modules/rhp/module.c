@@ -492,7 +492,7 @@ void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int va
 
 void __wrap_RhpThrowEx(void)
 {
-    *(int *)POISONED_POINTER = 5;
+    exit(1);
 }
 
 void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
