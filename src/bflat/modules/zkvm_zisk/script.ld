@@ -114,7 +114,13 @@ SECTIONS
    * static state (notably pal/module.c:mem). 4 MiB gives ample headroom. */
   PROVIDE(_init_stack_top = . + 0x400000);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);
-  PROVIDE(_kernel_heap_top = ORIGIN(ram) + LENGTH(ram));
+  /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
+   * FIXED-address cell holding the downward bump pointer, so the JIT can
+   * hardcode its address (lui/addi, no relocation) and the C allocator
+   * (pal/module.c) + JIT-emitted inline allocation share the same pointer.
+   * Heap top is lowered by 16 so the cell never overlaps the heap. */
+  PROVIDE(g_zk_bump_ptr     = ORIGIN(ram) + LENGTH(ram) - 8);   /* = 0xbffefff8 */
+  PROVIDE(_kernel_heap_top  = ORIGIN(ram) + LENGTH(ram) - 16);
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
 
   _end = .;
