@@ -6,6 +6,8 @@ options:
     - value: --wrap=RhNewString
     - value: --wrap=RhpPInvoke
     - value: --wrap=RhpPInvokeReturn
+    - value: --wrap=RhpReversePInvoke
+    - value: --wrap=RhpReversePInvokeReturn
     - value: --wrap=RhBulkMoveWithWriteBarrier
     - value: --wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny
     - value: --wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread
