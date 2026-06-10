@@ -23,3 +23,6 @@ options:
     - value: --wrap=munlock
     - value: --wrap=mlockall
     - value: --wrap=munlockall
+    - value: --wrap=exit
+    - value: --wrap=_Exit
+    - value: --wrap=abort
