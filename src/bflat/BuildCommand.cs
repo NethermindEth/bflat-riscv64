@@ -1527,6 +1527,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhNewString ");
                 ldArgs.Append($"--wrap=RhpPInvoke ");
                 ldArgs.Append($"--wrap=RhpPInvokeReturn ");
+                /* No-op the reverse P/Invoke transition: the real one parks the
+                 * thread at a GC-safe point, which deadlocks when a managed
+                 * exception handler is entered from __wrap_RhpThrowEx (thread
+                 * already cooperative, single-threaded zkVM never rendezvous). */
+                ldArgs.Append($"--wrap=RhpReversePInvoke ");
+                ldArgs.Append($"--wrap=RhpReversePInvokeReturn ");
                 ldArgs.Append($"--wrap=RhBulkMoveWithWriteBarrier ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
@@ -1607,6 +1613,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=signal ");
                 ldArgs.Append($"--wrap=syscall ");
                 ldArgs.Append($"--wrap=sysconf ");
+                /* musl exit()/_Exit()/abort() issue exit_group (syscall 94),
+                 * which ZisK does not treat as program end. Redirect them to
+                 * pal's __wrap_* which emit the real ZisK exit ecall (a7=93). */
+                ldArgs.Append($"--wrap=exit ");
+                ldArgs.Append($"--wrap=_Exit ");
+                ldArgs.Append($"--wrap=abort ");
                 if (libc == "zisk")
                 {
                     /* Hide write() in Zisk */
