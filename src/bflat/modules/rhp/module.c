@@ -490,12 +490,47 @@ void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int va
     return S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(value);
 }
 
-void __wrap_RhpThrowEx(void)
+/* Reverse P/Invoke transition. The real CoreLib RhpReversePInvoke attaches the
+ * thread and parks it at a GC-safe point (AttachOrTrapThread2). That only makes
+ * sense for a native->managed boundary entered in preemptive mode. When a
+ * managed exception handler (an [UnmanagedCallersOnly] method like ZkvmThrow)
+ * is entered from __wrap_RhpThrowEx, the thread is ALREADY cooperative, so the
+ * real transition spins on a GC rendezvous that never comes in the
+ * single-threaded, never-collecting zkVM. No-op it (matches zerolib). */
+void
+__wrap_RhpReversePInvoke(void *pFrame)
 {
+    (void)pFrame;
+}
+
+void
+__wrap_RhpReversePInvokeReturn(void *pFrame)
+{
+    (void)pFrame;
+}
+
+/* RhpThrowEx receives the managed exception object in a0 (first arg register).
+ * Instead of a blind fail-fast, hand that object to a managed handler that the
+ * user program may export as [UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")].
+ * The reference is weak: programs that don't define ZkvmThrow link fine and
+ * fall back to exit(1), so existing binaries keep their old behaviour. A
+ * program that does define it takes full control of the throw — the wrapper
+ * does not exit, so the handler decides what happens next. */
+extern void ZkvmThrow(void *exceptionObj) __attribute__((weak));
+
+void __wrap_RhpThrowEx(void *exceptionObj)
+{
+    if (ZkvmThrow != NULL)
+    {
+        ZkvmThrow(exceptionObj);
+        return;
+    }
     exit(1);
 }
 
+/* FailFast carries a message string (or null), not an exception object, so it
+ * keeps the plain fail-fast path rather than routing through ZkvmThrow. */
 void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
 {
-    __wrap_RhpThrowEx();
+    exit(1);
 }
