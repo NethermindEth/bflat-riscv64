@@ -474,6 +474,43 @@ __wrap_syscall(long number, ...)
     }
 }
 
+/* Clean zkVM termination. ZisK only treats an ecall with a7 == 93
+ * (CAUSE_EXIT) as "program end": its trap handler routes that to ROM_EXIT,
+ * whose instruction carries the `end` flag the emulator waits for. musl's
+ * exit()/_Exit() issue exit_group (94) instead, which ZisK does NOT recognise,
+ * so the emulation stops "not completed". Override musl's terminators (via
+ * --wrap=exit/_Exit/abort) to emit the real ZisK exit ecall. */
+__attribute__((noreturn))
+static void
+zkvm_raw_exit(long code)
+{
+    register long a0 __asm__("a0") = code;
+    register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
+    __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
+    for (;;) { } /* ecall ends the program; loop is just in case */
+}
+
+__attribute__((noreturn))
+void
+__wrap_exit(int code)
+{
+    zkvm_raw_exit(code);
+}
+
+__attribute__((noreturn))
+void
+__wrap__Exit(int code)
+{
+    zkvm_raw_exit(code);
+}
+
+__attribute__((noreturn))
+void
+__wrap_abort(void)
+{
+    zkvm_raw_exit(134); /* 128 + SIGABRT, conventional abort exit code */
+}
+
 int RhIsGCBridgeActive(void)
 {
     return 0;
