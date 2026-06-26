@@ -57,7 +57,10 @@ remove the assumption rather than add a workaround at the call site.
 
 ## The patches, by purpose
 
-There are 20 numbered patches. They divide cleanly into five groups.
+The original series is 20 numbered patches, divided into five groups below.
+The series has since grown with a sixth group — zkVM codegen-tuning patches
+(23, 25, 30, 31) that pair with the [RyuJIT knobs](architecture.md#zkvm-ryujit-codegen-knobs)
+bflat passes in optimized builds; they are listed at the end.
 
 ### RISC-V64 ISA constraints
 
@@ -106,6 +109,18 @@ against the same configuration.
 |---|-------|-----------------|
 | 10 | `riscv64.patch` | Base RISC-V64 toolchain config in `eng/native/configurecompiler.cmake`. |
 | 12 | `alpine_custom` | Allows the upstream `eng/common/cross/build-rootfs.sh` to build against our [custom Alpine variant](alpine.md). The driver script tolerates this patch failing — useful when upstream removes a sentinel comment we keyed off. |
+
+### zkVM codegen tuning
+
+These pair with the [RyuJIT knobs](architecture.md#zkvm-ryujit-codegen-knobs)
+bflat sets in optimized builds: the knob turns a behaviour on, the patch
+makes it safe on the ZisK target.
+
+| # | Patch | What it changes |
+|---|-------|-----------------|
+| 25 | `stackalloc_aggressive_riscv64` | Lifts the in-loop heap restriction so `JitObjectStackAllocationSize` can stack-allocate larger objects. |
+| 30 | `dma_memcmp_inline_riscv64` | Lets the JIT lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814 / addi` idiom that ZisK folds into one `dma_xmemcmp` step (`JitRiscV64DmaCompare`). ZisK-only — a plain riscv64 CPU would mis-execute it. |
+| 23, 31 | leaf RA elision | Enable and guard `RiscV64ElideLeafRaSave`: RyuJIT riscv64 uses `REG_RA` as a hardcoded scratch (branch/compare constants, far-jump targets, 64-bit mul-high), so the patch refuses to elide leaf methods whose LIR contains those shapes (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP. |
 
 Plus one SDK-side patch:
 
