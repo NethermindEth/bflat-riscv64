@@ -50,6 +50,28 @@ against the runtime's `lib/<arch>/<os>/<libc>` directory, downloaded
 from the [dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv)
 release matching the bflat version.
 
+### zkVM RyuJIT codegen knobs
+
+In optimized builds (`-O`, i.e. `optimizationMode != None`)
+`BuildCommand.cs` also passes a fixed set of RyuJIT tuning knobs to ILC.
+RyuJIT parses these integer values as **hexadecimal with no `0x` prefix**
+(`JitConfigProvider.getIntConfigValue` uses `NumberStyles.AllowHexSpecifier`),
+so `"2000"` means `0x2000` = 8192.
+
+| Knob | Value | Effect |
+|------|-------|--------|
+| `JitObjectStackAllocation` | `1` | Enable escape-analysis stack allocation |
+| `JitObjectStackAllocationSize` | `2000` (8192) | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by runtime patch `25_stackalloc_aggressive_riscv64` |
+| `JitExtDefaultPolicyMaxIL` | `200` (512) | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
+| `JitExtDefaultPolicyMaxBB` | `10` (16) | Max inlinee basic blocks (default 7) |
+| `JitRiscV64DmaCompare` | `1` | Lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814, src ; addi rd, dst, count` idiom that the ZisK transpiler folds into one `dma_xmemcmp` step. ZisK-only — needs runtime patch `30_dma_memcmp_inline_riscv64` |
+| `RiscV64ElideLeafRaSave` | `1` | Elide RA spill/reload + frame in eligible leaf methods. Needs runtime patches 23 + 31, which refuse to elide methods whose LIR uses `REG_RA` as scratch (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP |
+
+These knobs trade ROM/`.text` size for fewer heap allocations and tighter
+hot paths; the comments in `BuildCommand.cs` note which to lower
+(`JitExtDefaultPolicyMaxIL`, `JitObjectStackAllocationSize`) if a workload
+overflows the fixed ZisK ROM.
+
 ## Stage 2 — The link command
 
 The final ELF is produced by `ld.lld` (Clang's linker, shipped with
@@ -66,10 +88,13 @@ ld.lld -static -nostdlib -m elf64lriscv \
         --wrap=inline_bump_alloc_aligned \
         <ziskLibPath>/rhp.o \
         --wrap=RhpNewFast --wrap=RhpNewObject ... \
+        --wrap=RhpThrowEx \
+        --wrap=RhpReversePInvoke --wrap=RhpReversePInvokeReturn ... \
         <ziskLibPath>/rhp_native.o \
         --wrap=RhpAssignRefRiscV64 --wrap=RhpCidResolve \
         <ziskLibPath>/pal.o \
         --wrap=getenv --wrap=getcwd ... --wrap=__stdio_write \
+        --wrap=exit --wrap=_Exit --wrap=abort \
         <ziskLibPath>/tls.o \
         --wrap=__tls_get_addr --wrap=__init_tls ... \
     --no-whole-archive \
@@ -135,3 +160,21 @@ When the binary starts (real, simulated, or proven), the entry point is
 There is no kernel underneath any of this. Every syscall the runtime
 might make is either wrapped to a no-op, returned as a constant, or (in
 `zisk_sim`) routed to musl's real implementation.
+
+## Exit and exceptions
+
+The program ends only when an `ecall` with `a7 == 93` (ZisK `CAUSE_EXIT`)
+is issued — musl's `exit`/`_Exit`/`abort` use `exit_group` (syscall 94),
+which ZisK does not treat as program end. So `pal` wraps all three to
+`zkvm_raw_exit`, which emits the real ZisK exit ecall (see the
+[pal module](modules.md#pal)).
+
+A managed `throw` is lowered to `RhpThrowEx`. The `rhp` wrapper hands the
+exception object to an optional, **weak** `ZkvmThrow` symbol that a program
+may export via `[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`; programs
+that don't define it fall back to `exit(1)`. So the handler can be entered
+from the throw path, `RhpReversePInvoke`/`RhpReversePInvokeReturn` are
+no-op'd — the real transition would spin on a GC rendezvous that never
+comes in the single-threaded, never-collecting zkVM. See the
+[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)
+and the [rhp module](modules.md#rhp).

@@ -53,15 +53,35 @@ The linker scripts diverge:
 
 | Aspect | `zisk` | `zisk_sim` |
 |--------|--------|------------|
-| Memory regions | Split ROM (`0x80000000`, 256 MiB) and RAM (`0xa0020000`, ~256 MiB) | Single segment starting at `0x10000` |
+| Image base | Split ROM (`0x80000000`, 256 MiB) and RAM (`0xa0020000`, ~256 MiB) | `0x50000000` (see below) |
 | Entry section | `.text.init` at the head of `.text` | Same |
 | Managed-code anchors | `__start___managedcode` / `__stop___managedcode` and the `__unbox` pair | Same |
-| Heap | Provided by `_kernel_heap_bottom..._kernel_heap_top` symbols at the tail of RAM | Explicit 150 MiB `.heap` section |
+| Heap | `_kernel_heap_bottom..._kernel_heap_top` at the tail of RAM | `.heap` as a `NOLOAD` segment mirroring the zisk RAM window (`0xa0020000..0xbfff0000`) |
+| Bump-pointer cell | `g_zk_bump_ptr` = `ORIGIN(ram)+LENGTH(ram)-8` = `0xbffefff8`; heap top lowered by 16 so the cell never overlaps | Same address, provided at the exact `0xbffefff8` |
 | Discarded sections | `.debug*`, `.comment`, `.riscv.attributes` | (looser — kept for ease of debugging) |
 
 Both linker scripts force code that contains the C# entry point to land
 near the start of `.text`, which keeps the call distance short enough
 for non-PIC near-jump encodings.
+
+**The fixed bump-pointer cell.** Both scripts reserve the top 8 bytes of
+the (real or mirrored) RAM map as a fixed-address cell, `g_zk_bump_ptr` at
+`0xbffefff8`, holding the downward bump pointer. Because the address is
+fixed, the JIT can bake it into machine code as an `lui`/`addiw`/`slli`
+immediate with **no relocation**, and JIT-emitted inline allocation shares
+the same pointer with `pal`'s C allocator. `pal/module.c` does
+`#define mem g_zk_bump_ptr` so both views are literally the same word.
+
+**Why `zisk_sim` rebases to `0x50000000`.** `pal/module.c` reaches the
+heap symbols (`g_zk_bump_ptr`, `_kernel_heap_top`/`_bottom`) with
+PC-relative `auipc`/`addi` pairs, whose reach is ±2 GB. From the usual
+`0x10000` base the fixed cell at `0xbffefff8` is ~2.68 GB away and
+`R_RISCV_PCREL_HI20` overflows; basing the image at `0x50000000` keeps the
+whole `0x50000000..0xbfff0000` span within ±2 GB. Real `zisk` avoids this
+by placing text in ROM at `0x80000000`. The `.heap` is declared `NOLOAD`
+so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
+zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
+lazily initialised exactly as on real zisk, and the binary stays small.
 
 ## pal — platform abstraction layer
 {: #pal }
@@ -86,6 +106,7 @@ that .NET calls during startup or runtime:
 | `__libc_malloc_impl`, `__libc_realloc`, `__libc_free` | A custom downward bump allocator using the heap symbols from the linker script |
 | `signal`, `sigaction`, `sched_yield` | No-ops |
 | `syscall` | Whitelist: 0x11b → 0; everything else → `__real_syscall` |
+| `exit`, `_Exit`, `abort` | Emit the real ZisK exit ecall (`a7 = 93`, `CAUSE_EXIT`) via `zkvm_raw_exit` |
 
 The bump allocator deserves a note: it grows downward from
 `_kernel_heap_top`, stores an 8-byte size header before each allocation,
@@ -93,29 +114,92 @@ and never frees. That is enough to satisfy a managed runtime whose own
 GC sits on top — see the `ugc-zero` module below — and it removes any
 need for musl's full `mallocng`, which is large and uses syscalls.
 
+The bump pointer itself lives in a **fixed-address cell** — the top 8 bytes
+of RAM (`g_zk_bump_ptr`, `0xbffefff8`), provided by the linker script —
+rather than a `static` variable. That lets JIT-emitted inline allocation
+reference it by a hardcoded constant address and share the very same
+pointer with this C allocator. zkVM RAM is zero at boot, so the cell starts
+at `0` and is lazily initialised to `_kernel_heap_top` on first use.
+
+**Clean termination.** ZisK only treats an `ecall` with `a7 == 93`
+(`CAUSE_EXIT`) as "program end"; its trap handler routes that to `ROM_EXIT`,
+whose instruction carries the `end` flag the emulator waits for. musl's
+`exit`/`_Exit` issue `exit_group` (94), which ZisK does not recognise — the
+run would stop "not completed". So `pal` wraps all three terminators to emit
+the real ZisK exit ecall (`abort` exits with `134` = 128 + SIGABRT).
+
+**`__wrap_RhpNewFast` — fixed-size fast path.** The hot allocation helper
+lives here (not in `rhp`), in the same translation unit as the bump pointer,
+the heap bounds, and `align_down_8_uintptr`, so the downward bump is inlined
+directly: no nested `malloc` call, a single alignment step, and a leaf body
+eligible for frameless-leaf codegen. This mirrors how x64/arm64 get fast
+allocation through a tight `RhpNewFast` rather than per-site JIT inlining.
+`--wrap=RhpNewFast` (declared by the `rhp` module) redirects managed callers
+here regardless of which object file defines the symbol.
+
 ## rhp — Redhawk Platform shims
 {: #rhp }
 
 **File:** `modules/rhp/module.c`
 
-Patches that target the .NET runtime itself. Two responsibilities:
+Patches that target the .NET runtime itself. Responsibilities:
 
-1. **Object allocators.** `RhpNewFast`, `RhpNewObject`,
-   `RhpNewArrayFast`, `RhpNewPtrArrayFast`, and `RhNewString` are
-   reimplemented on top of `calloc`. The originals expect a thread-local
-   allocation context; in our world there is exactly one thread and a
-   bump allocator, so a flat `calloc` is both simpler and provable.
+1. **Object allocators.** `RhpNewObject`, `RhpNewArrayFast`,
+   `RhpNewPtrArrayFast`, and `RhNewString` are reimplemented on top of the
+   bump allocator. The originals expect a thread-local allocation context;
+   in our world there is exactly one thread and a bump allocator, so a flat
+   path is both simpler and provable. The hottest helper, `RhpNewFast`, is
+   *not* here — it moved to [`pal`](#pal) so its downward bump is inlined
+   directly; the `--wrap=RhpNewFast` declaration that redirects callers
+   still lives in this module's `module_params.yml`.
 2. **Subsystem stubs.** EventPipe, ProcessorIdCache, default-locale
    queries, type-cast cache lookups, lock acquisition/release,
    thread-static storage, and a custom `RhpCidResolve` that bypasses the
    cached interface-dispatch fast path. Each of these would otherwise
    pull in code that touches signals, threads, or the OS.
+3. **Exceptions and exit.** `RhpThrowEx`, `RhpReversePInvoke`, and
+   `FailFast` are wrapped — see below.
 
 The `__rhp_cid_resolve_nocache` function (called via the assembly
 trampoline `__wrap_RhpCidResolve` in `rhp_native`) walks a dispatch cell
 manually, looks up the interface slot on the object's MethodTable, and
 returns the resolved target — replacing the fast-path cache that
 NativeAOT normally maintains in writable memory.
+
+### Managed exceptions
+
+A managed `throw` is lowered by the JIT to `CORINFO_HELP_THROW`, which
+calls `RhpThrowEx` with the exception object in `a0`. The wrapper hands
+that object to a **weak** `ZkvmThrow` symbol:
+
+```c
+extern void ZkvmThrow(void *exceptionObj) __attribute__((weak));
+
+void __wrap_RhpThrowEx(void *exceptionObj)
+{
+    if (ZkvmThrow != NULL) { ZkvmThrow(exceptionObj); return; }
+    exit(1);
+}
+```
+
+A program that exports `ZkvmThrow` via
+`[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]` takes full control of
+the throw and receives the live `Exception` reference (the `a0` pointer
+*is* the managed object reference). A program that doesn't export it links
+fine — the weak reference stays null and the wrapper falls back to
+`exit(1)`, preserving the old fail-fast behaviour. `FailFast` carries a
+message string, not an exception object, so it keeps the plain `exit(1)`
+path rather than routing through `ZkvmThrow`. See the
+[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler).
+
+To let the handler be entered from the throw path, `RhpReversePInvoke`
+and `RhpReversePInvokeReturn` are **no-op'd**. The real CoreLib transition
+attaches the thread and parks it at a GC-safe point — meaningful only for a
+native→managed boundary entered in preemptive mode. When a managed handler
+(an `[UnmanagedCallersOnly]` method) is entered from `__wrap_RhpThrowEx`,
+the thread is already cooperative, so the real transition would spin on a
+GC rendezvous that never comes in the single-threaded, never-collecting
+zkVM.
 
 ## rhp_native — assembly RISC-V64 patches
 {: #rhp-native }
