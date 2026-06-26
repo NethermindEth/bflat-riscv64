@@ -50,17 +50,17 @@ RISC-V64 host. Stock .NET assumes:
 - non-deterministic constructs like security cookies, JIT addresses, and
   the system clock.
 
-Each of those would either crash inside Zisk or make the proof
+Each of those would either crash inside a zkVM or make the proof
 non-reproducible. The patches in
 [`patches/bflat-runtime/`](https://github.com/NethermindEth/dotnet-riscv/tree/main/patches/bflat-runtime)
 remove the assumption rather than add a workaround at the call site.
 
 ## The patches, by purpose
 
-The original series is 20 numbered patches, divided into five groups below.
-The series has since grown with a sixth group — zkVM codegen-tuning patches
-(23, 25, 30, 31) that pair with the [RyuJIT knobs](architecture.md#zkvm-ryujit-codegen-knobs)
-bflat passes in optimized builds; they are listed at the end.
+There are 20 numbered patches. They divide cleanly into five groups.
+The runtime also carries a set of zkVM codegen-tuning patches that pair
+with the [RyuJIT knobs](architecture.md#zkvm-ryujit-codegen-knobs) bflat
+passes in optimized builds; they are summarised at the end.
 
 ### RISC-V64 ISA constraints
 
@@ -116,11 +116,11 @@ These pair with the [RyuJIT knobs](architecture.md#zkvm-ryujit-codegen-knobs)
 bflat sets in optimized builds: the knob turns a behaviour on, the patch
 makes it safe on the ZisK target.
 
-| # | Patch | What it changes |
-|---|-------|-----------------|
-| 25 | `stackalloc_aggressive_riscv64` | Lifts the in-loop heap restriction so `JitObjectStackAllocationSize` can stack-allocate larger objects. |
-| 30 | `dma_memcmp_inline_riscv64` | Lets the JIT lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814 / addi` idiom that ZisK folds into one `dma_xmemcmp` step (`JitRiscV64DmaCompare`). ZisK-only — a plain riscv64 CPU would mis-execute it. |
-| 23, 31 | leaf RA elision | Enable and guard `RiscV64ElideLeafRaSave`: RyuJIT riscv64 uses `REG_RA` as a hardcoded scratch (branch/compare constants, far-jump targets, 64-bit mul-high), so the patch refuses to elide leaf methods whose LIR contains those shapes (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP. |
+| Pairs with knob | What it changes |
+|-----------------|-----------------|
+| `JitObjectStackAllocationSize` | Lifts the in-loop heap restriction so larger objects can be stack-allocated. |
+| `JitRiscV64DmaCompare` | Lets the JIT lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814 / addi` idiom that ZisK folds into one `dma_xmemcmp` step. ZisK-only — a plain riscv64 CPU would mis-execute it. |
+| `RiscV64ElideLeafRaSave` | Enables and guards leaf RA elision: RyuJIT riscv64 uses `REG_RA` as a hardcoded scratch (branch/compare constants, far-jump targets, 64-bit mul-high), so leaf methods whose LIR contains those shapes (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP are not elided. |
 
 Plus one SDK-side patch:
 

@@ -3,25 +3,73 @@ layout: default
 title: Modules
 eyebrow: Link-time patches
 lead: >
-  Each module is a small, self-contained object file that the linker pulls
-  into the final binary. Together they replace exactly the parts of the
-  .NET runtime, musl, and compiler-RT that a zkVM cannot honour.
+  Why a zkVM needs these link-time modules, what each one replaces, and the
+  constraint it answers — with the per-module implementation detail at the end.
 prev: /architecture/
 next: /build/
 ---
 
-The modules live under `src/bflat/modules/`. Each one contains:
+## What they are
 
-- a `module.c`, `module.cpp`, or `module.S` source;
-- (optionally) a `module_params.yml` listing the linker switches it
-  needs (mostly `--wrap=` declarations);
-- the compiled `module.o`, produced by `build.sh modules riscv64`.
+Each module is a small, self-contained object file — C, C++, or assembly —
+that the linker pulls into the final binary, overriding a specific symbol via
+`--wrap=`. Together they replace exactly the parts of .NET, musl, and
+compiler-RT that a zkVM cannot honour, **without editing a single line of
+upstream source**.
 
-`BuildCommand.cs` wires these object files into the link line in a
-specific order. The list below describes them in roughly the order they
-matter at runtime.
+## Why it's done at link time
+
+The alternative — forking the runtime and musl — means re-merging on every
+upstream release. Instead each adaptation is an isolated object file plus a
+`--wrap=` redirect, so the upstream code stays pristine and a .NET version
+bump is a rebase, not a fork. (Same philosophy as the
+[runtime patches](runtime.md).)
+
+## The constraints they answer
+
+A zkVM gives you far less than a Linux host: no kernel (so no syscalls,
+files, threads, signals, or clock), no floating-point hardware, no
+compressed instructions, no randomness, and a requirement that every run be
+bit-for-bit reproducible. Each module closes one of those gaps.
+
+| Module | What it provides | Constraint it answers |
+|--------|------------------|-----------------------|
+| [ubootstrap](#ubootstrap) | Runtime entry point — brings .NET up and calls `Main` | No glibc-style startup / OS loader |
+| [zkvm_zisk · zkvm_zisk_sim](#zkvm-zisk) | `_start` + the memory layout the prover expects | No kernel; fixed prover memory map |
+| [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
+| [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
+| [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
+| [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
+| [nofp](#nofp) | Empty soft-float helpers | No floating-point hardware |
+| [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
+| [security-stub](#security-stub) | Security/GSS functions return failure | Unused network paths must still link |
+| [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
+| [rust_sys](#rust-sys) | `sys_alloc_aligned` | Interop with adjacent Rust precompiles |
+| [ugc-zero](#ugc-zero) | A GC that allocates but never collects | Short-lived proof workloads |
+
+## Results
+
+Because every adaptation is a link-time object, **no upstream source is
+modified** to make C# run in a zkVM, and this same set of modules carries
+real production C# — Nethermind's
+[StatelessExecutor](https://github.com/NethermindEth/nethermind) — end to end
+through a zkVM prover on every commit. See [Verification](verification.md).
 
 ---
+
+## Under the hood
+
+The rest of this page documents each module in detail — the wrapped symbols,
+the data structures, and the assembly. It's developer reference; the
+[architecture page](architecture.md#stage-2--the-link-command) shows where
+these objects sit in the link line.
+
+The modules live under `src/bflat/modules/`. Each one contains a
+`module.c`/`module.cpp`/`module.S` source, an optional `module_params.yml`
+listing its linker switches (mostly `--wrap=` declarations), and the compiled
+`module.o` produced by `build.sh modules riscv64`. `BuildCommand.cs` wires
+them into the link line in a specific order; the sections below follow roughly
+the order they matter at runtime.
 
 ## ubootstrap — runtime entry point
 {: #ubootstrap }
