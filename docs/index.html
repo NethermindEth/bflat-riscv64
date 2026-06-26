@@ -11,7 +11,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
     <h1>Native&nbsp;C# for <span class="accent">RISC-V64 zkVMs.</span></h1>
     <p class="lead">
       bflat-riscv64 compiles C# straight to fully static RISC-V64 ELF
-      binaries — runnable inside the Zisk prover, under
+      binaries — runnable inside a zkVM prover (Zisk today), under
       <code>qemu-riscv64</code>, or on real RISC-V64 Linux. One source,
       three targets.
     </p>
@@ -283,7 +283,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
   <div class="section-head">
     <p class="eyebrow">bflat pipeline</p>
     <div>
-      <h2>From <code>.cs</code> source to a Zisk-ready ELF in four stages.</h2>
+      <h2>From <code>.cs</code> source to a zkVM-ready ELF in four stages.</h2>
       <p>
         On top of that foundation, bflat itself orchestrates four stages
         — all driven by <code>BuildCommand.cs</code> in
@@ -324,7 +324,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">04</div>
       <div>
         <h3 style="margin: 0 0 4px;">Run anywhere — prove with Zisk</h3>
-        <p style="margin: 0; color: var(--text-muted);">The output is a single ELF. It runs natively on RISC-V64 Linux, under <code>qemu-riscv64</code>, and inside the Zisk prover. The same source builds for all three.</p>
+        <p style="margin: 0; color: var(--text-muted);">The output is a single ELF. It runs natively on RISC-V64 Linux, under <code>qemu-riscv64</code>, and inside a zkVM prover (Zisk today). The same source builds for all three.</p>
       </div>
     </li>
   </ol>
@@ -417,8 +417,8 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
         Two CI jobs run on every push: <strong>build-riscv64</strong> rebuilds
         the compiler and all modules from source; <strong>zk-testing</strong>
         runs the bundled samples and the Nethermind StatelessExecutor end-to-end
-        through Zisk. If any link-time wrap, postprocessing pass, or runtime
-        shim breaks, the dashboard turns red within minutes.
+        through a zkVM prover. If any link-time wrap, postprocessing pass, or
+        runtime shim breaks, the dashboard turns red within minutes.
       </p>
     </div>
   </div>
@@ -438,7 +438,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
     </div>
     <div class="item">
       <h4>End-to-end proofs</h4>
-      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard runs the full Nethermind StatelessExecutor through Zisk on every commit and surfaces proof timings as a public badge.</p>
+      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard runs the full Nethermind StatelessExecutor through a zkVM prover on every commit and surfaces proof timings as a public badge.</p>
     </div>
   </div>
 
