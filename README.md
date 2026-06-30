@@ -52,6 +52,7 @@ We provide the following modules:
 
 | Module | Description |
 |--------|-------------|
+| gs_cookie | Pin the stack-cookie symbol to a constant (no entropy/page protection in a zkVM) |
 | nofp   | Remove floating point functions if they exist |
 | pal    | Replace operating system calls with no-op stubs |
 | rhp    | Patch internal dotnet functions for more compatibility |
