@@ -43,6 +43,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [nofp](#nofp) | Empty soft-float helpers | No floating-point hardware |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
 | [security-stub](#security-stub) | Security/GSS functions return failure | Unused network paths must still link |
+| [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
 | [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
 | [rust_sys](#rust-sys) | `sys_alloc_aligned` | Interop with adjacent Rust precompiles |
 | [ugc-zero](#ugc-zero) | A GC that allocates but never collects | Short-lived proof workloads |
@@ -315,6 +316,38 @@ A long list of `NetSecurityNative_*` functions that all return `-1`.
 .NET's networking stack references these even when no GSS is in use;
 returning failure is enough to prevent link errors and never gets
 executed at runtime in our workloads.
+
+## gs_cookie — neutralised stack cookie
+{: #gs-cookie }
+
+**File:** `modules/gs_cookie/module.c`
+
+One line — `__wrap___security_cookie = 0`, placed in `.data` and bound via
+`--wrap=__security_cookie`.
+
+Upstream .NET uses a GS cookie (stack canary) to catch buffer overruns: the
+JIT copies a process-global `__security_cookie` into each guarded frame and
+re-checks it on return, and the runtime seeds that global **once at startup**
+from a timer (`minipal_lowres_ticks`) into a read-only page. Neither half
+survives a zkVM:
+
+- **No entropy.** There is no clock, so a timer-seeded cookie is either
+  constant (no protection anyway) or non-deterministic — a different value each
+  run, which would make the proof non-reproducible.
+- **No page protection.** `mprotect` / `PalVirtualProtect` is a no-op in the
+  [pal](#pal) layer, and a read-only `.rodata` cookie collides with the
+  code/data-split layout the postprocessor manages.
+
+So the cookie is pinned to a constant `0` and the JIT's check always passes.
+This **disables stack-canary defense-in-depth by design** — an accepted
+trade-off for a single-threaded, deterministic guest with no untrusted
+in-process boundary. Forcing the symbol into `.data` also keeps it out of the
+read-only segment the postprocessor rewrites.
+
+Two paths reach this symbol: with `--stdlib dotnet` the JIT still emits the
+check and binds it to this wrapped `0`; for zerolib builds bflat instead tells
+ILC not to emit GS cookies at all (`SettingsTunnel.EmitGSCookies = false`,
+which bakes a constant into the code and emits no reference).
 
 ## stdcppshim — C++ allocator shims
 {: #stdcppshim }
