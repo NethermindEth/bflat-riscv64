@@ -6,56 +6,88 @@
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
-void __extenddftf2(void) { }
-void __addtf3(void) { }
-void __netf2(void) { }
-void __multf3(void) { }
-void __fixunstfsi(void) { }
-void __floatunsitf(void) { }
-void __subtf3(void) { }
-void __fixtfsi(void) { }
-void __floatsitf(void) { }
-void __eqtf2(void) { }
-void __divtf3(void) { }
-void __letf2(void) { }
-void __trunctfsf2(void) { }
-void __trunctfdf2(void) { }
-void __getf2(void) { }
-void __floatdidf(void) { }
-void __floatunsisf(void) { }
-void __ltdf2(void) { }
-void __gedf2(void) { }
-void __fixdfsi(void) { }
-void __gtdf2(void) { }
-void __floatsisf(void) { }
-void __floatsidf(void) { }
-void __floatunsidf(void) { }
-void __floatundisf(void) { }
-extern void __muldf3(void) { }
-extern void __mulsf3(void) { }
-extern void __floatundidf(void) { }
 
-void __divdf3(void) { }
-void __subdf3(void) { }
-void __adddf3(void) { }
-void __extendsftf2(void) { }
-void __extendsfdf2(void) { }
-void __eqdf2(void) { }
-void __fixunsdfsi(void) { }
-void __fixunsdfdi(void) { }
-void __divsf3(void) {}
-void __truncdfsf2(void) {}
-void __fixdfdi(void) {}
-void __gtsf2(void) {}
-void __fixunssfsi(void) {}
-void __addsf3(void) {}
-void __nedf2(void) {}
-void __floatdisf(void) {}
-void __fixsfsi(void) {}
-void __fixunssfdi(void) {}
-void __gesf2(void) {}
-void __ledf2(void) {}
-void __ltsf2(void) {}
-void __subsf3(void) {}
-void __eqsf2(void) {}
-void __lesf2(void) {}
+/*
+ * The supported language subset has no floating point. The RISC-V soft-float
+ * compiler-rt builtins (__adddf3, __fixdfsi, ...) must therefore never be
+ * reached. Previously these were defined as empty bodies, so a stray FP
+ * operation pulled in transitively (e.g. via the BCL) would call one of them,
+ * get an undefined register value back, and continue with a SILENTLY WRONG
+ * result -- the worst possible failure mode for a proving system.
+ *
+ * Instead each builtin now terminates loudly: any call exits the program with
+ * a distinct non-zero status (255) rather than returning a garbage value, so
+ * the run fails visibly instead of producing a successful proof of a wrong
+ * computation. exit() is routed through the PAL's --wrap=exit to the zkVM's
+ * real termination ecall; in a build without that wrap it still reaches a
+ * non-success terminator, never a silent return. To change the abort policy,
+ * change nofp_trap() alone.
+ */
+extern void exit(int status) __attribute__((noreturn));
+
+__attribute__((noreturn, noinline, cold))
+static void
+nofp_trap(void)
+{
+    exit(255);
+}
+
+/*
+ * Each soft-float builtin is declared with its real (void) placeholder
+ * prototype, exactly as before, and routed to nofp_trap(). The argument and
+ * return registers are irrelevant: the function never returns.
+ */
+#define NOFP_STUB(name) void name(void) { nofp_trap(); }
+
+NOFP_STUB(__extenddftf2)
+NOFP_STUB(__addtf3)
+NOFP_STUB(__netf2)
+NOFP_STUB(__multf3)
+NOFP_STUB(__fixunstfsi)
+NOFP_STUB(__floatunsitf)
+NOFP_STUB(__subtf3)
+NOFP_STUB(__fixtfsi)
+NOFP_STUB(__floatsitf)
+NOFP_STUB(__eqtf2)
+NOFP_STUB(__divtf3)
+NOFP_STUB(__letf2)
+NOFP_STUB(__trunctfsf2)
+NOFP_STUB(__trunctfdf2)
+NOFP_STUB(__getf2)
+NOFP_STUB(__floatdidf)
+NOFP_STUB(__floatunsisf)
+NOFP_STUB(__ltdf2)
+NOFP_STUB(__gedf2)
+NOFP_STUB(__fixdfsi)
+NOFP_STUB(__gtdf2)
+NOFP_STUB(__floatsisf)
+NOFP_STUB(__floatsidf)
+NOFP_STUB(__floatunsidf)
+NOFP_STUB(__floatundisf)
+NOFP_STUB(__muldf3)
+NOFP_STUB(__mulsf3)
+NOFP_STUB(__floatundidf)
+NOFP_STUB(__divdf3)
+NOFP_STUB(__subdf3)
+NOFP_STUB(__adddf3)
+NOFP_STUB(__extendsftf2)
+NOFP_STUB(__extendsfdf2)
+NOFP_STUB(__eqdf2)
+NOFP_STUB(__fixunsdfsi)
+NOFP_STUB(__fixunsdfdi)
+NOFP_STUB(__divsf3)
+NOFP_STUB(__truncdfsf2)
+NOFP_STUB(__fixdfdi)
+NOFP_STUB(__gtsf2)
+NOFP_STUB(__fixunssfsi)
+NOFP_STUB(__addsf3)
+NOFP_STUB(__nedf2)
+NOFP_STUB(__floatdisf)
+NOFP_STUB(__fixsfsi)
+NOFP_STUB(__fixunssfdi)
+NOFP_STUB(__gesf2)
+NOFP_STUB(__ledf2)
+NOFP_STUB(__ltsf2)
+NOFP_STUB(__subsf3)
+NOFP_STUB(__eqsf2)
+NOFP_STUB(__lesf2)
