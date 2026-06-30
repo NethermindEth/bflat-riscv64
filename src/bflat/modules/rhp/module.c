@@ -263,12 +263,14 @@ __wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEven
 int32_t
 __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
 {
-    value[0] = 'e';
-    value[1] = 'n';
-    value[2] = '_';
-    value[3] = 'U';
-    value[4] = 'S';
-    value[5] = '\0';
+    static const char def[] = "en_US"; /* sizeof == 6, includes NUL */
+
+    /* Report failure rather than overflowing a short caller buffer. The old
+     * stub wrote 6 bytes unconditionally, ignoring valueLength. */
+    if (value == NULL || valueLength < (int)sizeof(def))
+        return 0;
+
+    __builtin_memcpy(value, def, sizeof(def));
     return 1;
 }
 
