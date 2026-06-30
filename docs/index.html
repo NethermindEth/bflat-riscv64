@@ -51,7 +51,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 <!-- ====================================================== STAT STRIP -->
 <section class="stat-strip">
   <div class="stat">
-    <div class="stat-value">12<span class="unit">modules</span></div>
+    <div class="stat-value">13<span class="unit">modules</span></div>
     <p class="stat-label">Link-time patches</p>
   </div>
   <div class="stat">
@@ -135,7 +135,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
         The original <a href="https://github.com/bflattened/bflat">bflat</a>
         compiles C# to native code via NativeAOT but produces dynamically
         linked binaries. None of those dependencies are acceptable inside a
-        zkVM. Our fork adds two new libc targets, twelve link-time modules,
+        zkVM. Our fork adds two new libc targets, thirteen link-time modules,
         per-target linker scripts, and an ELF postprocessor — all without
         touching upstream sources.
       </p>
@@ -155,7 +155,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div class="feature-icon">
         <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
       </div>
-      <h3>Twelve link-time modules</h3>
+      <h3>Thirteen link-time modules</h3>
       <p>Small C / C++ / asm objects plug into the linker via
       <code>--wrap=</code> overrides. No upstream code is patched in place.</p>
     </div>
@@ -310,7 +310,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">02</div>
       <div>
         <h3 style="margin: 0 0 4px;">ld.lld links the binary statically</h3>
-        <p style="margin: 0; color: var(--text-muted);">Twelve module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
+        <p style="margin: 0; color: var(--text-muted);">Thirteen module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
@@ -387,6 +387,10 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
     <a class="mod" href="{{ '/modules/#security-stub' | relative_url }}">
       <div class="mod-name">security-stub</div>
       <p class="mod-desc">GSS / NetSecurity functions that all return <code>-1</code>. Prevents link errors for never-executed network paths.</p>
+    </a>
+    <a class="mod" href="{{ '/modules/#gs-cookie' | relative_url }}">
+      <div class="mod-name">gs_cookie</div>
+      <p class="mod-desc">Stack canary pinned to a constant <code>0</code>. No clock for entropy and no page protection in a zkVM, so the cookie is neutralised by design.</p>
     </a>
     <a class="mod" href="{{ '/modules/#stdcppshim' | relative_url }}">
       <div class="mod-name">stdcppshim</div>
