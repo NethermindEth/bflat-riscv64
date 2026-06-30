@@ -105,7 +105,7 @@ Zisk linking includes additional postprocessing steps to generate the final bina
  
 ## Known issues
 
-bflat doesn't support Generic Virtual Method dispatch properly, which limits how you can write your C# code.
+The main limitation is that **memory is never freed**. Our GC (`ugc-zero`) allocates from a downward bump allocator and never collects, so every allocation lives until the program exits. This is acceptable for the target workload — short-lived zkVM executions whose working set fits in the heap — but a long-running or allocation-heavy program will exhaust the heap and fail. Size the heap for the whole run.
 
 ## License
 
