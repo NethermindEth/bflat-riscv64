@@ -156,10 +156,44 @@ init_array_length(void *obj, unsigned long numElements)
     *(uint32_t *)((uint8_t *)obj + ARRAY_LENGTH_OFFSET) = (uint32_t)numElements;
 }
 
+/* Largest element count an array or string may have. The length is stored in
+ * a 32-bit field (init_array_length) and .NET itself rejects anything larger
+ * (Array.MaxLength). Upstream NativeAOT's fast allocators bail to a slow path
+ * that throws when this is exceeded or when the byte size overflows. The
+ * earlier zkVM stubs omitted that guard, so an attacker-influenced element
+ * count could wrap size_t and under-allocate, after which the header/length
+ * writes land out of bounds. We instead fail loudly. */
+#define MAX_ARRAY_LENGTH 0x7FFFFFC7u
+
+__attribute__((noreturn, noinline, cold))
+static void
+rhp_alloc_overflow(void)
+{
+    exit(255);
+}
+
+/* base + numElements*componentSize, 8-byte aligned, with element-count,
+ * multiply and add overflow checks. Terminates instead of returning a
+ * wrapped (too-small) size. */
+static inline size_t
+array_alloc_size(size_t baseSize, unsigned long numElements, size_t componentSize)
+{
+    size_t bytes;
+
+    if (numElements > MAX_ARRAY_LENGTH)
+        rhp_alloc_overflow();
+    if (__builtin_mul_overflow((size_t)numElements, componentSize, &bytes))
+        rhp_alloc_overflow();
+    if (__builtin_add_overflow(bytes, baseSize, &bytes))
+        rhp_alloc_overflow();
+
+    return align_up_8(bytes);
+}
+
 void *
 __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
-    size_t total = (size_t)SZARRAY_BASE_SIZE + ((size_t)numElements << 3);
+    size_t total = array_alloc_size((size_t)SZARRAY_BASE_SIZE, numElements, 8u);
 
     void *obj = malloc(total);
 #if !ZKVM_FAST_ALLOC
@@ -177,7 +211,7 @@ void *
 __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
 {
     size_t comp = (size_t)mt_component_size(methodTable);
-    size_t total = align_up_8((size_t)SZARRAY_BASE_SIZE + ((size_t)numElements * comp));
+    size_t total = array_alloc_size((size_t)SZARRAY_BASE_SIZE, numElements, comp);
 
     void *obj = malloc(total);
 #if !ZKVM_FAST_ALLOC
@@ -194,7 +228,7 @@ __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
 void *
 __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
-    size_t total = align_up_8((size_t)STRING_BASE_SIZE + ((size_t)numElements * (size_t)STRING_COMPONENT_SIZE));
+    size_t total = array_alloc_size((size_t)STRING_BASE_SIZE, numElements, (size_t)STRING_COMPONENT_SIZE);
 
     void *obj = malloc(total);
 #if !ZKVM_FAST_ALLOC
