@@ -71,13 +71,8 @@ These modules are loaded automatically based on target `libc`, `arch` and `os`.
 
 ### Postprocessing
 
-Zisk linking includes additional postprocessing steps to generate the final binary. These steps effectively do the following operations:
+Zisk linking includes additional postprocessing steps to prepare the final binary — for example, removing EH (exception-handling) information and fixing up section attributes for the Zisk loader.
 
- - Remove EH information.
- - Get rid of data inside the `.text` section. It is needed because Zisk doesn't support putting data alongside the code, as many riscv64 compilers do. The postprocessing script creates a shadow `.text_overlay` section. In main `.text` section that remains executable, we nullify all gaps between functions. In `.text_overlay` that is kept read-only, we place the original code + data. That means Zisk is able to read these gaps, yet the instruction preprocessor sees only no-op instructions in the code section.
-
- Note that postprocessing is done through the disassembly (over objdump), comparing EH data and symbol table. Depending on the source of the input module, precision of either of these bits may be lost, therefore, the effort is made on unifying these three sources. Disassembly is the last resort as it is always the most accurate source of information.
- 
  ### External libraries
  
  Bflat is able to link against NuGet packages, for example, [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos). This is quite useful for integrating bflat with existing .NET projects.
