@@ -22,4 +22,6 @@ ENV DOTNET_ROOT=$HOME/dotnet
 ENV PATH=$PATH:$HOME/dotnet
 ENV PATH="$PATH:/share/bflat"
 
+# The packaged variant (perf/min) is whichever was built last:
+# ./build.sh all riscv64 <variant>
 COPY src/bflat/bin/Debug/net10.0 /share/bflat

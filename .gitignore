@@ -14,3 +14,4 @@ msbuild.binlog
 /src/bflat/modules/ugc-zero/release
 /src/packages
 _site
+*.stamp

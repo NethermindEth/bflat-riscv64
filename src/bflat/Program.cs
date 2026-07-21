@@ -61,14 +61,15 @@ class Program
                 {
                     string friendlyName = attr.Key switch
                     {
-                        "BflatRuntimeVersion" => ".NET Runtime",
-                        "MicrosoftCodeAnalysisCSharpVersion" => "C# Compiler",
+                        "BflatRuntimeVersion" => ".NET Runtime Version",
+                        "MicrosoftCodeAnalysisCSharpVersion" => "C# Compiler Version",
+                        "BflatVariant" => "Variant",
                         _ => null,
                     };
 
                     if (friendlyName != null)
                     {
-                        Console.WriteLine($"{friendlyName} Version:");
+                        Console.WriteLine($"{friendlyName}:");
                         Console.WriteLine($"  {attr.Value}");
                     }
                 }

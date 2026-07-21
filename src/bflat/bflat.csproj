@@ -27,11 +27,15 @@
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
       <_Parameter1>BflatRuntimeVersion</_Parameter1>
-      <_Parameter2>$(RuntimeVersion)</_Parameter2>
+      <_Parameter2>$(BlobsVersion)</_Parameter2>
     </AssemblyAttribute>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
       <_Parameter1>MicrosoftCodeAnalysisCSharpVersion</_Parameter1>
       <_Parameter2>$(MicrosoftCodeAnalysisCSharpVersion)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
+      <_Parameter1>BflatVariant</_Parameter1>
+      <_Parameter2>$(Variant)</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
 
@@ -165,15 +169,43 @@
           DestinationFiles="$(OutputPath)check_wrap_symbols.py" />
   </Target>
 
+  <Target Name="ValidateVariant"
+          BeforeTargets="Restore;CollectPackageReferences;DownloadCompilerNupkg;Build">
+    <Error Condition="'$(Variant)' != 'perf' and '$(Variant)' != 'min'"
+           Text="Unknown Variant '$(Variant)'. Supported variants: perf (.b23), min (.x2)." />
+  </Target>
+
+  <!-- Variants share bin/ and obj/, so extract semaphores from a previous
+       build of variant A stay newer than A's cached zips even after variant B
+       has overwritten the output tree. Wipe them whenever the variant being
+       built differs from the last one extracted, forcing re-extraction from
+       the (per-variant) download cache. -->
+  <PropertyGroup>
+    <_VariantStamp>$(IntermediateOutputPath)variant-$(BlobsVersion).stamp</_VariantStamp>
+  </PropertyGroup>
+  <Target Name="ResetVariantState"
+          BeforeTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs"
+          Condition="!Exists('$(_VariantStamp)')">
+    <ItemGroup>
+      <_StaleVariantFiles Include="$(IntermediateOutputPath)*.semaphore" />
+      <_StaleVariantFiles Include="$(IntermediateOutputPath)variant-*.stamp" />
+    </ItemGroup>
+    <Delete Files="@(_StaleVariantFiles)" />
+    <Touch Files="$(_VariantStamp)" AlwaysCreate="true" />
+  </Target>
+
+  <!-- Runtime artifact caches are keyed by $(BlobsVersion), not
+       $(RuntimeVersion): the plain version is identical across variants and
+       would let one variant's cached zips/semaphores satisfy the other's. -->
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"
-          Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip'))"
-          Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(RuntimeVersion).zip')">
+          Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
+          Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
     <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)$(RuntimeVersionPostfix)/%(RuntimeArtifact.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
-                  DestinationFileName="%(RuntimeArtifact.Identity)-$(RuntimeVersion).zip" />
+                  DestinationFileName="%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
   </Target>
 
   <Target Name="DownloadBlobs"
@@ -231,13 +263,13 @@
   </Target>
 
   <Target Name="ExtractHostCompiler"
-          Inputs="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(RuntimeVersion).zip"
-          Outputs="$(IntermediateOutputPath)bflat-compiler-native-$(CompilerHost)-$(RuntimeVersion).semaphore">
+          Inputs="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).zip"
+          Outputs="$(IntermediateOutputPath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).semaphore">
 
-    <Unzip SourceFiles="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(RuntimeVersion).zip"
+    <Unzip SourceFiles="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)" />
 
-    <Touch Files="$(IntermediateOutputPath)\bflat-compiler-native-$(CompilerHost)-$(RuntimeVersion).semaphore"
+    <Touch Files="$(IntermediateOutputPath)\bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
   </Target>
 
@@ -256,28 +288,28 @@
   </Target>
 
   <Target Name="ExtractRefs"
-          Inputs="$(DownloadCachePath)bflat-refs-$(RuntimeVersion).zip"
-          Outputs="$(IntermediateOutputPath)bflat-refs-$(RuntimeVersion).semaphore">
+          Inputs="$(DownloadCachePath)bflat-refs-$(BlobsVersion).zip"
+          Outputs="$(IntermediateOutputPath)bflat-refs-$(BlobsVersion).semaphore">
 
-    <Unzip SourceFiles="$(DownloadCachePath)bflat-refs-$(RuntimeVersion).zip"
+    <Unzip SourceFiles="$(DownloadCachePath)bflat-refs-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)ref" />
 
-    <Touch Files="$(IntermediateOutputPath)\bflat-refs-$(RuntimeVersion).semaphore"
+    <Touch Files="$(IntermediateOutputPath)\bflat-refs-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
   </Target>
 
   <Target Name="ExtractLibraries"
-          Inputs="@(SupportedTarget->'$(DownloadCachePath)bflat-libs-%(Identity)-$(RuntimeVersion).zip')"
-          Outputs="@(SupportedTarget->'$(IntermediateOutputPath)\bflat-libs-%(Identity)-$(RuntimeVersion).semaphore')">
+          Inputs="@(SupportedTarget->'$(DownloadCachePath)bflat-libs-%(Identity)-$(BlobsVersion).zip')"
+          Outputs="@(SupportedTarget->'$(IntermediateOutputPath)\bflat-libs-%(Identity)-$(BlobsVersion).semaphore')">
 
-    <Unzip SourceFiles="$(DownloadCachePath)bflat-libs-%(SupportedTarget.Identity)-$(RuntimeVersion).zip"
+    <Unzip SourceFiles="$(DownloadCachePath)bflat-libs-%(SupportedTarget.Identity)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)lib\%(SupportedTarget.LibPath)" />
 
     <Copy SourceFiles="$(OutputPath)lib\%(SupportedTarget.LibPath)\zerolibnative.obj"
           DestinationFolder="$(OutputPath)lib\uefi\arm64\"
           Condition="'%(SupportedTarget.Identity)' == 'windows-arm64'" />
 
-    <Touch Files="$(IntermediateOutputPath)\bflat-libs-%(SupportedTarget.Identity)-$(RuntimeVersion).semaphore"
+    <Touch Files="$(IntermediateOutputPath)\bflat-libs-%(SupportedTarget.Identity)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
   </Target>
 

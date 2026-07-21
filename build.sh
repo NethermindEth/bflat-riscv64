@@ -22,10 +22,22 @@ function on_fail()
 
 what="$1"
 flavor="$2"
+variant="$3"
 
 if [ "$flavor" == "" ] ; then
 	flavor="generic"
 fi
+
+# Compiler variant: which runtime blob release gets bundled.
+#   perf -> .b23 (performance-oriented runtime)
+#   min  -> .x2  (minimal runtime)
+if [ "$variant" == "" ] ; then
+	variant="perf"
+fi
+case $variant in
+	perf|min) ;;
+	*) fail Unsupported variant: "$variant" ;;
+esac
 
 cd $TOP_DIR
 
@@ -146,12 +158,12 @@ function build_modules()
 case $flavor in
 	generic)
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj
-			on_fail $? "Failed to build bflat (generic)"
+			dotnet build src/bflat/bflat.csproj -p:Variant=${variant}
+			on_fail $? "Failed to build bflat (generic, ${variant})"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (generic)"
+			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (generic, ${variant})"
 		fi
 		;;
 	riscv64)
@@ -160,12 +172,12 @@ case $flavor in
 			on_fail $? "Failed to build modules"
 		fi
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64
-			on_fail $? "Failed to build bflat (riscv64)"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant}
+			on_fail $? "Failed to build bflat (riscv64, ${variant})"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (riscv64)"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (riscv64, ${variant})"
 		fi
 		;;
 	*)
