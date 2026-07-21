@@ -257,98 +257,73 @@ internal class BuildCommand : CommandBase
     void PatchRiscvAbiStaticLib(string libPath, bool verbose)
     {
         if (verbose)
-            Console.WriteLine($"Patching RISC-V ABI in static library: {libPath}");
+            Console.WriteLine($"Patching RISC-V ABI in static library (in place): {libPath}");
 
-        // Create temp directory for extraction
-        string tempDir = Path.Combine(Path.GetTempPath(), $"bflat-patch-{Path.GetFileNameWithoutExtension(libPath)}-{Guid.NewGuid()}");
-        Directory.CreateDirectory(tempDir);
-
-        try
+        if (!File.Exists(libPath))
         {
-            // Extract .a archive using ar
-            string ar = Environment.GetEnvironmentVariable("BFLAT_AR");
-            if (ar == null)
-            {
-                string toolSuffix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
-                string arPath = Path.Combine(CommonOptions.HomePath, "bin", "llvm-ar" + toolSuffix);
-
-                // If not found in HomePath, try system path
-                if (!File.Exists(arPath))
-                {
-                    arPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "llvm-ar.exe" : "llvm-ar";
-                }
-
-                ar = arPath;
-            }
-
-            // Extract archive
-            var extractProcess = Process.Start(new ProcessStartInfo
-            {
-                FileName = ar,
-                Arguments = $"x \"{libPath}\"",
-                WorkingDirectory = tempDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            });
-            extractProcess.WaitForExit();
-
-            if (extractProcess.ExitCode != 0)
-            {
-                if (verbose)
-                    Console.WriteLine($"Warning: Failed to extract {libPath}, skipping ABI patch");
-                return;
-            }
-
-            // Patch all .o files
-            var objectFiles = Directory.GetFiles(tempDir, "*.o");
-            foreach (var objFile in objectFiles)
-            {
-                if (verbose)
-                    Console.WriteLine($"  Patching {Path.GetFileName(objFile)}");
-                PatchRiscvAbi(objFile);
-            }
-
-            // Recreate archive with patched files
-            File.Delete(libPath);
-            var createArgs = new StringBuilder();
-            createArgs.Append($"rcs \"{libPath}\"");
-            foreach (var objFile in objectFiles)
-            {
-                createArgs.Append($" \"{Path.GetFileName(objFile)}\"");
-            }
-
-            var createProcess = Process.Start(new ProcessStartInfo
-            {
-                FileName = ar,
-                Arguments = createArgs.ToString(),
-                WorkingDirectory = tempDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            });
-            createProcess.WaitForExit();
-
-            if (createProcess.ExitCode != 0)
-            {
-                throw new Exception($"Failed to recreate static library {libPath}");
-            }
-
             if (verbose)
-                Console.WriteLine($"Successfully patched {libPath}");
+                Console.WriteLine($"Warning: {libPath} not found, skipping ABI patch");
+            return;
         }
-        finally
+
+        // Patch the float-ABI marker of every ELF member in place by walking the ar
+        // structure. Extract-and-repack (ar x / ar rcs) is unsafe here: musl's
+        // libc.a has multiple members that share a basename (e.g. free.lo), and
+        // extraction by name overwrites the earlier one on disk, silently dropping
+        // its symbols (this is why "free" went missing). Rewriting bytes in place
+        // preserves every member and the archive symbol index.
+        using var fs = new FileStream(libPath, FileMode.Open, FileAccess.ReadWrite);
+
+        byte[] magic = new byte[8];
+        if (fs.Read(magic, 0, 8) != 8 || System.Text.Encoding.ASCII.GetString(magic) != "!<arch>\n")
         {
-            // Clean up temp directory
-            try
-            {
-                Directory.Delete(tempDir, true);
-            }
-            catch
-            {
-                // Ignore cleanup errors
-            }
+            if (verbose)
+                Console.WriteLine($"Warning: {libPath} is not an ar archive, skipping ABI patch");
+            return;
         }
+
+        int patched = 0;
+        byte[] header = new byte[60];
+        while (fs.Position + 60 <= fs.Length)
+        {
+            if (fs.Read(header, 0, 60) != 60)
+                break;
+
+            // Member size is a decimal ASCII string at bytes 48..57.
+            if (!long.TryParse(System.Text.Encoding.ASCII.GetString(header, 48, 10).Trim(), out long size))
+                break;
+
+            long dataPos = fs.Position;
+
+            // e_flags lives at offset 0x30 of the ELF header; patch it only for ELF
+            // members whose marker is hard-float (4) or hard-float+compressed (5).
+            // The armap/extended-name members are not ELF and are skipped.
+            if (size > 0x34)
+            {
+                byte[] ident = new byte[4];
+                fs.Read(ident, 0, 4);
+                if (ident[0] == 0x7f && ident[1] == (byte)'E' && ident[2] == (byte)'L' && ident[3] == (byte)'F')
+                {
+                    fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
+                    int b = fs.ReadByte();
+                    if (b == 4 || b == 5)
+                    {
+                        fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
+                        fs.WriteByte(0);
+                        patched++;
+                    }
+                }
+            }
+
+            // Advance to the next member; member data is padded to an even offset.
+            long next = dataPos + size;
+            if ((next & 1) == 1)
+                next++;
+            fs.Seek(next, SeekOrigin.Begin);
+        }
+
+        if (verbose)
+            Console.WriteLine($"Patched {patched} ELF member(s) in {libPath}");
     }
 
     public override int Handle(ParseResult result)
@@ -598,6 +573,14 @@ internal class BuildCommand : CommandBase
         }
         ms.Seek(0, SeekOrigin.Begin);
 
+        // Persist the Roslyn output so the type system can load it through the
+        // standard path-based loader (registered in InputFilePaths below). This
+        // replaces the in-memory CacheOpenModule hook that required a runtime patch.
+        string compiledModulePath = Path.GetTempFileName();
+        using (var moduleFile = File.Create(compiledModulePath))
+            ms.CopyTo(moduleFile);
+        ms.Dispose();
+
         string outputFilePath = userSpecificedOutputFileName;
         if (outputFilePath == null)
         {
@@ -626,16 +609,9 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        if (stdlib != StandardLibType.DotNet)
-        {
-            SettingsTunnel.EmitGCInfo = false;
-            SettingsTunnel.EmitEHInfo = false;
-            SettingsTunnel.EmitGSCookies = false;
-        }
-
         Console.WriteLine("Supports reflection: " + supportsReflection.ToString());
         CompilerTypeSystemContext typeSystemContext =
-            new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0, ms, compiledModuleName);
+            new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
         ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
 
@@ -713,7 +689,10 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        typeSystemContext.InputFilePaths = new Dictionary<string, string>();
+        typeSystemContext.InputFilePaths = new Dictionary<string, string>
+        {
+            [compiledModuleName] = compiledModulePath,
+        };
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
 
         typeSystemContext.SetSystemModule(typeSystemContext.GetModuleForSimpleName(systemModuleName));
@@ -1422,6 +1401,11 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-latomic ");
+                    // libatomic.a ships with the hard-float (lp64d) marker like
+                    // libc.a, so normalize it to soft-float for the zisk stack too,
+                    // otherwise ld.lld rejects its members against crt1.o.
+                    if (libc == "zisk" || libc == "zisk_sim")
+                        PatchRiscvAbiStaticLib(firstLib + "/libatomic.a", verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
@@ -1451,6 +1435,13 @@ internal class BuildCommand : CommandBase
             else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
+                // The zisk/zisk_sim stack is linked with the soft-float (lp64)
+                // ABI marker (see PatchRiscvAbi on crt1.o/crti.o above). The
+                // bundled musl libc.a still carries the hard-float (lp64d)
+                // marker, so normalize it too or ld.lld rejects every member
+                // with "different floating-point ABI from crt1.o".
+                if (libc == "zisk" || libc == "zisk_sim")
+                    PatchRiscvAbiStaticLib(firstLib + "/libc.a", verbose);
             }
 
             if (libc == "bionic")
@@ -1467,6 +1458,9 @@ internal class BuildCommand : CommandBase
             else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
+                // Same soft-float marker normalization as crt1.o/crti.o.
+                if (libc == "zisk" || libc == "zisk_sim")
+                    PatchRiscvAbi(firstLib + "/crtn.o");
             }
             else
             {
