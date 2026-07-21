@@ -158,10 +158,6 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHeap.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
 
-    <!-- zerolibnative -->
-    <Copy SourceFiles="$(OutputPath)lib\linux\riscv64\musl\libzerolibnative.o"
-      DestinationFolder="$(OutputPath)lib\linux\riscv64\zisk" />
-
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"
           DestinationFiles="$(OutputPath)patch_elf.py" />
