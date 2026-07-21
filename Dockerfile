@@ -1,6 +1,6 @@
 FROM ubuntu:26.04
 
-RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm clang lld xxd file python3 python3-pip
+RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm clang lld xxd file python3 python3-pip libarchive-tools
 
 ENV BFLAT_LD=/usr/bin/lld
 
@@ -14,7 +14,10 @@ RUN pip3 install lief pyelftools --break-system-packages
 RUN touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
 
 ENV HOME=/root
-RUN mkdir -p $HOME/dotnet && tar zxf dotnet-sdk-10.0.100-linux-x64.tar.gz -C $HOME/dotnet
+# bsdtar instead of GNU tar: the glibc 2.43 rebuild of ubuntu:26.04 makes GNU
+# tar issue syscalls Rosetta doesn't translate (ENOSYS on nested mkdir) when
+# building linux/amd64 images on Apple Silicon.
+RUN mkdir -p $HOME/dotnet && bsdtar -xzf dotnet-sdk-10.0.100-linux-x64.tar.gz -C $HOME/dotnet
 ENV DOTNET_ROOT=$HOME/dotnet
 ENV PATH=$PATH:$HOME/dotnet
 ENV PATH="$PATH:/share/bflat"
