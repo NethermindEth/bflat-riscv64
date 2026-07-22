@@ -570,3 +570,78 @@ void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
 {
     exit(1);
 }
+
+/* HashHelpers.IsPrime computes (int)Math.Sqrt(candidate) for the loop bound,
+ * which is the only reason dictionary resizing drags F/D instructions into
+ * the rv64ima image. This is an exact reimplementation with an integer bound
+ * (divisor^2 <= candidate iterates identically): CoreLib only ever calls it
+ * with positive candidates from GetPrime. One definition covers both the
+ * System.Collections.Concurrent and System.Collections.Immutable copies -
+ * their identical bodies are folded into a single symbol by the compiler's
+ * method body folding. */
+int
+__wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(int candidate)
+{
+    if ((candidate & 1) != 0)
+    {
+        for (long divisor = 3; divisor * divisor <= candidate; divisor += 2)
+        {
+            if ((candidate % divisor) == 0)
+                return 0;
+        }
+        return 1;
+    }
+    return candidate == 2;
+}
+
+/* Each assembly embedding the shared HashHelpers source gets its own copy of
+ * IsPrime; with the ILC substitution turning the managed bodies into throw
+ * stubs, every copy's callers must be diverted to the C implementation. */
+int
+__wrap_S_P_CoreLib_System_Collections_HashHelpers__IsPrime(int candidate)
+{
+    return __wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(candidate);
+}
+
+int
+__wrap_System_Collections_Immutable_System_Collections_HashHelpers__IsPrime(int candidate)
+{
+    return __wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(candidate);
+}
+
+/* FrozenHashTable.CalcNumBuckets searches candidate bucket counts and rates
+ * them by collision percentage - double math at collection-freeze time. Any
+ * positive bucket count is CORRECT (collisions go to chains); only lookup
+ * locality differs. The replacement picks the smallest prime >= the entry
+ * count from HashHelpers' primes table, which is the classic Dictionary
+ * sizing policy. Managed signature: CalcNumBuckets(ReadOnlySpan<int>, bool)
+ * -> a0 = data ref, a1 = length, a2 = hashCodesAreUnique (ignored). */
+static const int rhp_primes[] = {
+    3, 7, 11, 17, 23, 29, 37, 47, 59, 71, 89, 107, 131, 163, 197, 239, 293,
+    353, 431, 521, 631, 761, 919, 1103, 1327, 1597, 1931, 2333, 2801, 3371,
+    4049, 4861, 5839, 7013, 8419, 10103, 12143, 14591, 17519, 21023, 25229,
+    30293, 36353, 43627, 52361, 62851, 75431, 90523, 108631, 130363, 156437,
+    187751, 225307, 270371, 324449, 389357, 467237, 560689, 672827, 807403,
+    968897, 1162687, 1395263, 1674319, 2009191, 2411033, 2893249, 3471899,
+    4166287, 4999559, 5999471, 7199369
+};
+
+int
+__wrap_System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets(
+    void *hashCodesRef, long hashCodesLength, int hashCodesAreUnique)
+{
+    (void)hashCodesRef;
+    (void)hashCodesAreUnique;
+    for (unsigned i = 0; i < sizeof(rhp_primes) / sizeof(rhp_primes[0]); i++)
+    {
+        if (rhp_primes[i] >= hashCodesLength)
+            return rhp_primes[i];
+    }
+    /* Beyond the table (7.2M+ entries): any odd count works. */
+    return (int)(hashCodesLength | 1);
+}
+
+/* LengthBuckets.CreateLengthBucketsArrayIfAppropriate keeps its managed body
+ * (5 cold F/D instructions): its int[] return cannot be expressed as an ILC
+ * stub value, and body="remove" would mark it no-return, poisoning callers
+ * with trap-after-call codegen (learned the hard way). */

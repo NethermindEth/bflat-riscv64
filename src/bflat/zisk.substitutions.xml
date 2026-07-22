@@ -1,0 +1,90 @@
+<!--
+  Built-in ILLink.Substitutions for the zisk/zisk_sim targets, applied by
+  BuildCommand before any user-provided -\-substitution files.
+
+  Only entries that are semantics-preserving for EVERY guest on a
+  single-threaded, bump-allocated zkVM belong here. Application policy
+  decisions (e.g. "this guest never formats a double", "never binds config
+  from strings") stay in the guest's own substitution file. User files must
+  not re-declare methods listed here: the parser rejects duplicates.
+-->
+<linker>
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Hill climbing (thread-count auto-tuning) runs double/Complex math on
+         worker-count samples. A single-threaded zkVM has exactly one worker
+         forever, so the tuner is meaningless: IsDisabled=true folds the gate
+         in PortableThreadPool.ShouldAdjustMaxWorkersActive, and the ctor
+         (double[] sample windows) plus ForceChange (the only other reachable
+         entry points) are stubbed so the remaining references touch nothing. -->
+    <type fullname="System.Threading.PortableThreadPool/HillClimbing">
+      <field name="IsDisabled" value="true" />
+      <method signature="System.Void .ctor()" body="stub" />
+      <method signature="System.Void ForceChange(System.Int32,System.Threading.PortableThreadPool/HillClimbing/StateOrTransition)" body="stub" />
+    </type>
+
+    <!-- The gate thread drives worker-count tuning and CPU-utilization
+         sampling (double math in CpuUtilizationReader); it never starts on a
+         single-threaded zkVM. An empty body lets ILC trim the reader too. -->
+    <type fullname="System.Threading.PortableThreadPool/GateThread">
+      <method signature="System.Void GateThreadStart()" body="stub" />
+    </type>
+
+    <!-- Times a burst of GetCurrentProcessorNumber calls against Stopwatch to
+         decide whether per-processor striping is worthwhile - double math for
+         a question that is meaningless on a deterministic single-core zkVM.
+         "false" = keep the cached (non-striped) path, matching reality. -->
+    <type fullname="System.Threading.ProcessorIdCache">
+      <method signature="System.Boolean ProcessorNumberSpeedCheck()" body="stub" value="false" />
+    </type>
+
+    <!-- The zkVM guest runs on exactly one hart, so 1 is the exact processor
+         count. Folding it also eliminates the Unix cgroup CPU-quota parsing
+         (Math.Ceiling over double) that otherwise inlines into every cctor
+         sizing a pool by ProcessorCount, and right-sizes those pools for a
+         single-threaded target as a bonus. -->
+    <type fullname="System.Environment">
+      <method signature="System.Int32 get_ProcessorCount()" body="stub" value="1" />
+    </type>
+
+    <!-- ArrayPool trim heuristic: compares GC memory load against thresholds
+         in double. 0 = MemoryPressure.Low, i.e. "keep pooled buffers" - the
+         right answer under a bump allocator that never trims anyway. -->
+    <type fullname="System.Buffers.Utilities">
+      <method signature="System.Buffers.Utilities/MemoryPressure GetMemoryPressure()" body="stub" value="0" />
+    </type>
+
+    <!-- HashHelpers.IsPrime bounds its divisor loop with (int)Math.Sqrt. The
+         managed body is replaced with a constant-returning stub (removing
+         the F/D instructions; body="remove" would poison callers with
+         no-return codegen); every caller is diverted by -\-wrap (BuildCommand)
+         to the exact integer reimplementation in the rhp module. The same
+         shared source is compiled into several assemblies - substitute all. -->
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+  </assembly>
+
+  <assembly fullname="System.Collections.Concurrent">
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+  </assembly>
+
+  <assembly fullname="System.Collections.Immutable">
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+
+    <!-- CalcNumBuckets rates candidate bucket counts by collision percentage
+         in double math at collection-freeze time. The stub body (never
+         executed) sheds the F/D instructions and -\-wrap diverts callers to
+         the rhp module, which returns the smallest prime >= the entry count -
+         any bucket count is correct, collisions chain. LengthBuckets is NOT
+         substituted: its int[] return cannot be expressed as a stub value,
+         and body="remove" marks the method no-return, which poisons callers
+         (ILC emits a trap after the call instead of using the result). -->
+    <type fullname="System.Collections.Frozen.FrozenHashTable">
+      <method signature="System.Int32 CalcNumBuckets(System.ReadOnlySpan`1&lt;System.Int32&gt;,System.Boolean)" body="stub" value="1" />
+    </type>
+  </assembly>
+</linker>

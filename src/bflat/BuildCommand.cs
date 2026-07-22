@@ -48,19 +48,327 @@ using Internal.TypeSystem.Ecma;
 
 using ILLink.Shared;
 
+/// <summary>
+/// MethodIL wrapper returning a patched copy of the inner body's IL stream.
+/// Metadata tokens keep resolving through the inner (Ecma) body, so patches
+/// may freely reference any token already valid in the owning module; tokens
+/// injected by a patch (values chosen outside the module's real token space)
+/// are resolved from <paramref name="extraTokens"/> instead.
+///
+/// GetMethodILDefinition is overridden: for a shared generic instantiation the
+/// inner MethodIL is an InstantiatedMethodIL whose definition is the open body,
+/// and ILC's generic-dictionary / method-body-folding analysis reaches the
+/// method through that open definition. A wrapper that returned `this` (the
+/// default) would hand back an instantiated, patched body where the open one is
+/// expected, corrupting the generic dictionary layout (observed as a null
+/// WeakReference&lt;T&gt; MethodTable when the reflection type unifier grows).
+/// The IL bytes are identical between instantiation and definition (only token
+/// resolution differs), so the same patched bytes wrap the open definition.
+/// </summary>
+sealed class PatchedMethodIL : MethodIL
+{
+    private readonly MethodIL _inner;
+    private readonly byte[] _bytes;
+    private readonly Dictionary<int, object> _extraTokens;
+    private readonly int _extraMaxStack;
+
+    public PatchedMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0)
+    {
+        _inner = inner;
+        _bytes = bytes;
+        _extraTokens = extraTokens;
+        _extraMaxStack = extraMaxStack;
+    }
+
+    public override MethodDesc OwningMethod => _inner.OwningMethod;
+    public override int MaxStack => _inner.MaxStack + _extraMaxStack;
+    public override bool IsInitLocals => _inner.IsInitLocals;
+    public override byte[] GetILBytes() => _bytes;
+    public override LocalVariableDefinition[] GetLocals() => _inner.GetLocals();
+    public override ILExceptionRegion[] GetExceptionRegions() => _inner.GetExceptionRegions();
+    public override object GetObject(int token, NotFoundBehavior notFoundBehavior = NotFoundBehavior.Throw)
+        => _extraTokens != null && _extraTokens.TryGetValue(token, out object o)
+            ? o
+            : _inner.GetObject(token, notFoundBehavior);
+
+    public override MethodIL GetMethodILDefinition()
+    {
+        MethodIL innerDef = _inner.GetMethodILDefinition();
+        return innerDef == _inner
+            ? this   // already the open definition (e.g. a non-generic method)
+            : new PatchedMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack);
+    }
+}
+
+/// <summary>
+/// Rewrites the double growth-ratio in ConcurrentUnifierW(Keyed)`2.Container.Resize
+/// (live/len &lt; 0.75) into the exactly equivalent integer predicate
+/// live*4 &lt; len*3, dropping the only FP instructions from that shared generic
+/// method. Applied ONLY to the post-scan (codegen) IL provider: Resize is a
+/// shared generic body, so the scanner must see the ORIGINAL IL to compute the
+/// correct generic-dictionary dependencies (WeakReference&lt;T&gt; etc.). The
+/// rewrite touches no tokens and no generic operations, so scan- and codegen-IL
+/// stay dependency-identical - the same split SubstitutedILProvider relies on
+/// for dead-branch elimination.
+/// </summary>
+sealed class UnifierResizeILProvider : ILProvider
+{
+    private readonly ILProvider _inner;
+
+    public UnifierResizeILProvider(ILProvider inner) => _inner = inner;
+
+    public override MethodIL GetMethodIL(MethodDesc method)
+    {
+        MethodIL body = _inner.GetMethodIL(method);
+        if (body == null ||
+            method.OwningType is not MetadataType cont ||
+            cont.Name != "Container" ||
+            cont.ContainingType is not MetadataType unifier ||
+            !unifier.Name.StartsWith("ConcurrentUnifierW") ||
+            method.Name != "Resize")
+        {
+            return body;
+        }
+
+        byte[] il = (byte[])body.GetILBytes().Clone();
+        // ldloc.0; conv.r8; ldarg.0; ldfld _entries; ldlen; conv.i4; conv.r8;
+        // div; ldc.r8 0.75; bge.un.s  ->  06 6C 02 7B ?? ?? ?? ?? 8E 69 6C 5B 23 <0.75> 34
+        byte[] pat = { 0x06, 0x6C, 0x02, 0x7B, 0, 0, 0, 0, 0x8E, 0x69, 0x6C, 0x5B,
+                       0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x3F, 0x34 };
+        bool[] mask = new bool[pat.Length];
+        for (int i = 0; i < mask.Length; i++) mask[i] = !(i >= 4 && i <= 7);
+        int at = ILPatch.FindPattern(il, pat, mask);
+        if (at < 0)
+            return body;
+
+        byte t0 = il[at + 4], t1 = il[at + 5], t2 = il[at + 6], t3 = il[at + 7];
+        int p = at;
+        il[p++] = 0x06;                                    // ldloc.0
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x1A;                                    // ldc.i4.4
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x5A;                                    // mul   -> live*4
+        il[p++] = 0x02;                                    // ldarg.0
+        il[p++] = 0x7B; il[p++] = t0; il[p++] = t1; il[p++] = t2; il[p++] = t3; // ldfld _entries
+        il[p++] = 0x8E;                                    // ldlen
+        il[p++] = 0x69;                                    // conv.i4
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x19;                                    // ldc.i4.3
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x5A;                                    // mul   -> len*3
+        for (int i = 0; i < 4; i++)
+            il[p++] = 0x00;                                // nop
+        il[p] = 0x2F;                                      // bge.s (same operand/target)
+        // Integer form holds live*4 while computing len*3: one slot deeper than
+        // the original double ratio peak.
+        return new PatchedMethodIL(body, il, extraMaxStack: 1);
+    }
+}
+
+static class ILPatch
+{
+    /// <summary>
+    /// Finds the single occurrence of <paramref name="pattern"/> in
+    /// <paramref name="haystack"/>; positions where <paramref name="mask"/> is
+    /// false match any byte. Returns -1 when absent or ambiguous (more than one
+    /// match is treated as not found - safer to leave the IL alone than to
+    /// patch the wrong site).
+    /// </summary>
+    public static int FindPattern(byte[] haystack, byte[] pattern, bool[] mask)
+    {
+        int found = -1;
+        for (int i = 0; i + pattern.Length <= haystack.Length; i++)
+        {
+            bool ok = true;
+            for (int j = 0; j < pattern.Length; j++)
+            {
+                if ((mask == null || mask[j]) && haystack[i + j] != pattern[j])
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok)
+            {
+                if (found >= 0)
+                    return -1;
+                found = i;
+            }
+        }
+        return found;
+    }
+}
+
 class CustomILProvider : ILProvider
 {
     private ILProvider inner;
+    private bool zkvmTarget;
     public TypeSystemContext TypeContext;
 
-    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext)
+    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext, bool isZkvmTarget = false)
     {
         inner = innerProvider;
         TypeContext = typeContext;
+        zkvmTarget = isZkvmTarget;
     }
 
     public override MethodIL GetMethodIL(MethodDesc method)
     {
+        // zkVM (rv64ima) IL replacements. Unlike ILLink substitutions, a raw
+        // IL body can return reference types and structs, so this is the layer
+        // for replacements the XML cannot express.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType zt &&
+            zt.Namespace == "System.Collections.Frozen" &&
+            zt.Name == "LengthBuckets" &&
+            method.Name == "CreateLengthBucketsArrayIfAppropriate")
+        {
+            // Decides (in double ratio math) whether the by-length string
+            // lookup optimization pays off. Null = "use the fallback frozen
+            // comparer" and is always a correct answer.
+            return new ILStubMethodIL(
+                method,
+                new byte[]
+                {
+                    (byte)ILOpcode.ldnull,
+                    (byte)ILOpcode.ret
+                },
+                Array.Empty<LocalVariableDefinition>(),
+                new object[] { }
+            );
+        }
+
+        // TimeZoneInfo..cctor initializes s_daylightRuleMarker via
+        // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
+        // the only FPU code in the body. Patch the 19-byte sequence
+        //   ldsflda MinValue; ldc.r8 2.0; call AddMilliseconds
+        // into the tick-exact integer construction
+        //   ldc.i8 20000; newobj DateTime(int64); nop x5
+        // (2 ms = 20_000 ticks). Same stack effect, same length, so branch
+        // offsets and the trailing CreateFixedDateRule call are untouched.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType tzType &&
+            tzType.Namespace == "System" &&
+            tzType.Name == "TimeZoneInfo" &&
+            method.Name == ".cctor")
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            byte[] il = (byte[])body.GetILBytes().Clone();
+            // Anchor: ldc.r8 2.0 (23 00 00 00 00 00 00 00 40) preceded by
+            // ldsflda (7F + token) and followed by call (28 + token).
+            byte[] anchor = { 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40 };
+            int at = ILPatch.FindPattern(il, anchor, null);
+            if (at >= 5 && il[at - 5] == 0x7F && il[at + 9] == 0x28)
+            {
+                var int64Type = TypeContext.GetWellKnownType(WellKnownType.Int64);
+                MethodDesc dateTimeTicksCtor = null;
+                foreach (MethodDesc ctor in ((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
+                             .Module.GetType("System", "DateTime").GetMethods())
+                {
+                    if (ctor.Name == ".ctor" && ctor.Signature.Length == 1 && ctor.Signature[0] == int64Type)
+                    {
+                        dateTimeTicksCtor = ctor;
+                        break;
+                    }
+                }
+
+                if (dateTimeTicksCtor != null)
+                {
+                    const int injectedToken = 0x0A7FFFF0;
+                    int p = at - 5;
+                    il[p++] = 0x21; // ldc.i8
+                    long ticks = 2 * 10_000; // 2 ms in ticks
+                    for (int i = 0; i < 8; i++)
+                        il[p++] = (byte)(ticks >> (8 * i));
+                    il[p++] = 0x73; // newobj
+                    il[p++] = unchecked((byte)injectedToken);
+                    il[p++] = unchecked((byte)(injectedToken >> 8));
+                    il[p++] = unchecked((byte)(injectedToken >> 16));
+                    il[p++] = unchecked((byte)(injectedToken >> 24));
+                    for (int i = 0; i < 5; i++)
+                        il[p++] = 0x00; // nop
+                    return new PatchedMethodIL(body, il,
+                        new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
+                }
+            }
+            return body;
+        }
+
+        // NOTE: ConcurrentUnifierW(Keyed)`2.Container.Resize's double growth
+        // ratio is handled separately by UnifierResizeILProvider (codegen-only),
+        // because it is a SHARED GENERIC body - see that class. Patches HERE run
+        // in both scan and codegen and must stay confined to NON-generic bodies.
+
+        // ValueType.RegularGetValueTypeHashCode hashes Single/Double struct
+        // fields through HashCode.Add<float/double>, passing the value BY VALUE,
+        // so the double/float travels in an FP register (flw/fld here, fmv.x.w/d
+        // inside Add<T>) - the last FP in the image. Rewrite each such site to
+        // load the raw bits instead (ldind.r4/r8 -> ldind.i4/i8) and hash them
+        // via HashCode.Add<int/long>, which is entirely integer. Hashing the
+        // bit pattern matches NativeAOT's byte-wise ValueType.Equals for
+        // blittable fields, so the hash/equals contract stays consistent.
+        // Non-generic method (safe to patch in both phases); Add<int>/Add<long>
+        // MethodDescs are constructed from the type system and injected as
+        // synthetic tokens (like the DateTime ctor in the TimeZoneInfo patch).
+        if (zkvmTarget &&
+            method.OwningType is MetadataType vtType &&
+            vtType.Namespace == "System" &&
+            vtType.Name == "ValueType" &&
+            method.Name == "RegularGetValueTypeHashCode")
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            byte[] il = (byte[])body.GetILBytes().Clone();
+
+            MetadataType hashCodeType = (MetadataType)((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
+                .Module.GetType("System", "HashCode");
+            MethodDesc addOpen = null;
+            foreach (MethodDesc mm in hashCodeType.GetMethods())
+            {
+                if (mm.Name == "Add" && mm.HasInstantiation && mm.Instantiation.Length == 1 && mm.Signature.Length == 1)
+                {
+                    addOpen = mm;
+                    break;
+                }
+            }
+
+            var extra = new Dictionary<int, object>();
+            if (addOpen != null)
+            {
+                MethodDesc addInt = TypeContext.GetInstantiatedMethod(addOpen,
+                    new Instantiation(new TypeDesc[] { TypeContext.GetWellKnownType(WellKnownType.Int32) }));
+                MethodDesc addLong = TypeContext.GetInstantiatedMethod(addOpen,
+                    new Instantiation(new TypeDesc[] { TypeContext.GetWellKnownType(WellKnownType.Int64) }));
+                const int addIntToken = 0x0A7FFFF1;
+                const int addLongToken = 0x0A7FFFF2;
+                extra[addIntToken] = addInt;
+                extra[addLongToken] = addLong;
+
+                // Walk the IL for ldind.r4/r8 (0x4E/0x4F) immediately followed by
+                // call (0x28) to HashCode.Add<float/double>, and retarget both.
+                for (int i = 0; i + 6 <= il.Length; i++)
+                {
+                    if ((il[i] == 0x4E || il[i] == 0x4F) && il[i + 1] == 0x28)
+                    {
+                        int tok = il[i + 2] | (il[i + 3] << 8) | (il[i + 4] << 16) | (il[i + 5] << 24);
+                        object callee = body.GetObject(tok, NotFoundBehavior.ReturnNull);
+                        if (callee is MethodDesc md && md.GetTypicalMethodDefinition() == addOpen && md.Instantiation.Length == 1)
+                        {
+                            TypeDesc arg = md.Instantiation[0];
+                            bool isDouble = il[i] == 0x4F;
+                            il[i] = isDouble ? (byte)0x4C : (byte)0x4A; // ldind.i8 / ldind.i4
+                            int newTok = isDouble ? addLongToken : addIntToken;
+                            il[i + 2] = (byte)newTok;
+                            il[i + 3] = (byte)(newTok >> 8);
+                            il[i + 4] = (byte)(newTok >> 16);
+                            il[i + 5] = (byte)(newTok >> 24);
+                        }
+                    }
+                }
+            }
+
+            return extra.Count > 0 ? new PatchedMethodIL(body, il, extra) : body;
+        }
+
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace == "System" &&
             owningType.Name == "OutOfMemoryException" &&
@@ -172,6 +480,11 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "Feature=[true|false]",
     };
 
+    private static Option<string[]> SubstitutionFilePathsOption = new Option<string[]>("--substitution", "ILLink.Substitutions file(s) to apply during compilation")
+    {
+        ArgumentHelpName = "file.xml",
+    };
+
     private static Option<string[]> ExtLibOption = new Option<string[]>("--extlib", "Link external library: repo:version (GitHub release with single .nupkg), path/URL to .nupkg, or path/URL to .bflat.manifest")
     {
         ArgumentHelpName = "repo:version|pkg.nupkg|pkg.bflat.manifest"
@@ -210,6 +523,7 @@ internal class BuildCommand : CommandBase
             MstatOption,
             DirectPInvokesOption,
             FeatureSwitchOption,
+            SubstitutionFilePathsOption,
             CommonOptions.ResourceOption,
             CommonOptions.StdLibOption,
             CommonOptions.DeterministicOption,
@@ -613,7 +927,8 @@ internal class BuildCommand : CommandBase
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
-        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
+        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
+            isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -721,8 +1036,12 @@ internal class BuildCommand : CommandBase
 
         if (!disableReflection)
             initAssemblies.Add("System.Private.Reflection.Execution");
-        else
-            initAssemblies.Add("System.Private.DisabledReflection");
+        // else: System.Private.DisabledReflection no longer exists — reflection-free
+        // mode was removed from dotnet/runtime in the .NET 8 timeframe. Its module
+        // initializer only installed stub reflection callbacks; with the fully
+        // blocked metadata policies below there is nothing to initialize, so
+        // reflection APIs that reach the uninstalled callbacks fail fast at
+        // runtime instead of throwing the polite reflection-disabled exception.
 
         initAssemblies.Add("mscorlib");
         initAssemblies.Add("System");
@@ -865,6 +1184,15 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Globalization.Invariant", true);
         }
 
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            // Invariant timezone (UTC only): the deterministic zkVM guest has no
+            // timezone database, and the [FeatureSwitchDefinition] on
+            // TimeZoneInfo.Invariant lets ILC fold and trim the timezone-data
+            // loading paths (which also carry floating-point transition math).
+            featureSwitches.Add("System.TimeZoneInfo.Invariant", true);
+        }
+
         if (disableStackTraceData)
         {
             featureSwitches.Add("System.Diagnostics.StackTrace.IsSupported", false);
@@ -881,8 +1209,39 @@ internal class BuildCommand : CommandBase
             featureSwitches[name] = value;
         }
 
+        // User-provided ILLink.Substitutions XML (same format and wiring as ilc's
+        // --substitution): method body stubs/removals and static field value
+        // substitutions, constant-folded with branch elimination before scanning,
+        // so code guarded by a substituted value is trimmed from the image.
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
+
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            // Built-in substitutions for the zkVM targets (embedded
+            // zisk.substitutions.xml): thread-pool tuning and similar machinery
+            // that is provably dead on a single-threaded guest but drags
+            // floating-point code into the rv64ima image. Applied before user
+            // files; the parser rejects duplicate method entries, so user files
+            // extend rather than override this set.
+            using Stream ziskSubstitutions =
+                typeof(BuildCommand).Assembly.GetManifestResourceStream("zisk.substitutions.xml");
+            substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
+                logger, typeSystemContext, XmlReader.Create(ziskSubstitutions),
+                "zisk.substitutions.xml", featureSwitches));
+        }
+        foreach (string substitutionFilePath in result.GetValueForOption(SubstitutionFilePathsOption) ?? Array.Empty<string>())
+        {
+            using FileStream fs = File.OpenRead(substitutionFilePath);
+            substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
+                logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+
+            fs.Seek(0, SeekOrigin.Begin);
+
+            resourceBlocks = ManifestResourceBlockingPolicy.UnionBlockings(resourceBlocks,
+                ManifestResourceBlockingPolicy.SubstitutionsReader.GetSubstitutions(
+                    logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+        }
 
         SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
         ILProvider unsubstitutedILProvider = ilProvider;
@@ -1070,6 +1429,16 @@ internal class BuildCommand : CommandBase
             substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
 
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
+
+            if (libc == "zisk" || libc == "zisk_sim")
+            {
+                // Codegen-only: rewrite the ConcurrentUnifier growth ratio to
+                // integer math AFTER scanning. Relies on PatchedMethodIL
+                // correctly forwarding GetMethodILDefinition for this shared
+                // generic method (without which the generic dictionary layout
+                // is corrupted). See UnifierResizeILProvider.
+                ilProvider = new UnifierResizeILProvider(ilProvider);
+            }
 
             // Use a more precise IL provider that uses whole program analysis for dead branch elimination
             builder.UseILProvider(ilProvider);
@@ -1532,7 +1901,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
                 ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
+                /* ProcessorNumberSpeedCheck is no longer wrapped here: the
+                 * built-in zisk.substitutions.xml stubs it to false at compile
+                 * time, which folds the method away entirely - a --wrap against
+                 * the vanished symbol would only trip --wrap-check. */
                 ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
                 ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
@@ -1565,6 +1937,16 @@ internal class BuildCommand : CommandBase
                 }
                 ldArgs.Append($"--wrap=RhpThrowEx ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
+                /* Method replacements implemented in the rhp module: the ILC
+                 * substitutions in zisk.substitutions.xml turn these managed
+                 * bodies into throw stubs (removing their F/D instructions from
+                 * the image) and the wraps divert every caller to the exact or
+                 * always-valid C reimplementations. All HashHelpers copies must
+                 * be wrapped: each embedding assembly compiles its own. */
+                ldArgs.Append($"--wrap=System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime ");
+                ldArgs.Append($"--wrap=S_P_CoreLib_System_Collections_HashHelpers__IsPrime ");
+                ldArgs.Append($"--wrap=System_Collections_Immutable_System_Collections_HashHelpers__IsPrime ");
+                ldArgs.Append($"--wrap=System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets ");
 
                 /* libm: divert the math surface referenced by the runtime
                  * (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling)
@@ -1585,10 +1967,20 @@ internal class BuildCommand : CommandBase
                     "modf", "modff", "pow", "powf",
                     "sin", "sinf", "sinh", "sinhf",
                     "sqrt", "sqrtf", "tan", "tanf", "tanh", "tanhf",
+                    "scalbn", // musl fmt_fp dependency, see nofp module
                 })
                 {
                     ldArgs.Append($"--wrap={mathSym} ");
                 }
+
+                /* asprintf is referenced only by the PAL's CGroup CPU-limit
+                 * parsing, whose initialization is already stubbed out above
+                 * (--wrap=_Z16InitializeCGroupv). Diverting it to a stub that
+                 * returns -1 (the documented asprintf failure mode) keeps that
+                 * dead path failing gracefully and, more importantly, stops
+                 * musl's vasprintf/fmt_fp/scalbn members - the last hard-float
+                 * F/D code in the image - from being pulled into the link. */
+                ldArgs.Append($"--wrap=asprintf ");
 
                 /* gs_cookie */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
@@ -1631,6 +2023,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=signal ");
                 ldArgs.Append($"--wrap=syscall ");
                 ldArgs.Append($"--wrap=sysconf ");
+                /* FP-free vfprintf (pal module): keeps musl's vfprintf.o - and
+                 * its fmt_fp float formatter, the last F/D code in the image -
+                 * out of the link. Every printf/fprintf/snprintf routes here. */
+                ldArgs.Append($"--wrap=vfprintf ");
                 /* musl exit()/_Exit()/abort() issue exit_group (syscall 94),
                  * which ZisK does not treat as program end. Redirect them to
                  * pal's __wrap_* which emit the real ZisK exit ecall (a7=93). */

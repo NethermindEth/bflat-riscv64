@@ -17,6 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Built-in ILLink substitutions applied to zisk/zisk_sim builds
+         (see BuildCommand). LogicalName pins the manifest resource name
+         independently of any RootNamespace. -->
+    <EmbeddedResource Include="zisk.substitutions.xml" LogicalName="zisk.substitutions.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <SdkBlob Remove="libs-zisk-riscv64" />
   </ItemGroup>
   <ItemGroup>

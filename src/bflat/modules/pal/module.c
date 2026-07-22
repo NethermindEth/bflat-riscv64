@@ -447,6 +447,139 @@ __wrap_signal(int signum, void *handler)
     return 0;
 }
 
+/*
+ * FP-free vfprintf. musl's real vfprintf lives in a translation unit that also
+ * defines fmt_fp (the %f/%e/%g/%a float formatter), whose hardware F/D
+ * instructions are the last floating-point code in the rv64ima image. Every
+ * printf/fprintf/snprintf/vsnprintf routes through vfprintf, so wrapping it
+ * (and never referencing __real_vfprintf) keeps that whole object - fmt_fp
+ * included - out of the link.
+ *
+ * This reimplementation covers the conversions the runtime's diagnostic paths
+ * use (crash dumps, libunwind logging, allocator warnings): %c %s %d/%i %u
+ * %x/%X %o %p %% with l/ll/z/j/t length modifiers and basic width / zero / left
+ * / precision handling for strings. Float conversions never occur in the guest;
+ * if one is ever passed it is consumed from the va_list (variadic doubles
+ * arrive in integer registers under the RISC-V calling convention, so this
+ * needs no FP) and emitted as "<float>" rather than formatted.
+ */
+extern int fputc(int c, FILE *stream);
+
+static int
+zkvm_emit(FILE *f, const char *s, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        fputc((unsigned char)s[i], f);
+    return n;
+}
+
+int
+__wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
+{
+    int total = 0;
+    const char *p = fmt;
+
+    while (*p) {
+        if (*p != '%') {
+            fputc((unsigned char)*p++, f);
+            total++;
+            continue;
+        }
+        p++; /* skip '%' */
+
+        int left = 0, zero = 0, plus = 0, space = 0, alt = 0;
+        for (;; p++) {
+            if (*p == '-') left = 1;
+            else if (*p == '0') zero = 1;
+            else if (*p == '+') plus = 1;
+            else if (*p == ' ') space = 1;
+            else if (*p == '#') alt = 1;
+            else break;
+        }
+
+        int width = 0;
+        if (*p == '*') { width = va_arg(ap, int); p++; if (width < 0) { left = 1; width = -width; } }
+        else while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+
+        int prec = -1;
+        if (*p == '.') {
+            p++;
+            prec = 0;
+            if (*p == '*') { prec = va_arg(ap, int); p++; }
+            else while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+        }
+
+        int lng = 0; /* 0=int,1=long,2=long long */
+        for (;;) {
+            if (*p == 'l') { lng++; p++; }
+            else if (*p == 'z' || *p == 'j' || *p == 't') { lng = 2; p++; }
+            else if (*p == 'h') { p++; }
+            else break;
+        }
+
+        char conv = *p ? *p++ : 0;
+        char buf[32];
+        const char *out = buf;
+        int outlen = 0;
+        char sign = 0;
+
+        switch (conv) {
+            case '%': buf[0] = '%'; outlen = 1; break;
+            case 'c': buf[0] = (char)va_arg(ap, int); outlen = 1; break;
+            case 's': {
+                out = va_arg(ap, const char *);
+                if (out == 0) out = "(null)";
+                outlen = 0;
+                while (out[outlen] && (prec < 0 || outlen < prec)) outlen++;
+                break;
+            }
+            case 'd': case 'i': {
+                long long v = (lng >= 2) ? va_arg(ap, long long) : (long long)va_arg(ap, long);
+                unsigned long long m;
+                if (v < 0) { sign = '-'; m = (unsigned long long)(-(v + 1)) + 1ULL; }
+                else { m = (unsigned long long)v; if (plus) sign = '+'; else if (space) sign = ' '; }
+                char *e = buf + sizeof(buf); char *b = e;
+                do { *--b = (char)('0' + (m % 10)); m /= 10; } while (m);
+                out = b; outlen = (int)(e - b);
+                break;
+            }
+            case 'u': case 'x': case 'X': case 'o': case 'p': {
+                unsigned long long m;
+                int base = 10; const char *digits = "0123456789abcdef";
+                if (conv == 'x') base = 16;
+                else if (conv == 'X') { base = 16; digits = "0123456789ABCDEF"; }
+                else if (conv == 'o') base = 8;
+                if (conv == 'p') { base = 16; alt = 1; m = (unsigned long long)(uintptr_t)va_arg(ap, void *); }
+                else m = (lng >= 2) ? va_arg(ap, unsigned long long) : (unsigned long long)va_arg(ap, unsigned long);
+                char *e = buf + sizeof(buf); char *b = e;
+                do { *--b = digits[m % base]; m /= (unsigned)base; } while (m);
+                if (alt && base == 16) { *--b = (conv == 'X') ? 'X' : 'x'; *--b = '0'; }
+                out = b; outlen = (int)(e - b);
+                break;
+            }
+            case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A':
+                (void)va_arg(ap, long long); /* consume the (integer-register) double slot */
+                out = "<float>"; outlen = 7;
+                break;
+            default:
+                buf[0] = '%'; buf[1] = conv ? conv : '?'; outlen = 2;
+                break;
+        }
+
+        int bodylen = outlen + (sign ? 1 : 0);
+        int pad = width > bodylen ? width - bodylen : 0;
+
+        if (!left && !zero) { while (pad-- > 0) { fputc(' ', f); total++; } }
+        if (sign) { fputc(sign, f); total++; }
+        if (!left && zero) { while (pad-- > 0) { fputc('0', f); total++; } }
+        total += zkvm_emit(f, out, outlen);
+        if (left) { while (pad-- > 0) { fputc(' ', f); total++; } }
+    }
+
+    return total;
+}
+
 extern long __real_syscall(long number, ...);
 
 long

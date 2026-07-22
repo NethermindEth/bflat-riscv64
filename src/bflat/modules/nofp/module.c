@@ -155,3 +155,22 @@ NOFP_WRAP_STUB(tan)
 NOFP_WRAP_STUB(tanf)
 NOFP_WRAP_STUB(tanh)
 NOFP_WRAP_STUB(tanhf)
+/* scalbn is not part of the RhpDbl* helper surface; it is dragged in by
+ * musl's vfprintf float formatting (fmt_fp). No zkVM guest prints %f/%e/%g,
+ * so divert it to the trap as well - this drops musl's hard-float scalbn.o
+ * from the link. */
+NOFP_WRAP_STUB(scalbn)
+
+/*
+ * asprintf: referenced only by the PAL's CGroup CPU-limit parsing, which is
+ * dead at runtime (cgroup initialization is stubbed via --wrap). Unlike the
+ * math stubs above this one does NOT trap: -1 is the documented asprintf
+ * failure result and the cgroup callers handle it, so if the path is ever
+ * reached it degrades to "no cgroup limit detected" instead of aborting.
+ * Diverting it keeps musl's vasprintf/fmt_fp/scalbn (hard-float F/D code)
+ * out of the link entirely.
+ */
+int __wrap_asprintf(void)
+{
+    return -1;
+}
