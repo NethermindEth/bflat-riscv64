@@ -1566,6 +1566,30 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpThrowEx ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
 
+                /* libm: divert the math surface referenced by the runtime
+                 * (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling)
+                 * to the nofp trap stubs. Keeps hard-float musl members out
+                 * of the link entirely: their F/D instructions would poison
+                 * the rv64ima .text, and these paths must never execute on
+                 * the zkVM anyway. */
+                foreach (string mathSym in new[]
+                {
+                    "acos", "acosf", "acosh", "acoshf",
+                    "asin", "asinf", "asinh", "asinhf",
+                    "atan", "atanf", "atan2", "atan2f", "atanh", "atanhf",
+                    "cbrt", "cbrtf", "ceil", "ceilf",
+                    "cos", "cosf", "cosh", "coshf",
+                    "exp", "expf", "floor", "floorf",
+                    "fma", "fmaf", "fmod", "fmodf",
+                    "log", "logf", "log10", "log10f", "log2", "log2f",
+                    "modf", "modff", "pow", "powf",
+                    "sin", "sinf", "sinh", "sinhf",
+                    "sqrt", "sqrtf", "tan", "tanf", "tanh", "tanhf",
+                })
+                {
+                    ldArgs.Append($"--wrap={mathSym} ");
+                }
+
                 /* gs_cookie */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
                 ldArgs.Append($"--wrap=__security_cookie ");

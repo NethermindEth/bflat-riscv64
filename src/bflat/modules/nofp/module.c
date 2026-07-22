@@ -91,3 +91,67 @@ NOFP_STUB(__ltsf2)
 NOFP_STUB(__subsf3)
 NOFP_STUB(__eqsf2)
 NOFP_STUB(__lesf2)
+
+/*
+ * libm surface. The runtime's math helpers (RhpDblPow, RhpDblLog, ... in
+ * MathHelpers.cpp) and the allocation-sampling path in GcAllocInternal
+ * reference the C math library. Those paths never execute on the zkVM, but
+ * with a hard-float libc the mere reference pulls musl's implementations
+ * into the link, and their F/D instructions poison the rv64ima .text (the
+ * ZisK transpiler rejects them, and they inflate the instruction ROM).
+ * Each function is diverted at link time with --wrap=<fn> (see BuildCommand)
+ * to a trap stub here, so the musl archive member is never extracted and a
+ * stray runtime call fails loudly instead of computing garbage.
+ */
+#define NOFP_WRAP_STUB(name) void __wrap_##name(void) { nofp_trap(); }
+
+NOFP_WRAP_STUB(acos)
+NOFP_WRAP_STUB(acosf)
+NOFP_WRAP_STUB(acosh)
+NOFP_WRAP_STUB(acoshf)
+NOFP_WRAP_STUB(asin)
+NOFP_WRAP_STUB(asinf)
+NOFP_WRAP_STUB(asinh)
+NOFP_WRAP_STUB(asinhf)
+NOFP_WRAP_STUB(atan)
+NOFP_WRAP_STUB(atanf)
+NOFP_WRAP_STUB(atan2)
+NOFP_WRAP_STUB(atan2f)
+NOFP_WRAP_STUB(atanh)
+NOFP_WRAP_STUB(atanhf)
+NOFP_WRAP_STUB(cbrt)
+NOFP_WRAP_STUB(cbrtf)
+NOFP_WRAP_STUB(ceil)
+NOFP_WRAP_STUB(ceilf)
+NOFP_WRAP_STUB(cos)
+NOFP_WRAP_STUB(cosf)
+NOFP_WRAP_STUB(cosh)
+NOFP_WRAP_STUB(coshf)
+NOFP_WRAP_STUB(exp)
+NOFP_WRAP_STUB(expf)
+NOFP_WRAP_STUB(floor)
+NOFP_WRAP_STUB(floorf)
+NOFP_WRAP_STUB(fma)
+NOFP_WRAP_STUB(fmaf)
+NOFP_WRAP_STUB(fmod)
+NOFP_WRAP_STUB(fmodf)
+NOFP_WRAP_STUB(log)
+NOFP_WRAP_STUB(logf)
+NOFP_WRAP_STUB(log10)
+NOFP_WRAP_STUB(log10f)
+NOFP_WRAP_STUB(log2)
+NOFP_WRAP_STUB(log2f)
+NOFP_WRAP_STUB(modf)
+NOFP_WRAP_STUB(modff)
+NOFP_WRAP_STUB(pow)
+NOFP_WRAP_STUB(powf)
+NOFP_WRAP_STUB(sin)
+NOFP_WRAP_STUB(sinf)
+NOFP_WRAP_STUB(sinh)
+NOFP_WRAP_STUB(sinhf)
+NOFP_WRAP_STUB(sqrt)
+NOFP_WRAP_STUB(sqrtf)
+NOFP_WRAP_STUB(tan)
+NOFP_WRAP_STUB(tanf)
+NOFP_WRAP_STUB(tanh)
+NOFP_WRAP_STUB(tanhf)
