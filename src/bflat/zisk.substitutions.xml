@@ -87,4 +87,94 @@
       <method signature="System.Int32 CalcNumBuckets(System.ReadOnlySpan`1&lt;System.Int32&gt;,System.Boolean)" body="stub" value="1" />
     </type>
   </assembly>
+
+  <!--
+    Floating-point-carrying CoreLib methods. On a no-FPU target (rv64ima) any
+    hardware FP is invalid, so these are removed/stubbed for EVERY zisk guest.
+    Removing a method makes it throw if reached; a program that genuinely needs
+    floating point cannot run on this target anyway, so the loud failure is the
+    correct behavior. Methods with a valid NON-float path (primitive widening,
+    Convert.ChangeType) are handled by IL patches in BuildCommand instead, so
+    they are absent here.
+  -->
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Primitive-widening element copy / reflection arg coercion. The actual
+         conversions live in InvokeUtils.PrimitiveWiden (a switch that fcvt's for
+         float/double destinations), inlined into these two callers. Cross-
+         element-type widening TO float cannot run on an FPU-less target, and
+         cross-integer widening via Array.Copy / reflection is rare, so both are
+         removed (throw if reached) rather than IL-rewritten. Same-typed array
+         copies never reach here (they use the memmove fast path). -->
+    <type fullname="System.Array">
+      <method signature="System.Void CopyImplPrimitiveWiden(System.Array,System.Int32,System.Array,System.Int32,System.Int32)" body="remove" />
+    </type>
+    <type fullname="System.InvokeUtils">
+      <method signature="System.Exception ConvertOrWidenPrimitivesEnumsAndPointersIfPossible(System.Object,Internal.Runtime.MethodTable*,System.InvokeUtils/CheckArgumentSemantics,System.Object&amp;)" body="remove" />
+    </type>
+
+    <!-- Core float-to-string formatter (Dragon4/Grisu3 double math) and the
+         boxed Double/Single virtual/interface slots that reach it or carry
+         fcvt rounding directly. -->
+    <type fullname="System.Number">
+      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;&gt;&amp;,,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
+    </type>
+    <type fullname="System.Double">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Double)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
+      <method signature="System.Boolean Equals(System.Double)" body="remove" />
+      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+    </type>
+    <type fullname="System.Single">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Single)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
+      <method signature="System.Boolean Equals(System.Single)" body="remove" />
+      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+    </type>
+
+    <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
+         unaffected (only the double-input overload is removed). -->
+    <type fullname="System.Convert">
+      <method signature="System.Int32 ToInt32(System.Double)" body="remove" />
+    </type>
+
+    <!-- Math.Truncate(double): float-only; a cold dependency of date rounding. -->
+    <type fullname="System.Math">
+      <method signature="System.Double Truncate(System.Double)" body="remove" />
+    </type>
+
+    <!-- Timezone transition/validation math (double date arithmetic). zisk sets
+         System.TimeZoneInfo.Invariant, but these members stay reachable through
+         the custom-timezone API surface; cut them. UtcOffsetOutOfRange folds to
+         false (UTC offset 0 is always in +/-14h range). -->
+    <type fullname="System.TimeZoneInfo">
+      <method signature="System.DateTime TransitionTimeToDateTime(System.Int32,System.TimeZoneInfo/TransitionTime)" body="remove" />
+      <method signature="System.Boolean UtcOffsetOutOfRange(System.TimeSpan)" body="stub" value="false" />
+    </type>
+    <type fullname="System.TimeZoneInfo/AdjustmentRule">
+      <method signature="System.Boolean get_HasDaylightSaving()" body="stub" value="false" />
+      <method signature="System.Void ValidateAdjustmentRule(System.DateTime,System.DateTime,System.TimeSpan,System.TimeZoneInfo/TransitionTime,System.TimeZoneInfo/TransitionTime,System.Boolean)" body="stub" />
+    </type>
+
+    <!-- Reads boxed float/double constant values out of reflection metadata
+         (ParameterInfo.DefaultValue and enum/array constant collections). -->
+    <type fullname="System.Reflection.Runtime.General.NativeFormatMetadataReaderExtensions">
+      <method signature="System.Object ParseConstantNumericValue(Internal.Metadata.NativeFormat.Handle,Internal.Metadata.NativeFormat.MetadataReader)" body="remove" />
+      <method signature="System.Single[] ToArray(Internal.Metadata.NativeFormat.SingleCollection)" body="remove" />
+      <method signature="System.Double[] ToArray(Internal.Metadata.NativeFormat.DoubleCollection)" body="remove" />
+    </type>
+  </assembly>
 </linker>
