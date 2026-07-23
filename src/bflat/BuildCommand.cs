@@ -201,11 +201,45 @@ static class ILPatch
     }
 }
 
+/// <summary>
+/// Presents the IL body of one method (<c>source</c>, typically a C# patch
+/// snippet compiled by Roslyn) as the body of another (<c>owner</c>, the method
+/// being compiled). Token resolution stays with the source body, so the snippet
+/// may freely reference any member visible in the module it was compiled in
+/// (which references the same CoreLib). The owner supplies the signature/generic
+/// context, so a static snippet <c>f(TSelf self, ...)</c> transplants cleanly
+/// onto an instance method with the same argument layout (arg0 = this = self).
+/// </summary>
+sealed class SubstituteBodyMethodIL : MethodIL
+{
+    private readonly MethodDesc _owner;
+    private readonly MethodIL _source;
+
+    public SubstituteBodyMethodIL(MethodDesc owner, MethodIL source) { _owner = owner; _source = source; }
+
+    public override MethodDesc OwningMethod => _owner;
+    public override int MaxStack => _source.MaxStack;
+    public override bool IsInitLocals => _source.IsInitLocals;
+    public override byte[] GetILBytes() => _source.GetILBytes();
+    public override LocalVariableDefinition[] GetLocals() => _source.GetLocals();
+    public override ILExceptionRegion[] GetExceptionRegions() => _source.GetExceptionRegions();
+    public override object GetObject(int token, NotFoundBehavior notFoundBehavior = NotFoundBehavior.Throw)
+        => _source.GetObject(token, notFoundBehavior);
+}
+
 class CustomILProvider : ILProvider
 {
     private ILProvider inner;
     private bool zkvmTarget;
     public TypeSystemContext TypeContext;
+
+    /// <summary>
+    /// Maps a method being compiled to the C#-snippet method whose body replaces
+    /// it (see SubstituteBodyMethodIL). Populated after the patch module is
+    /// compiled and loaded. Takes priority over the hand-written IL patches
+    /// below, so a snippet supersedes the corresponding byte-level fallback.
+    /// </summary>
+    public Dictionary<MethodDesc, MethodDesc> BodySubstitutions;
 
     public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext, bool isZkvmTarget = false)
     {
@@ -216,6 +250,9 @@ class CustomILProvider : ILProvider
 
     public override MethodIL GetMethodIL(MethodDesc method)
     {
+        if (BodySubstitutions != null && BodySubstitutions.TryGetValue(method, out MethodDesc snippet))
+            return new SubstituteBodyMethodIL(method, inner.GetMethodIL(snippet));
+
         // zkVM (rv64ima) IL replacements. Unlike ILLink substitutions, a raw
         // IL body can return reference types and structs, so this is the layer
         // for replacements the XML cannot express.
@@ -491,80 +528,10 @@ class CustomILProvider : ILProvider
             }
         }
 
-        // System.Random's legacy "compat" PRNG scales an integer sample to the
-        // requested range in DOUBLE: Next(min,max) computes
-        // (int)(Sample() * range) + min, where Sample() = InternalSample() *
-        // (1.0/int.MaxValue). That fmul.d/fcvt is the only FP in programs that
-        // call Random.Next(int[,int]). Rewrite the integer-returning Next
-        // overloads to the exact integer equivalent
-        // (int)((long)InternalSample() * range / int.MaxValue) + min, which is
-        // uniform over [min,max) and needs no floating point (and no separate
-        // large-range path). NextDouble/Sample stay double - they are the
-        // floating-point API and are trimmed when unused.
-        if (zkvmTarget &&
-            method.OwningType is MetadataType rndImpl &&
-            rndImpl.ContainingType is MetadataType rndOuter && rndOuter.Name == "Random" &&
-            (rndImpl.Name == "CompatSeedImpl" || rndImpl.Name == "CompatDerivedImpl") &&
-            method.Name == "Next" &&
-            (method.Signature.Length == 1 || method.Signature.Length == 2) &&
-            method.Signature[0] == TypeContext.GetWellKnownType(WellKnownType.Int32) &&
-            (method.Signature.Length == 1 || method.Signature[1] == TypeContext.GetWellKnownType(WellKnownType.Int32)))
-        {
-            MethodIL body = inner.GetMethodIL(method);
-            byte[] orig = body.GetILBytes();
-
-            // Extract _prng (ldflda 0x7C) and, if present, the EnsureInitialized
-            // prologue "ldarg.0; ldflda _prng; ldarg.0; ldfld _seed; call ..."
-            // (17 bytes) verbatim from the original body.
-            int prngTok = 0;
-            for (int i = 0; i + 5 <= orig.Length; i++)
-                if (orig[i] == 0x7C) { prngTok = orig[i + 1] | (orig[i + 2] << 8) | (orig[i + 3] << 16) | (orig[i + 4] << 24); break; }
-            bool hasPrologue = orig.Length >= 17 && orig[0] == 0x02 && orig[1] == 0x7C &&
-                               orig[6] == 0x02 && orig[7] == 0x7B && orig[12] == 0x28;
-
-            // InternalSample() lives on _prng's type (CompatPrng).
-            MethodDesc internalSample = null;
-            if (prngTok != 0 && body.GetObject(prngTok, NotFoundBehavior.ReturnNull) is FieldDesc fPrng &&
-                fPrng.FieldType is MetadataType prngType)
-                foreach (MethodDesc mm in prngType.GetMethods())
-                    if (mm.Name == "InternalSample" && mm.Signature.Length == 0) { internalSample = mm; break; }
-
-            if (prngTok != 0 && internalSample != null)
-            {
-                const int isTok = 0x0A7FFF30;
-                var emit = new List<byte>();
-                void Op(byte b) => emit.Add(b);
-                void Tok(byte op, int tk) { emit.Add(op); emit.Add((byte)tk); emit.Add((byte)(tk >> 8)); emit.Add((byte)(tk >> 16)); emit.Add((byte)(tk >> 24)); }
-                void Sample() { Op(0x02); Tok(0x7C, prngTok); Tok(0x28, isTok); Op(0x6A); } // (long)_prng.InternalSample()
-
-                if (hasPrologue)
-                    for (int i = 0; i < 17; i++) Op(orig[i]);   // _prng.EnsureInitialized(_seed);
-
-                if (method.Signature.Length == 1)
-                {
-                    // (int)((long)maxValue * InternalSample() / int.MaxValue)
-                    Op(0x03); Op(0x6A);                         // (long)maxValue
-                    Sample();                                   // (long)sample
-                    Op(0x5A);                                   // mul
-                    Op(0x20); Op(0xFF); Op(0xFF); Op(0xFF); Op(0x7F); Op(0x6A); Op(0x5B); // / int.MaxValue
-                    Op(0x69); Op(0x2A);                         // conv.i4; ret
-                }
-                else
-                {
-                    // long range = (long)maxValue - minValue;
-                    // (int)((long)range * InternalSample() / int.MaxValue) + minValue
-                    Op(0x04); Op(0x6A); Op(0x03); Op(0x6A); Op(0x59);  // range = (long)max-(long)min
-                    Sample(); Op(0x5A);                         // range * sample
-                    Op(0x20); Op(0xFF); Op(0xFF); Op(0xFF); Op(0x7F); Op(0x6A); Op(0x5B); // / int.MaxValue
-                    Op(0x03); Op(0x6A); Op(0x58);               // + (long)minValue
-                    Op(0x69); Op(0x2A);                         // conv.i4; ret
-                }
-
-                return new PatchedMethodIL(body, emit.ToArray(),
-                    new Dictionary<int, object> { [isTok] = internalSample });
-            }
-            return body;
-        }
+        // NOTE: System.Random's compat-PRNG double sampling (Next(int[,int]) does
+        // (int)(Sample() * range)) is now eliminated by a C# body-substitution
+        // snippet (ZiskPatchesSource / BodySubstitutions) instead of hand-emitted
+        // IL - Roslyn guarantees the replacement body is valid.
 
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace == "System" &&
@@ -871,6 +838,165 @@ internal class BuildCommand : CommandBase
             PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
     }
 
+    // C# source for the zisk body-substitution snippets. Each static method
+    // replaces the body of a CoreLib method that carries floating point, written
+    // in plain C# so Roslyn - not hand-emitted IL - guarantees a valid body. The
+    // first parameter stands in for `this` (same argument layout as the instance
+    // method it replaces); accessibility is bypassed at compile time so private
+    // nested types (Random.CompatSeedImpl, ...) and private members are nameable.
+    private const string ZiskPatchesSource = @"
+namespace __ZiskPatches
+{
+    internal static class RandomPatch
+    {
+        // System.Random legacy compat PRNG: scale the integer sample to the
+        // requested range with integer math instead of double Sample()*range.
+        // `self` is typed as object (the private impl type cannot appear in a
+        // signature) and cast inside; at run time it is always the impl, so the
+        // cast is a no-op. Argument layout matches the instance method: arg0 =
+        // this = self, arg1 = ..., so the body transplants directly.
+        public static int SeedNext1(object self, int maxValue)
+        {
+            var s = (global::System.Random.CompatSeedImpl)self;
+            return (int)((long)s._prng.InternalSample() * maxValue / int.MaxValue);
+        }
+
+        public static int SeedNext2(object self, int minValue, int maxValue)
+        {
+            var s = (global::System.Random.CompatSeedImpl)self;
+            long range = (long)maxValue - minValue;
+            return (int)((long)s._prng.InternalSample() * range / int.MaxValue) + minValue;
+        }
+
+        public static int DerivedNext1(object self, int maxValue)
+        {
+            var s = (global::System.Random.CompatDerivedImpl)self;
+            s._prng.EnsureInitialized(s._seed);
+            return (int)((long)s._prng.InternalSample() * maxValue / int.MaxValue);
+        }
+
+        public static int DerivedNext2(object self, int minValue, int maxValue)
+        {
+            var s = (global::System.Random.CompatDerivedImpl)self;
+            s._prng.EnsureInitialized(s._seed);
+            long range = (long)maxValue - minValue;
+            return (int)((long)s._prng.InternalSample() * range / int.MaxValue) + minValue;
+        }
+    }
+}
+";
+
+    // Compiles ZiskPatchesSource against the same references with accessibility
+    // checks disabled, emits it to a temp module, and returns the path (null on
+    // failure - substitution is then simply skipped).
+    private string TryCompileZiskPatches(string[] references, string[] defines, string langVersion)
+    {
+        try
+        {
+            if (!LanguageVersionFacts.TryParse(langVersion, out LanguageVersion langVer))
+                langVer = LanguageVersion.Latest;
+
+            var parseOptions = new CSharpParseOptions(langVer, DocumentationMode.None,
+                preprocessorSymbols: defines ?? Array.Empty<string>());
+            var tree = CSharpSyntaxTree.ParseText(ZiskPatchesSource, parseOptions);
+
+            var metadataReferences = new List<MetadataReference>();
+            foreach (var reference in references)
+                metadataReferences.Add(MetadataReference.CreateFromFile(reference));
+
+            var options = new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                allowUnsafe: true,
+                optimizationLevel: OptimizationLevel.Release,
+                deterministic: true,
+                metadataImportOptions: MetadataImportOptions.All)
+                // A snippet method that takes a private nested type as a parameter
+                // trips the accessibility-consistency errors (CS0050/CS0051); we
+                // are deliberately bypassing accessibility, so suppress them.
+                .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic>
+                {
+                    ["CS0050"] = ReportDiagnostic.Suppress,
+                    ["CS0051"] = ReportDiagnostic.Suppress,
+                    ["CS0052"] = ReportDiagnostic.Suppress,
+                    ["CS0053"] = ReportDiagnostic.Suppress,
+                    ["CS0057"] = ReportDiagnostic.Suppress,
+                });
+
+            // Enable BinderFlags.IgnoreAccessibility (internal Roslyn API) so the
+            // snippet may reference private nested types and private members of
+            // the referenced CoreLib.
+            var binderFlagsType = typeof(CSharpCompilation).Assembly.GetType("Microsoft.CodeAnalysis.CSharp.BinderFlags");
+            var withBinderFlags = typeof(CSharpCompilationOptions).GetMethod("WithTopLevelBinderFlags",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (binderFlagsType != null && withBinderFlags != null)
+            {
+                object ignoreAccessibility = Enum.Parse(binderFlagsType, "IgnoreAccessibility");
+                options = (CSharpCompilationOptions)withBinderFlags.Invoke(options, new[] { ignoreAccessibility });
+            }
+
+            var compilation = CSharpCompilation.Create("__ZiskPatches", new[] { tree }, metadataReferences, options);
+            string path = Path.GetTempFileName();
+            using (var fs = File.Create(path))
+            {
+                var emitResult = compilation.Emit(fs);
+                if (!emitResult.Success)
+                {
+                    foreach (var d in emitResult.Diagnostics)
+                        if (d.Severity == DiagnosticSeverity.Error)
+                            Console.Error.WriteLine("zisk patch snippet: " + d);
+                    return null;
+                }
+            }
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"warning: could not compile zisk patch snippets: {ex.Message}");
+            return null;
+        }
+    }
+
+    // Maps CoreLib methods that carry floating point to the snippet methods that
+    // replace them (by name/signature). Extend this table as snippets are added.
+    private static Dictionary<MethodDesc, MethodDesc> BuildZiskBodySubstitutions(TypeSystemContext ctx, EcmaModule patchesModule)
+    {
+        var map = new Dictionary<MethodDesc, MethodDesc>();
+        var patchType = (MetadataType)patchesModule.GetType("__ZiskPatches", "RandomPatch");
+        var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
+        var seedImpl = random.GetNestedType("CompatSeedImpl");
+        var derivedImpl = random.GetNestedType("CompatDerivedImpl");
+        var int32 = ctx.GetWellKnownType(WellKnownType.Int32);
+
+        MethodDesc Snippet(string name)
+        {
+            foreach (MethodDesc m in patchType.GetMethods())
+                if (m.Name == name) return m;
+            return null;
+        }
+        // Find impl.Next with the given (non-this) parameter count.
+        MethodDesc Next(MetadataType impl, int paramCount)
+        {
+            foreach (MethodDesc m in impl.GetMethods())
+                if (m.Name == "Next" && m.Signature.Length == paramCount)
+                {
+                    bool allInt = true;
+                    for (int i = 0; i < paramCount; i++) allInt &= m.Signature[i] == int32;
+                    if (allInt) return m;
+                }
+            return null;
+        }
+        void Add(MethodDesc target, MethodDesc snippet)
+        {
+            if (target != null && snippet != null) map[target] = snippet;
+        }
+
+        Add(Next(seedImpl, 1), Snippet("SeedNext1"));
+        Add(Next(seedImpl, 2), Snippet("SeedNext2"));
+        Add(Next(derivedImpl, 1), Snippet("DerivedNext1"));
+        Add(Next(derivedImpl, 2), Snippet("DerivedNext2"));
+        return map;
+    }
+
     public override int Handle(ParseResult result)
     {
         bool nooptimize = result.GetValueForOption(DisableOptimizationOption);
@@ -1158,8 +1284,9 @@ internal class BuildCommand : CommandBase
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
-        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
+        CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
             isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
+        ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -1235,16 +1362,49 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        typeSystemContext.InputFilePaths = new Dictionary<string, string>
+        var inputFilePaths = new Dictionary<string, string>
         {
             [compiledModuleName] = compiledModulePath,
         };
+
+        // zkVM body-substitution snippets: compile the C# patch source (see
+        // ZiskPatchesSource) against the same references, with accessibility
+        // checks ignored so it can touch CoreLib internals/privates, and register
+        // the resulting module so the type system can resolve its methods.
+        const string patchesModuleName = "__ZiskPatches";
+        string patchesModulePath = null;
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
+            // not the public ref assemblies (references): the snippet needs the
+            // private nested types (Random.CompatSeedImpl, ...) that ref
+            // assemblies strip out.
+            patchesModulePath = TryCompileZiskPatches(referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
+            if (patchesModulePath != null)
+                inputFilePaths[patchesModuleName] = patchesModulePath;
+        }
+
+        typeSystemContext.InputFilePaths = inputFilePaths;
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
 
         typeSystemContext.SetSystemModule(typeSystemContext.GetModuleForSimpleName(systemModuleName));
 
         //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
+
+        if (patchesModulePath != null)
+        {
+            try
+            {
+                EcmaModule patchesModule = typeSystemContext.GetModuleForSimpleName(patchesModuleName);
+                customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, patchesModule);
+                Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"warning: zisk body-substitution snippets not applied: {ex.Message}");
+            }
+        }
 
         ilProvider = new HardwareIntrinsicILProvider(
             instructionSetSupport,
