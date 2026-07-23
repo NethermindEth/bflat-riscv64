@@ -49,23 +49,23 @@ using Internal.TypeSystem.Ecma;
 using ILLink.Shared;
 
 /// <summary>
-/// MethodIL wrapper returning a patched copy of the inner body's IL stream.
-/// Metadata tokens keep resolving through the inner (Ecma) body, so patches
+/// MethodIL wrapper returning a rewritten copy of the inner body's IL stream.
+/// Metadata tokens keep resolving through the inner (Ecma) body, so a rewrite
 /// may freely reference any token already valid in the owning module; tokens
-/// injected by a patch (values chosen outside the module's real token space)
+/// injected by a rewrite (values chosen outside the module's real token space)
 /// are resolved from <paramref name="extraTokens"/> instead.
 ///
 /// GetMethodILDefinition is overridden: for a shared generic instantiation the
 /// inner MethodIL is an InstantiatedMethodIL whose definition is the open body,
 /// and ILC's generic-dictionary / method-body-folding analysis reaches the
 /// method through that open definition. A wrapper that returned `this` (the
-/// default) would hand back an instantiated, patched body where the open one is
+/// default) would hand back an instantiated, rewritten body where the open one is
 /// expected, corrupting the generic dictionary layout (observed as a null
 /// WeakReference&lt;T&gt; MethodTable when the reflection type unifier grows).
 /// The IL bytes are identical between instantiation and definition (only token
-/// resolution differs), so the same patched bytes wrap the open definition.
+/// resolution differs), so the same rewritten bytes wrap the open definition.
 /// </summary>
-sealed class PatchedMethodIL : MethodIL
+sealed class RewrittenMethodIL : MethodIL
 {
     private readonly MethodIL _inner;
     private readonly byte[] _bytes;
@@ -73,7 +73,7 @@ sealed class PatchedMethodIL : MethodIL
     private readonly int _extraMaxStack;
     private readonly LocalVariableDefinition[] _locals;
 
-    public PatchedMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0, LocalVariableDefinition[] locals = null)
+    public RewrittenMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0, LocalVariableDefinition[] locals = null)
     {
         _inner = inner;
         _bytes = bytes;
@@ -98,7 +98,7 @@ sealed class PatchedMethodIL : MethodIL
         MethodIL innerDef = _inner.GetMethodILDefinition();
         return innerDef == _inner
             ? this   // already the open definition (e.g. a non-generic method)
-            : new PatchedMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack, _locals);
+            : new RewrittenMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack, _locals);
     }
 }
 
@@ -139,7 +139,7 @@ sealed class UnifierResizeILProvider : ILProvider
                        0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x3F, 0x34 };
         bool[] mask = new bool[pat.Length];
         for (int i = 0; i < mask.Length; i++) mask[i] = !(i >= 4 && i <= 7);
-        int at = ILPatch.FindPattern(il, pat, mask);
+        int at = ILRewrite.FindPattern(il, pat, mask);
         if (at < 0)
             return body;
 
@@ -163,18 +163,18 @@ sealed class UnifierResizeILProvider : ILProvider
         il[p] = 0x2F;                                      // bge.s (same operand/target)
         // Integer form holds live*4 while computing len*3: one slot deeper than
         // the original double ratio peak.
-        return new PatchedMethodIL(body, il, extraMaxStack: 1);
+        return new RewrittenMethodIL(body, il, extraMaxStack: 1);
     }
 }
 
-static class ILPatch
+static class ILRewrite
 {
     /// <summary>
     /// Finds the single occurrence of <paramref name="pattern"/> in
     /// <paramref name="haystack"/>; positions where <paramref name="mask"/> is
     /// false match any byte. Returns -1 when absent or ambiguous (more than one
     /// match is treated as not found - safer to leave the IL alone than to
-    /// patch the wrong site).
+    /// rewrite the wrong site).
     /// </summary>
     public static int FindPattern(byte[] haystack, byte[] pattern, bool[] mask)
     {
@@ -202,8 +202,8 @@ static class ILPatch
 }
 
 /// <summary>
-/// Presents the IL body of one method (<c>source</c>, typically a C# patch
-/// snippet compiled by Roslyn) as the body of another (<c>owner</c>, the method
+/// Presents the IL body of one method (<c>source</c>, typically a C# snippet
+/// compiled by Roslyn) as the body of another (<c>owner</c>, the method
 /// being compiled). Token resolution stays with the source body, so the snippet
 /// may freely reference any member visible in the module it was compiled in
 /// (which references the same CoreLib). The owner supplies the signature/generic
@@ -235,9 +235,9 @@ class CustomILProvider : ILProvider
 
     /// <summary>
     /// Maps a method being compiled to the C#-snippet method whose body replaces
-    /// it (see SubstituteBodyMethodIL). Populated after the patch module is
-    /// compiled and loaded. Takes priority over the hand-written IL patches
-    /// below, so a snippet supersedes the corresponding byte-level fallback.
+    /// it (see SubstituteBodyMethodIL). Populated after the snippet module is
+    /// compiled and loaded. Checked first in GetMethodIL, ahead of the remaining
+    /// targeted IL rewrites (TimeZoneInfo..cctor), so a snippet always wins.
     /// </summary>
     public Dictionary<MethodDesc, MethodDesc> BodySubstitutions;
 
@@ -253,33 +253,24 @@ class CustomILProvider : ILProvider
         if (BodySubstitutions != null && BodySubstitutions.TryGetValue(method, out MethodDesc snippet))
             return new SubstituteBodyMethodIL(method, inner.GetMethodIL(snippet));
 
-        // zkVM (rv64ima) IL replacements. Unlike ILLink substitutions, a raw
-        // IL body can return reference types and structs, so this is the layer
-        // for replacements the XML cannot express.
-        if (zkvmTarget &&
-            method.OwningType is MetadataType zt &&
-            zt.Namespace == "System.Collections.Frozen" &&
-            zt.Name == "LengthBuckets" &&
-            method.Name == "CreateLengthBucketsArrayIfAppropriate")
-        {
-            // Decides (in double ratio math) whether the by-length string
-            // lookup optimization pays off. Null = "use the fallback frozen
-            // comparer" and is always a correct answer.
-            return new ILStubMethodIL(
-                method,
-                new byte[]
-                {
-                    (byte)ILOpcode.ldnull,
-                    (byte)ILOpcode.ret
-                },
-                Array.Empty<LocalVariableDefinition>(),
-                new object[] { }
-            );
-        }
+        // zkVM (rv64ima) IL rewrites the C# snippets cannot express. Most FP
+        // elimination is done by whole-body C# snippets (see the zisk.snippets.cs
+        // resource, compiled by TryCompileZiskSnippets and applied through
+        // BodySubstitutions above): Hashtable ctors/rehash, ValueType hashing,
+        // Random sampling and LengthBuckets all live there now. What remains here
+        // are the two cases a whole-body snippet is the wrong tool for:
+        //   * TimeZoneInfo..cctor - the FP is a single subexpression inside an
+        //     auto-generated static ctor; reproducing every static-field
+        //     initializer in a snippet would be fragile across CoreLib rebuilds,
+        //     so a surgical byte rewrite of just that subexpression is safer.
+        //   * ConcurrentUnifierW`2.Container.Resize - a SHARED GENERIC body the
+        //     scanner must see in its ORIGINAL form to compute correct generic-
+        //     dictionary dependencies, so it is rewritten codegen-only by
+        //     UnifierResizeILProvider (snippets apply in BOTH phases).
 
         // TimeZoneInfo..cctor initializes s_daylightRuleMarker via
         // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
-        // the only FPU code in the body. Patch the 19-byte sequence
+        // the only FPU code in the body. Rewrite the 19-byte sequence
         //   ldsflda MinValue; ldc.r8 2.0; call AddMilliseconds
         // into the tick-exact integer construction
         //   ldc.i8 20000; newobj DateTime(int64); nop x5
@@ -296,7 +287,7 @@ class CustomILProvider : ILProvider
             // Anchor: ldc.r8 2.0 (23 00 00 00 00 00 00 00 40) preceded by
             // ldsflda (7F + token) and followed by call (28 + token).
             byte[] anchor = { 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40 };
-            int at = ILPatch.FindPattern(il, anchor, null);
+            int at = ILRewrite.FindPattern(il, anchor, null);
             if (at >= 5 && il[at - 5] == 0x7F && il[at + 9] == 0x28)
             {
                 var int64Type = TypeContext.GetWellKnownType(WellKnownType.Int64);
@@ -326,212 +317,19 @@ class CustomILProvider : ILProvider
                     il[p++] = unchecked((byte)(injectedToken >> 24));
                     for (int i = 0; i < 5; i++)
                         il[p++] = 0x00; // nop
-                    return new PatchedMethodIL(body, il,
+                    return new RewrittenMethodIL(body, il,
                         new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
                 }
             }
             return body;
         }
 
-        // NOTE: ConcurrentUnifierW(Keyed)`2.Container.Resize's double growth
-        // ratio is handled separately by UnifierResizeILProvider (codegen-only),
-        // because it is a SHARED GENERIC body - see that class. Patches HERE run
-        // in both scan and codegen and must stay confined to NON-generic bodies.
-
-        // ValueType.RegularGetValueTypeHashCode hashes Single/Double struct
-        // fields through HashCode.Add<float/double>, passing the value BY VALUE,
-        // so the double/float travels in an FP register (flw/fld here, fmv.x.w/d
-        // inside Add<T>) - the last FP in the image. Rewrite each such site to
-        // load the raw bits instead (ldind.r4/r8 -> ldind.i4/i8) and hash them
-        // via HashCode.Add<int/long>, which is entirely integer. Hashing the
-        // bit pattern matches NativeAOT's byte-wise ValueType.Equals for
-        // blittable fields, so the hash/equals contract stays consistent.
-        // Non-generic method (safe to patch in both phases); Add<int>/Add<long>
-        // MethodDescs are constructed from the type system and injected as
-        // synthetic tokens (like the DateTime ctor in the TimeZoneInfo patch).
-        if (zkvmTarget &&
-            method.OwningType is MetadataType vtType &&
-            vtType.Namespace == "System" &&
-            vtType.Name == "ValueType" &&
-            method.Name == "RegularGetValueTypeHashCode")
-        {
-            MethodIL body = inner.GetMethodIL(method);
-            byte[] il = (byte[])body.GetILBytes().Clone();
-
-            MetadataType hashCodeType = (MetadataType)((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
-                .Module.GetType("System", "HashCode");
-            MethodDesc addOpen = null;
-            foreach (MethodDesc mm in hashCodeType.GetMethods())
-            {
-                if (mm.Name == "Add" && mm.HasInstantiation && mm.Instantiation.Length == 1 && mm.Signature.Length == 1)
-                {
-                    addOpen = mm;
-                    break;
-                }
-            }
-
-            var extra = new Dictionary<int, object>();
-            if (addOpen != null)
-            {
-                MethodDesc addInt = TypeContext.GetInstantiatedMethod(addOpen,
-                    new Instantiation(new TypeDesc[] { TypeContext.GetWellKnownType(WellKnownType.Int32) }));
-                MethodDesc addLong = TypeContext.GetInstantiatedMethod(addOpen,
-                    new Instantiation(new TypeDesc[] { TypeContext.GetWellKnownType(WellKnownType.Int64) }));
-                const int addIntToken = 0x0A7FFFF1;
-                const int addLongToken = 0x0A7FFFF2;
-                extra[addIntToken] = addInt;
-                extra[addLongToken] = addLong;
-
-                // Walk the IL for ldind.r4/r8 (0x4E/0x4F) immediately followed by
-                // call (0x28) to HashCode.Add<float/double>, and retarget both.
-                for (int i = 0; i + 6 <= il.Length; i++)
-                {
-                    if ((il[i] == 0x4E || il[i] == 0x4F) && il[i + 1] == 0x28)
-                    {
-                        int tok = il[i + 2] | (il[i + 3] << 8) | (il[i + 4] << 16) | (il[i + 5] << 24);
-                        object callee = body.GetObject(tok, NotFoundBehavior.ReturnNull);
-                        if (callee is MethodDesc md && md.GetTypicalMethodDefinition() == addOpen && md.Instantiation.Length == 1)
-                        {
-                            TypeDesc arg = md.Instantiation[0];
-                            bool isDouble = il[i] == 0x4F;
-                            il[i] = isDouble ? (byte)0x4C : (byte)0x4A; // ldind.i8 / ldind.i4
-                            int newTok = isDouble ? addLongToken : addIntToken;
-                            il[i + 2] = (byte)newTok;
-                            il[i + 3] = (byte)(newTok >> 8);
-                            il[i + 4] = (byte)(newTok >> 16);
-                            il[i + 5] = (byte)(newTok >> 24);
-                        }
-                    }
-                }
-            }
-
-            return extra.Count > 0 ? new PatchedMethodIL(body, il, extra) : body;
-        }
-
-        // System.Collections.Hashtable threads its load factor through a float
-        // field (_loadFactor) and a `float loadFactor` ctor parameter that every
-        // overload funnels through - the last FP in programs touching the legacy
-        // Hashtable. rehash's `(int)(_loadFactor * n)` is rewritten to integer
-        // `n * 72 / 100`, and every ctor is replaced with an integer body that
-        // sizes the table with a fixed 72/100 load factor (== the runtime's
-        // default 0.72) and never materializes a float. Custom load factors are
-        // ignored (only shifts the resize threshold; collisions still chain).
-        // The zero-initialized object leaves _loadFactor/_isWriterInProgress at
-        // their defaults, so the integer ctor only sets _buckets, _loadsize and,
-        // for comparer overloads, _keycomparer.
-        if (zkvmTarget &&
-            method.OwningType is MetadataType htType &&
-            htType.Namespace == "System.Collections" &&
-            htType.Name == "Hashtable")
-        {
-            var int32Ht = TypeContext.GetWellKnownType(WellKnownType.Int32);
-            var singleHt = TypeContext.GetWellKnownType(WellKnownType.Single);
-
-            // rehash(int newsize): _loadsize = (int)(_loadFactor * newsize)
-            //   ldarg.0; ldarg.0; ldfld _loadFactor; ldarg.1; conv.r4; mul; conv.i4; stfld _loadsize
-            // -> ldarg.0; ldarg.1; ldc.i4.s 72; mul; ldc.i4.s 100; div; nop x3; stfld _loadsize
-            if (method.Name == "rehash" && method.Signature.Length == 1)
-            {
-                MethodIL body = inner.GetMethodIL(method);
-                byte[] il = (byte[])body.GetILBytes().Clone();
-                byte[] pat = { 0x02, 0x02, 0x7B, 0, 0, 0, 0, 0x03, 0x6B, 0x5A, 0x69, 0x7D, 0, 0, 0, 0 };
-                bool[] mask = { true, true, true, false, false, false, false, true, true, true, true, true, false, false, false, false };
-                int at = ILPatch.FindPattern(il, pat, mask);
-                if (at >= 0)
-                {
-                    byte s0 = il[at + 12], s1 = il[at + 13], s2 = il[at + 14], s3 = il[at + 15];
-                    int p = at;
-                    il[p++] = 0x02; il[p++] = 0x03;
-                    il[p++] = 0x1F; il[p++] = 72; il[p++] = 0x5A;
-                    il[p++] = 0x1F; il[p++] = 100; il[p++] = 0x5B;
-                    il[p++] = 0x00; il[p++] = 0x00; il[p++] = 0x00;
-                    il[p++] = 0x7D; il[p++] = s0; il[p++] = s1; il[p++] = s2; il[p++] = s3;
-                    return new PatchedMethodIL(body, il);
-                }
-                return body;
-            }
-
-            if (method.Name == ".ctor" && method.Signature.Length > 0)
-            {
-                // Classify parameters: one Int32 capacity (optional), one
-                // IEqualityComparer (optional), Single load factors ignored. Any
-                // other parameter type (the obsolete IHashCodeProvider/IComparer
-                // overloads) is left alone - rare, deprecated, not worth patching.
-                int capParam = -1, cmpParam = -1;
-                bool patchable = true;
-                for (int pi = 0; pi < method.Signature.Length; pi++)
-                {
-                    TypeDesc pt = method.Signature[pi];
-                    if (pt == int32Ht) capParam = pi;
-                    else if (pt == singleHt) { /* ignored */ }
-                    else if (pt is MetadataType mt && mt.Name == "IEqualityComparer") cmpParam = pi;
-                    else { patchable = false; break; }
-                }
-                if (!patchable)
-                    return inner.GetMethodIL(method);
-
-                // The tokens the integer body needs (Object..ctor, GetPrime, the
-                // nested bucket type, _buckets, _loadsize) all appear in the body
-                // of the (int,float) worker ctor - extract them from there so the
-                // patch stays valid across CoreLib rebuilds. _keycomparer is
-                // resolved by name (used only by comparer overloads).
-                MethodDesc worker = null;
-                foreach (MethodDesc mm in htType.GetMethods())
-                    if (mm.Name == ".ctor" && mm.Signature.Length == 2 &&
-                        mm.Signature[0] == int32Ht && mm.Signature[1] == singleHt) { worker = mm; break; }
-                if (worker == null)
-                    return inner.GetMethodIL(method);
-                byte[] wil = inner.GetMethodIL(worker).GetILBytes();
-
-                int TokAfter(byte[] b, int i) =>
-                    (i + 4 < b.Length) ? b[i + 1] | (b[i + 2] << 8) | (b[i + 3] << 16) | (b[i + 4] << 24) : 0;
-                bool At(byte[] b, int i, byte v) => i < b.Length && b[i] == v;
-                int objCtorTok = 0, getPrimeTok = 0, newarrTok = 0, bucketsTok = 0, loadsizeTok = 0;
-                for (int i = 0; i < wil.Length; i++)
-                {
-                    if (At(wil, i, 0x28) && objCtorTok == 0) objCtorTok = TokAfter(wil, i);
-                    if (At(wil, i, 0x8D)) { newarrTok = TokAfter(wil, i); if (At(wil, i + 5, 0x7D)) bucketsTok = TokAfter(wil, i + 5); }
-                    if (At(wil, i, 0x6B) && At(wil, i + 1, 0x5A) && At(wil, i + 2, 0x69) && At(wil, i + 3, 0x7D)) loadsizeTok = TokAfter(wil, i + 3);
-                    if (At(wil, i, 0x69) && At(wil, i + 1, 0x28) && At(wil, i + 6, 0x0B)) getPrimeTok = TokAfter(wil, i + 1);
-                }
-                FieldDesc fComparer = cmpParam >= 0 ? htType.GetField("_keycomparer") : null;
-                if (objCtorTok == 0 || getPrimeTok == 0 || newarrTok == 0 || bucketsTok == 0 ||
-                    loadsizeTok == 0 || (cmpParam >= 0 && fComparer == null))
-                    return inner.GetMethodIL(method);
-
-                var extraTok = new Dictionary<int, object>();
-                int tComparer = 0;
-                if (cmpParam >= 0) { tComparer = 0x0A7FFF20; extraTok[tComparer] = fComparer; }
-
-                var emit = new List<byte>();
-                void Op(byte b) => emit.Add(b);
-                void Tok(byte op, int tk) { emit.Add(op); emit.Add((byte)tk); emit.Add((byte)(tk >> 8)); emit.Add((byte)(tk >> 16)); emit.Add((byte)(tk >> 24)); }
-                void Ldarg(int pi) { int a = pi + 1; if (a <= 3) Op((byte)(0x02 + a)); else { Op(0x0E); Op((byte)a); } }
-
-                Op(0x02); Tok(0x28, objCtorTok);            // this.Object..ctor()
-                if (capParam >= 0) Ldarg(capParam); else Op(0x16);   // capacity or 0
-                Op(0x1F); Op(100); Op(0x5A); Op(0x1F); Op(72); Op(0x5B); Op(0x0A);  // rawsize = cap*100/72
-                Op(0x06); Op(0x19); Op(0x30); Op(0x03);     // ldloc.0; ldc.i4.3; bgt.s +3
-                Op(0x19); Op(0x2B); Op(0x06);               // ldc.i4.3; br.s +6
-                Op(0x06); Tok(0x28, getPrimeTok); Op(0x0B); // ldloc.0; call GetPrime; stloc.1
-                Op(0x02); Op(0x07); Tok(0x8D, newarrTok); Tok(0x7D, bucketsTok);    // _buckets = new bucket[hashsize]
-                Op(0x02); Op(0x07); Op(0x1F); Op(72); Op(0x5A); Op(0x1F); Op(100); Op(0x5B); Tok(0x7D, loadsizeTok); // _loadsize
-                if (cmpParam >= 0) { Op(0x02); Ldarg(cmpParam); Tok(0x7D, tComparer); }  // _keycomparer = comparer
-                Op(0x2A);
-
-                var ilocals = new[]
-                {
-                    new LocalVariableDefinition(int32Ht, false),
-                    new LocalVariableDefinition(int32Ht, false),
-                };
-                return new PatchedMethodIL(inner.GetMethodIL(method), emit.ToArray(), extraTok, locals: ilocals);
-            }
-        }
-
-        // NOTE: System.Random's compat-PRNG double sampling (Next(int[,int]) does
-        // (int)(Sample() * range)) is now eliminated by a C# body-substitution
-        // snippet (ZiskPatchesSource / BodySubstitutions) instead of hand-emitted
-        // IL - Roslyn guarantees the replacement body is valid.
+        // NOTE: ValueType.RegularGetValueTypeHashCode (Single/Double struct fields
+        // hashed by value through FP registers), the whole System.Collections.
+        // Hashtable ctor/rehash family (the `float _loadFactor` load factor) and
+        // System.Random's compat-PRNG double sampling are all eliminated by
+        // whole-body C# snippets now (zisk.snippets.cs / BodySubstitutions) rather
+        // than hand-emitted IL - Roslyn guarantees each replacement body is valid.
 
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace == "System" &&
@@ -838,71 +636,52 @@ internal class BuildCommand : CommandBase
             PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
     }
 
-    // C# source for the zisk body-substitution snippets. Each static method
-    // replaces the body of a CoreLib method that carries floating point, written
-    // in plain C# so Roslyn - not hand-emitted IL - guarantees a valid body. The
-    // first parameter stands in for `this` (same argument layout as the instance
-    // method it replaces); accessibility is bypassed at compile time so private
-    // nested types (Random.CompatSeedImpl, ...) and private members are nameable.
-    private const string ZiskPatchesSource = @"
-namespace __ZiskPatches
-{
-    internal static class RandomPatch
+    // Reads the zisk body-substitution snippet source, shipped as an embedded
+    // resource (zisk.snippets.cs) rather than an inline string constant.
+    private static string ReadZiskSnippetsSource()
     {
-        // System.Random legacy compat PRNG: scale the integer sample to the
-        // requested range with integer math instead of double Sample()*range.
-        // `self` is typed as object (the private impl type cannot appear in a
-        // signature) and cast inside; at run time it is always the impl, so the
-        // cast is a no-op. Argument layout matches the instance method: arg0 =
-        // this = self, arg1 = ..., so the body transplants directly.
-        public static int SeedNext1(object self, int maxValue)
-        {
-            var s = (global::System.Random.CompatSeedImpl)self;
-            return (int)((long)s._prng.InternalSample() * maxValue / int.MaxValue);
-        }
-
-        public static int SeedNext2(object self, int minValue, int maxValue)
-        {
-            var s = (global::System.Random.CompatSeedImpl)self;
-            long range = (long)maxValue - minValue;
-            return (int)((long)s._prng.InternalSample() * range / int.MaxValue) + minValue;
-        }
-
-        public static int DerivedNext1(object self, int maxValue)
-        {
-            var s = (global::System.Random.CompatDerivedImpl)self;
-            s._prng.EnsureInitialized(s._seed);
-            return (int)((long)s._prng.InternalSample() * maxValue / int.MaxValue);
-        }
-
-        public static int DerivedNext2(object self, int minValue, int maxValue)
-        {
-            var s = (global::System.Random.CompatDerivedImpl)self;
-            s._prng.EnsureInitialized(s._seed);
-            long range = (long)maxValue - minValue;
-            return (int)((long)s._prng.InternalSample() * range / int.MaxValue) + minValue;
-        }
+        using Stream s = typeof(BuildCommand).Assembly.GetManifestResourceStream("zisk.snippets.cs");
+        if (s == null)
+            return null;
+        using var r = new StreamReader(s);
+        return r.ReadToEnd();
     }
-}
-";
 
-    // Compiles ZiskPatchesSource against the same references with accessibility
-    // checks disabled, emits it to a temp module, and returns the path (null on
-    // failure - substitution is then simply skipped).
-    private string TryCompileZiskPatches(string[] references, string[] defines, string langVersion)
+    // Compiles the zisk.snippets.cs source against the same references with
+    // accessibility checks disabled, emits it to a temp module, and returns the
+    // path (null on failure - substitution is then simply skipped).
+    private string TryCompileZiskSnippets(string[] references, string[] defines, string langVersion)
     {
         try
         {
+            string source = ReadZiskSnippetsSource();
+            if (source == null)
+            {
+                Console.Error.WriteLine("warning: zisk.snippets.cs resource not found");
+                return null;
+            }
+
             if (!LanguageVersionFacts.TryParse(langVersion, out LanguageVersion langVer))
                 langVer = LanguageVersion.Latest;
 
             var parseOptions = new CSharpParseOptions(langVer, DocumentationMode.None,
                 preprocessorSymbols: defines ?? Array.Empty<string>());
-            var tree = CSharpSyntaxTree.ParseText(ZiskPatchesSource, parseOptions);
+            var tree = CSharpSyntaxTree.ParseText(source, parseOptions);
 
             var metadataReferences = new List<MetadataReference>();
             foreach (var reference in references)
-                metadataReferences.Add(MetadataReference.CreateFromFile(reference));
+            {
+                var mref = MetadataReference.CreateFromFile(reference);
+                // Several CoreLib-internal types (HashHelpers, MethodTable,
+                // EETypeElementType) are ALSO defined in sibling assemblies
+                // (System.Collections.Concurrent/Immutable, System.Private.
+                // TypeLoader), so an unqualified reference is ambiguous (CS0433).
+                // Expose CoreLib under a `corelib` extern alias (in addition to
+                // global) so the snippet can name those types unambiguously.
+                if (Path.GetFileNameWithoutExtension(reference).Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase))
+                    mref = mref.WithAliases(new[] { "global", "corelib" });
+                metadataReferences.Add(mref);
+            }
 
             var options = new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
@@ -934,7 +713,7 @@ namespace __ZiskPatches
                 options = (CSharpCompilationOptions)withBinderFlags.Invoke(options, new[] { ignoreAccessibility });
             }
 
-            var compilation = CSharpCompilation.Create("__ZiskPatches", new[] { tree }, metadataReferences, options);
+            var compilation = CSharpCompilation.Create("__ZiskSnippets", new[] { tree }, metadataReferences, options);
             string path = Path.GetTempFileName();
             using (var fs = File.Create(path))
             {
@@ -943,7 +722,7 @@ namespace __ZiskPatches
                 {
                     foreach (var d in emitResult.Diagnostics)
                         if (d.Severity == DiagnosticSeverity.Error)
-                            Console.Error.WriteLine("zisk patch snippet: " + d);
+                            Console.Error.WriteLine("zisk snippet: " + d);
                     return null;
                 }
             }
@@ -951,49 +730,100 @@ namespace __ZiskPatches
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"warning: could not compile zisk patch snippets: {ex.Message}");
+            Console.Error.WriteLine($"warning: could not compile zisk snippets: {ex.Message}");
             return null;
         }
     }
 
-    // Maps CoreLib methods that carry floating point to the snippet methods that
-    // replace them (by name/signature). Extend this table as snippets are added.
-    private static Dictionary<MethodDesc, MethodDesc> BuildZiskBodySubstitutions(TypeSystemContext ctx, EcmaModule patchesModule)
+    // Maps CoreLib methods that carry floating point to the C# snippet methods
+    // (in __ZiskSnippets.Snippets) that replace their bodies, by name/signature.
+    // Targets absent from the closure (e.g. LengthBuckets when Immutable is not
+    // referenced) resolve to null and are simply skipped. Extend as snippets grow.
+    private static Dictionary<MethodDesc, MethodDesc> BuildZiskBodySubstitutions(CompilerTypeSystemContext ctx, EcmaModule snippetsModule)
     {
         var map = new Dictionary<MethodDesc, MethodDesc>();
-        var patchType = (MetadataType)patchesModule.GetType("__ZiskPatches", "RandomPatch");
-        var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
-        var seedImpl = random.GetNestedType("CompatSeedImpl");
-        var derivedImpl = random.GetNestedType("CompatDerivedImpl");
+        var snippetType = (MetadataType)snippetsModule.GetType("__ZiskSnippets", "Snippets");
         var int32 = ctx.GetWellKnownType(WellKnownType.Int32);
+        var single = ctx.GetWellKnownType(WellKnownType.Single);
 
         MethodDesc Snippet(string name)
         {
-            foreach (MethodDesc m in patchType.GetMethods())
+            foreach (MethodDesc m in snippetType.GetMethods())
                 if (m.Name == name) return m;
-            return null;
-        }
-        // Find impl.Next with the given (non-this) parameter count.
-        MethodDesc Next(MetadataType impl, int paramCount)
-        {
-            foreach (MethodDesc m in impl.GetMethods())
-                if (m.Name == "Next" && m.Signature.Length == paramCount)
-                {
-                    bool allInt = true;
-                    for (int i = 0; i < paramCount; i++) allInt &= m.Signature[i] == int32;
-                    if (allInt) return m;
-                }
             return null;
         }
         void Add(MethodDesc target, MethodDesc snippet)
         {
             if (target != null && snippet != null) map[target] = snippet;
         }
+        // Finds the single method of `type` named `name` whose parameter types
+        // (excluding `this`) match `sig` exactly; null if the type/method is absent.
+        MethodDesc Method(MetadataType type, string name, params TypeDesc[] sig)
+        {
+            if (type == null) return null;
+            foreach (MethodDesc m in type.GetMethods())
+            {
+                if (m.Name != name || m.Signature.Length != sig.Length) continue;
+                bool ok = true;
+                for (int i = 0; i < sig.Length; i++) ok &= m.Signature[i] == sig[i];
+                if (ok) return m;
+            }
+            return null;
+        }
+        MetadataType Type(ModuleDesc mod, string ns, string name)
+        {
+            try { return mod == null ? null : (MetadataType)mod.GetType(ns, name, NotFoundBehavior.ReturnNull); }
+            catch { return null; }
+        }
+        ModuleDesc Module(string simpleName)
+        {
+            try { return ctx.GetModuleForSimpleName(simpleName); }
+            catch { return null; }
+        }
 
-        Add(Next(seedImpl, 1), Snippet("SeedNext1"));
-        Add(Next(seedImpl, 2), Snippet("SeedNext2"));
-        Add(Next(derivedImpl, 1), Snippet("DerivedNext1"));
-        Add(Next(derivedImpl, 2), Snippet("DerivedNext2"));
+        // System.Random legacy compat PRNG (private nested impl types).
+        var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
+        var seedImpl = random.GetNestedType("CompatSeedImpl");
+        var derivedImpl = random.GetNestedType("CompatDerivedImpl");
+        Add(Method(seedImpl, "Next", int32), Snippet("RandomSeedNext1"));
+        Add(Method(seedImpl, "Next", int32, int32), Snippet("RandomSeedNext2"));
+        Add(Method(derivedImpl, "Next", int32), Snippet("RandomDerivedNext1"));
+        Add(Method(derivedImpl, "Next", int32, int32), Snippet("RandomDerivedNext2"));
+
+        // System.Collections.Hashtable ctor/rehash family (float _loadFactor).
+        var htType = Type(ctx.SystemModule, "System.Collections", "Hashtable");
+        var ieqCmp = Type(ctx.SystemModule, "System.Collections", "IEqualityComparer");
+        if (htType != null)
+        {
+            Add(Method(htType, ".ctor"), Snippet("HashtableCtor0"));
+            Add(Method(htType, ".ctor", int32), Snippet("HashtableCtorCap"));
+            Add(Method(htType, ".ctor", int32, single), Snippet("HashtableCtorCapLf"));
+            Add(Method(htType, ".ctor", int32, single, ieqCmp), Snippet("HashtableCtorCapLfCmp"));
+            Add(Method(htType, ".ctor", ieqCmp), Snippet("HashtableCtorCmp"));
+            Add(Method(htType, ".ctor", int32, ieqCmp), Snippet("HashtableCtorCapCmp"));
+            Add(Method(htType, "rehash", int32), Snippet("HashtableRehash"));
+        }
+
+        // System.ValueType.GetHashCode helper (Single/Double struct fields).
+        // RegularGetValueTypeHashCode has ref/byref params not conveniently
+        // nameable as TypeDesc[] here; match by name + parameter count (3) instead.
+        var vtType = Type(ctx.SystemModule, "System", "ValueType");
+        if (vtType != null)
+        {
+            foreach (MethodDesc m in vtType.GetMethods())
+                if (m.Name == "RegularGetValueTypeHashCode" && m.Signature.Length == 3)
+                    Add(m, Snippet("ValueTypeRegularHashCode"));
+        }
+
+        // System.Collections.Frozen.LengthBuckets (only if Immutable is present).
+        var lbType = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "LengthBuckets");
+        if (lbType != null)
+        {
+            foreach (MethodDesc m in lbType.GetMethods())
+                if (m.Name == "CreateLengthBucketsArrayIfAppropriate")
+                    Add(m, Snippet("LengthBucketsNone"));
+        }
+
         return map;
     }
 
@@ -1367,21 +1197,21 @@ namespace __ZiskPatches
             [compiledModuleName] = compiledModulePath,
         };
 
-        // zkVM body-substitution snippets: compile the C# patch source (see
-        // ZiskPatchesSource) against the same references, with accessibility
-        // checks ignored so it can touch CoreLib internals/privates, and register
-        // the resulting module so the type system can resolve its methods.
-        const string patchesModuleName = "__ZiskPatches";
-        string patchesModulePath = null;
+        // zkVM body-substitution snippets: compile the C# snippet source (the
+        // zisk.snippets.cs resource) against the same references, with
+        // accessibility checks ignored so it can touch CoreLib internals/privates,
+        // and register the resulting module so the type system resolves its methods.
+        const string snippetsModuleName = "__ZiskSnippets";
+        string snippetsModulePath = null;
         if (libc == "zisk" || libc == "zisk_sim")
         {
             // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
             // not the public ref assemblies (references): the snippet needs the
             // private nested types (Random.CompatSeedImpl, ...) that ref
             // assemblies strip out.
-            patchesModulePath = TryCompileZiskPatches(referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
-            if (patchesModulePath != null)
-                inputFilePaths[patchesModuleName] = patchesModulePath;
+            snippetsModulePath = TryCompileZiskSnippets(referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
+            if (snippetsModulePath != null)
+                inputFilePaths[snippetsModuleName] = snippetsModulePath;
         }
 
         typeSystemContext.InputFilePaths = inputFilePaths;
@@ -1392,12 +1222,12 @@ namespace __ZiskPatches
         //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
 
-        if (patchesModulePath != null)
+        if (snippetsModulePath != null)
         {
             try
             {
-                EcmaModule patchesModule = typeSystemContext.GetModuleForSimpleName(patchesModuleName);
-                customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, patchesModule);
+                EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
+                customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, snippetsModule);
                 Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
             }
             catch (Exception ex)
@@ -1824,7 +1654,7 @@ namespace __ZiskPatches
             if (libc == "zisk" || libc == "zisk_sim")
             {
                 // Codegen-only: rewrite the ConcurrentUnifier growth ratio to
-                // integer math AFTER scanning. Relies on PatchedMethodIL
+                // integer math AFTER scanning. Relies on RewrittenMethodIL
                 // correctly forwarding GetMethodILDefinition for this shared
                 // generic method (without which the generic dictionary layout
                 // is corrupted). See UnifierResizeILProvider.
