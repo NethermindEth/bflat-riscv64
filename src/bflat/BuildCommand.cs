@@ -640,6 +640,40 @@ internal class BuildCommand : CommandBase
             Console.WriteLine($"Patched {patched} ELF member(s) in {libPath}");
     }
 
+    // Normalize the RISC-V float-ABI marker of every prebuilt .NET runtime blob
+    // that the zisk/zisk_sim link pulls in, to soft-float (lp64). The zkVM stack
+    // is linked soft-float (crt1.o/crti.o/crtn.o/libc.a are patched above), but
+    // the runtime blobs (bootstrapper, WorkstationGC, PAL, minipal, ...) ship
+    // with the hard-float (lp64d) marker in some blob releases, and ld.lld
+    // rejects them with "different floating-point ABI from crt1.o". This flips
+    // only the ELF marker byte in place (see PatchRiscvAbi / PatchRiscvAbiStaticLib);
+    // it does NOT touch instructions, so it is safe only because the blobs
+    // contain no hardware FP (the guest is FP-free). Idempotent and tolerant of
+    // missing files.
+    void PatchRiscvAbiRuntimeBlobs(string libDir, bool verbose)
+    {
+        string[] objects =
+        {
+            "libbootstrapper.o", "libbootstrapperdll.o",
+        };
+        string[] archives =
+        {
+            "libSystem.Native.a", "libatomic.a", "libeventpipe-disabled.a",
+            "libaotminipal.a", "libstandalonegc-disabled.a", "libstdc++compat.a",
+            "libRuntime.WorkstationGC.a", "libSystem.IO.Compression.Native.a",
+            "libSystem.Security.Cryptography.Native.OpenSsl.a",
+            "libSystem.Globalization.Native.a",
+        };
+        foreach (string o in objects)
+        {
+            string path = Path.Combine(libDir, o);
+            if (File.Exists(path))
+                PatchRiscvAbi(path);
+        }
+        foreach (string a in archives)
+            PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
+    }
+
     public override int Handle(ParseResult result)
     {
         bool nooptimize = result.GetValueForOption(DisableOptimizationOption);
@@ -1770,11 +1804,12 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-latomic ");
-                    // libatomic.a ships with the hard-float (lp64d) marker like
-                    // libc.a, so normalize it to soft-float for the zisk stack too,
-                    // otherwise ld.lld rejects its members against crt1.o.
+                    // The prebuilt .NET runtime blobs (bootstrapper, WorkstationGC,
+                    // PAL, minipal, libatomic, ...) can ship with the hard-float
+                    // (lp64d) marker; normalize them all to soft-float so ld.lld
+                    // accepts them against the soft-float crt1.o.
                     if (libc == "zisk" || libc == "zisk_sim")
-                        PatchRiscvAbiStaticLib(firstLib + "/libatomic.a", verbose);
+                        PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
