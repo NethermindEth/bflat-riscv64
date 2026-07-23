@@ -21,6 +21,12 @@
          (see BuildCommand). LogicalName pins the manifest resource name
          independently of any RootNamespace. -->
     <EmbeddedResource Include="zisk.substitutions.xml" LogicalName="zisk.substitutions.xml" />
+    <!-- C# body-substitution snippets compiled at guest-build time (see
+         BuildCommand.TryCompileZiskSnippets). Excluded from bflat's own
+         compilation - it references CoreLib internals that only exist in the
+         guest's reference set - and shipped as an embedded resource instead. -->
+    <Compile Remove="zisk.snippets.cs" />
+    <EmbeddedResource Include="zisk.snippets.cs" LogicalName="zisk.snippets.cs" />
   </ItemGroup>
 
   <ItemGroup>
