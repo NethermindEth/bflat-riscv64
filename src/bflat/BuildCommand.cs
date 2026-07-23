@@ -491,6 +491,81 @@ class CustomILProvider : ILProvider
             }
         }
 
+        // System.Random's legacy "compat" PRNG scales an integer sample to the
+        // requested range in DOUBLE: Next(min,max) computes
+        // (int)(Sample() * range) + min, where Sample() = InternalSample() *
+        // (1.0/int.MaxValue). That fmul.d/fcvt is the only FP in programs that
+        // call Random.Next(int[,int]). Rewrite the integer-returning Next
+        // overloads to the exact integer equivalent
+        // (int)((long)InternalSample() * range / int.MaxValue) + min, which is
+        // uniform over [min,max) and needs no floating point (and no separate
+        // large-range path). NextDouble/Sample stay double - they are the
+        // floating-point API and are trimmed when unused.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType rndImpl &&
+            rndImpl.ContainingType is MetadataType rndOuter && rndOuter.Name == "Random" &&
+            (rndImpl.Name == "CompatSeedImpl" || rndImpl.Name == "CompatDerivedImpl") &&
+            method.Name == "Next" &&
+            (method.Signature.Length == 1 || method.Signature.Length == 2) &&
+            method.Signature[0] == TypeContext.GetWellKnownType(WellKnownType.Int32) &&
+            (method.Signature.Length == 1 || method.Signature[1] == TypeContext.GetWellKnownType(WellKnownType.Int32)))
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            byte[] orig = body.GetILBytes();
+
+            // Extract _prng (ldflda 0x7C) and, if present, the EnsureInitialized
+            // prologue "ldarg.0; ldflda _prng; ldarg.0; ldfld _seed; call ..."
+            // (17 bytes) verbatim from the original body.
+            int prngTok = 0;
+            for (int i = 0; i + 5 <= orig.Length; i++)
+                if (orig[i] == 0x7C) { prngTok = orig[i + 1] | (orig[i + 2] << 8) | (orig[i + 3] << 16) | (orig[i + 4] << 24); break; }
+            bool hasPrologue = orig.Length >= 17 && orig[0] == 0x02 && orig[1] == 0x7C &&
+                               orig[6] == 0x02 && orig[7] == 0x7B && orig[12] == 0x28;
+
+            // InternalSample() lives on _prng's type (CompatPrng).
+            MethodDesc internalSample = null;
+            if (prngTok != 0 && body.GetObject(prngTok, NotFoundBehavior.ReturnNull) is FieldDesc fPrng &&
+                fPrng.FieldType is MetadataType prngType)
+                foreach (MethodDesc mm in prngType.GetMethods())
+                    if (mm.Name == "InternalSample" && mm.Signature.Length == 0) { internalSample = mm; break; }
+
+            if (prngTok != 0 && internalSample != null)
+            {
+                const int isTok = 0x0A7FFF30;
+                var emit = new List<byte>();
+                void Op(byte b) => emit.Add(b);
+                void Tok(byte op, int tk) { emit.Add(op); emit.Add((byte)tk); emit.Add((byte)(tk >> 8)); emit.Add((byte)(tk >> 16)); emit.Add((byte)(tk >> 24)); }
+                void Sample() { Op(0x02); Tok(0x7C, prngTok); Tok(0x28, isTok); Op(0x6A); } // (long)_prng.InternalSample()
+
+                if (hasPrologue)
+                    for (int i = 0; i < 17; i++) Op(orig[i]);   // _prng.EnsureInitialized(_seed);
+
+                if (method.Signature.Length == 1)
+                {
+                    // (int)((long)maxValue * InternalSample() / int.MaxValue)
+                    Op(0x03); Op(0x6A);                         // (long)maxValue
+                    Sample();                                   // (long)sample
+                    Op(0x5A);                                   // mul
+                    Op(0x20); Op(0xFF); Op(0xFF); Op(0xFF); Op(0x7F); Op(0x6A); Op(0x5B); // / int.MaxValue
+                    Op(0x69); Op(0x2A);                         // conv.i4; ret
+                }
+                else
+                {
+                    // long range = (long)maxValue - minValue;
+                    // (int)((long)range * InternalSample() / int.MaxValue) + minValue
+                    Op(0x04); Op(0x6A); Op(0x03); Op(0x6A); Op(0x59);  // range = (long)max-(long)min
+                    Sample(); Op(0x5A);                         // range * sample
+                    Op(0x20); Op(0xFF); Op(0xFF); Op(0xFF); Op(0x7F); Op(0x6A); Op(0x5B); // / int.MaxValue
+                    Op(0x03); Op(0x6A); Op(0x58);               // + (long)minValue
+                    Op(0x69); Op(0x2A);                         // conv.i4; ret
+                }
+
+                return new PatchedMethodIL(body, emit.ToArray(),
+                    new Dictionary<int, object> { [isTok] = internalSample });
+            }
+            return body;
+        }
+
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace == "System" &&
             owningType.Name == "OutOfMemoryException" &&
