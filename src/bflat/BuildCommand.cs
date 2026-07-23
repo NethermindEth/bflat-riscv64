@@ -71,20 +71,22 @@ sealed class PatchedMethodIL : MethodIL
     private readonly byte[] _bytes;
     private readonly Dictionary<int, object> _extraTokens;
     private readonly int _extraMaxStack;
+    private readonly LocalVariableDefinition[] _locals;
 
-    public PatchedMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0)
+    public PatchedMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0, LocalVariableDefinition[] locals = null)
     {
         _inner = inner;
         _bytes = bytes;
         _extraTokens = extraTokens;
         _extraMaxStack = extraMaxStack;
+        _locals = locals;
     }
 
     public override MethodDesc OwningMethod => _inner.OwningMethod;
     public override int MaxStack => _inner.MaxStack + _extraMaxStack;
     public override bool IsInitLocals => _inner.IsInitLocals;
     public override byte[] GetILBytes() => _bytes;
-    public override LocalVariableDefinition[] GetLocals() => _inner.GetLocals();
+    public override LocalVariableDefinition[] GetLocals() => _locals ?? _inner.GetLocals();
     public override ILExceptionRegion[] GetExceptionRegions() => _inner.GetExceptionRegions();
     public override object GetObject(int token, NotFoundBehavior notFoundBehavior = NotFoundBehavior.Throw)
         => _extraTokens != null && _extraTokens.TryGetValue(token, out object o)
@@ -96,7 +98,7 @@ sealed class PatchedMethodIL : MethodIL
         MethodIL innerDef = _inner.GetMethodILDefinition();
         return innerDef == _inner
             ? this   // already the open definition (e.g. a non-generic method)
-            : new PatchedMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack);
+            : new PatchedMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack, _locals);
     }
 }
 
@@ -367,6 +369,126 @@ class CustomILProvider : ILProvider
             }
 
             return extra.Count > 0 ? new PatchedMethodIL(body, il, extra) : body;
+        }
+
+        // System.Collections.Hashtable threads its load factor through a float
+        // field (_loadFactor) and a `float loadFactor` ctor parameter that every
+        // overload funnels through - the last FP in programs touching the legacy
+        // Hashtable. rehash's `(int)(_loadFactor * n)` is rewritten to integer
+        // `n * 72 / 100`, and every ctor is replaced with an integer body that
+        // sizes the table with a fixed 72/100 load factor (== the runtime's
+        // default 0.72) and never materializes a float. Custom load factors are
+        // ignored (only shifts the resize threshold; collisions still chain).
+        // The zero-initialized object leaves _loadFactor/_isWriterInProgress at
+        // their defaults, so the integer ctor only sets _buckets, _loadsize and,
+        // for comparer overloads, _keycomparer.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType htType &&
+            htType.Namespace == "System.Collections" &&
+            htType.Name == "Hashtable")
+        {
+            var int32Ht = TypeContext.GetWellKnownType(WellKnownType.Int32);
+            var singleHt = TypeContext.GetWellKnownType(WellKnownType.Single);
+
+            // rehash(int newsize): _loadsize = (int)(_loadFactor * newsize)
+            //   ldarg.0; ldarg.0; ldfld _loadFactor; ldarg.1; conv.r4; mul; conv.i4; stfld _loadsize
+            // -> ldarg.0; ldarg.1; ldc.i4.s 72; mul; ldc.i4.s 100; div; nop x3; stfld _loadsize
+            if (method.Name == "rehash" && method.Signature.Length == 1)
+            {
+                MethodIL body = inner.GetMethodIL(method);
+                byte[] il = (byte[])body.GetILBytes().Clone();
+                byte[] pat = { 0x02, 0x02, 0x7B, 0, 0, 0, 0, 0x03, 0x6B, 0x5A, 0x69, 0x7D, 0, 0, 0, 0 };
+                bool[] mask = { true, true, true, false, false, false, false, true, true, true, true, true, false, false, false, false };
+                int at = ILPatch.FindPattern(il, pat, mask);
+                if (at >= 0)
+                {
+                    byte s0 = il[at + 12], s1 = il[at + 13], s2 = il[at + 14], s3 = il[at + 15];
+                    int p = at;
+                    il[p++] = 0x02; il[p++] = 0x03;
+                    il[p++] = 0x1F; il[p++] = 72; il[p++] = 0x5A;
+                    il[p++] = 0x1F; il[p++] = 100; il[p++] = 0x5B;
+                    il[p++] = 0x00; il[p++] = 0x00; il[p++] = 0x00;
+                    il[p++] = 0x7D; il[p++] = s0; il[p++] = s1; il[p++] = s2; il[p++] = s3;
+                    return new PatchedMethodIL(body, il);
+                }
+                return body;
+            }
+
+            if (method.Name == ".ctor" && method.Signature.Length > 0)
+            {
+                // Classify parameters: one Int32 capacity (optional), one
+                // IEqualityComparer (optional), Single load factors ignored. Any
+                // other parameter type (the obsolete IHashCodeProvider/IComparer
+                // overloads) is left alone - rare, deprecated, not worth patching.
+                int capParam = -1, cmpParam = -1;
+                bool patchable = true;
+                for (int pi = 0; pi < method.Signature.Length; pi++)
+                {
+                    TypeDesc pt = method.Signature[pi];
+                    if (pt == int32Ht) capParam = pi;
+                    else if (pt == singleHt) { /* ignored */ }
+                    else if (pt is MetadataType mt && mt.Name == "IEqualityComparer") cmpParam = pi;
+                    else { patchable = false; break; }
+                }
+                if (!patchable)
+                    return inner.GetMethodIL(method);
+
+                // The tokens the integer body needs (Object..ctor, GetPrime, the
+                // nested bucket type, _buckets, _loadsize) all appear in the body
+                // of the (int,float) worker ctor - extract them from there so the
+                // patch stays valid across CoreLib rebuilds. _keycomparer is
+                // resolved by name (used only by comparer overloads).
+                MethodDesc worker = null;
+                foreach (MethodDesc mm in htType.GetMethods())
+                    if (mm.Name == ".ctor" && mm.Signature.Length == 2 &&
+                        mm.Signature[0] == int32Ht && mm.Signature[1] == singleHt) { worker = mm; break; }
+                if (worker == null)
+                    return inner.GetMethodIL(method);
+                byte[] wil = inner.GetMethodIL(worker).GetILBytes();
+
+                int TokAfter(byte[] b, int i) =>
+                    (i + 4 < b.Length) ? b[i + 1] | (b[i + 2] << 8) | (b[i + 3] << 16) | (b[i + 4] << 24) : 0;
+                bool At(byte[] b, int i, byte v) => i < b.Length && b[i] == v;
+                int objCtorTok = 0, getPrimeTok = 0, newarrTok = 0, bucketsTok = 0, loadsizeTok = 0;
+                for (int i = 0; i < wil.Length; i++)
+                {
+                    if (At(wil, i, 0x28) && objCtorTok == 0) objCtorTok = TokAfter(wil, i);
+                    if (At(wil, i, 0x8D)) { newarrTok = TokAfter(wil, i); if (At(wil, i + 5, 0x7D)) bucketsTok = TokAfter(wil, i + 5); }
+                    if (At(wil, i, 0x6B) && At(wil, i + 1, 0x5A) && At(wil, i + 2, 0x69) && At(wil, i + 3, 0x7D)) loadsizeTok = TokAfter(wil, i + 3);
+                    if (At(wil, i, 0x69) && At(wil, i + 1, 0x28) && At(wil, i + 6, 0x0B)) getPrimeTok = TokAfter(wil, i + 1);
+                }
+                FieldDesc fComparer = cmpParam >= 0 ? htType.GetField("_keycomparer") : null;
+                if (objCtorTok == 0 || getPrimeTok == 0 || newarrTok == 0 || bucketsTok == 0 ||
+                    loadsizeTok == 0 || (cmpParam >= 0 && fComparer == null))
+                    return inner.GetMethodIL(method);
+
+                var extraTok = new Dictionary<int, object>();
+                int tComparer = 0;
+                if (cmpParam >= 0) { tComparer = 0x0A7FFF20; extraTok[tComparer] = fComparer; }
+
+                var emit = new List<byte>();
+                void Op(byte b) => emit.Add(b);
+                void Tok(byte op, int tk) { emit.Add(op); emit.Add((byte)tk); emit.Add((byte)(tk >> 8)); emit.Add((byte)(tk >> 16)); emit.Add((byte)(tk >> 24)); }
+                void Ldarg(int pi) { int a = pi + 1; if (a <= 3) Op((byte)(0x02 + a)); else { Op(0x0E); Op((byte)a); } }
+
+                Op(0x02); Tok(0x28, objCtorTok);            // this.Object..ctor()
+                if (capParam >= 0) Ldarg(capParam); else Op(0x16);   // capacity or 0
+                Op(0x1F); Op(100); Op(0x5A); Op(0x1F); Op(72); Op(0x5B); Op(0x0A);  // rawsize = cap*100/72
+                Op(0x06); Op(0x19); Op(0x30); Op(0x03);     // ldloc.0; ldc.i4.3; bgt.s +3
+                Op(0x19); Op(0x2B); Op(0x06);               // ldc.i4.3; br.s +6
+                Op(0x06); Tok(0x28, getPrimeTok); Op(0x0B); // ldloc.0; call GetPrime; stloc.1
+                Op(0x02); Op(0x07); Tok(0x8D, newarrTok); Tok(0x7D, bucketsTok);    // _buckets = new bucket[hashsize]
+                Op(0x02); Op(0x07); Op(0x1F); Op(72); Op(0x5A); Op(0x1F); Op(100); Op(0x5B); Tok(0x7D, loadsizeTok); // _loadsize
+                if (cmpParam >= 0) { Op(0x02); Ldarg(cmpParam); Tok(0x7D, tComparer); }  // _keycomparer = comparer
+                Op(0x2A);
+
+                var ilocals = new[]
+                {
+                    new LocalVariableDefinition(int32Ht, false),
+                    new LocalVariableDefinition(int32Ht, false),
+                };
+                return new PatchedMethodIL(inner.GetMethodIL(method), emit.ToArray(), extraTok, locals: ilocals);
+            }
         }
 
         if (method.OwningType is MetadataType owningType &&
