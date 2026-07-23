@@ -1,7 +1,5 @@
 <Project>
   <!-- Compiler build variants: which runtime/blob release gets bundled.
-         perf (.b23) - performance-oriented runtime
-         min  (.x2)  - minimal runtime
        Select with -p:Variant=perf|min (default: perf). -->
   <PropertyGroup>
     <Variant Condition="'$(Variant)' == ''">perf</Variant>
@@ -29,7 +27,7 @@
   <PropertyGroup>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.b23</RuntimeVersionPostfix>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x2</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x6</RuntimeVersionPostfix>
 
     <!-- Full runtime release tag. RuntimeVersion stays the plain NuGet
          version: both variants ship bflat.compiler.$(RuntimeVersion).nupkg,
