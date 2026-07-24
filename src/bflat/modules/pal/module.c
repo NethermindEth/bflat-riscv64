@@ -103,8 +103,6 @@ align_down_8_uintptr(uintptr_t x)
     return x & ~(uintptr_t)7;
 }
 
-extern uint32_t rhp_tss_counter;
-
 /*
  * Heap mark/reset: used by the preinit warmup to drop ephemeral allocations
  * (block/tx/witness/EvmStack buffers from the warmup Execute) after type
@@ -168,8 +166,6 @@ __wrap___libc_malloc_impl(unsigned long n)
 
     tmp = (void *)new_tmp_u;
     len = (uint64_t *)new_len_u;
-
-    rhp_tss_counter = 0;
 
     /* Emit maximum diagnostics with correct pointer formatting */
 #if _DEBUG
@@ -240,7 +236,6 @@ void
 __wrap___libc_free(void *p)
 {
     (void)p;
-    rhp_tss_counter = 0;
 }
 
 void *
@@ -248,8 +243,6 @@ __wrap___libc_realloc(void *p, unsigned long n)
 {
     void     *tmp;
     uint64_t *len;
-
-    rhp_tss_counter = 0;
 
     if (!p)
     {

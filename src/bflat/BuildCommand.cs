@@ -2244,8 +2244,11 @@ internal class BuildCommand : CommandBase
                  * built-in zisk.substitutions.xml stubs it to false at compile
                  * time, which folds the method away entirely - a --wrap against
                  * the vanished symbol would only trip --wrap-check. */
-                ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
+                /* Thread statics are NOT wrapped anymore either: native
+                 * RhGetThreadStaticStorage is a plain TLS field access and the
+                 * managed GetUninlinedThreadStaticBaseForType only needs
+                 * working allocation, which the unwrapped AllocFast.S +
+                 * uGC alloc_context path now provides. */
                 ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
                 ldArgs.Append($"--wrap=_Z19InitializeCpuCGroupv ");
                 ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
