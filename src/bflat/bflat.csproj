@@ -130,10 +130,14 @@
     <!-- PAL -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.params.yml" />
 
     <!-- RHP -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.params.yml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
 

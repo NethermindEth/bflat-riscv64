@@ -1,7 +1,39 @@
+# Linker options owned by the rhp module. BuildCommand reads this file from
+# the compiler layout (zisk/rhp.params.yml) and appends the flags whenever
+# the module is linked:
+#   ld      - zisk and zisk_sim targets
+#   ld_zisk - real-zisk target only
+# Every --wrap here has its __wrap_* definition in module.c.
 options:
   ld:
+    # P/Invoke transition frames are dead weight: the guest is single-
+    # threaded, uGC never suspends or scans, and the reverse transition
+    # would park at a GC rendezvous that never comes when a managed
+    # exception handler (ZkvmThrow) is entered in cooperative mode.
     - value: --wrap=RhpPInvoke
     - value: --wrap=RhpPInvokeReturn
     - value: --wrap=RhpReversePInvoke
     - value: --wrap=RhpReversePInvokeReturn
+    # No write barrier under uGC: bulk reference copy is a plain memmove.
     - value: --wrap=RhBulkMoveWithWriteBarrier
+    # Event tracing is meaningless in the guest; candidates for replacement
+    # by the EventSourceSupport=false ILC feature switch.
+    - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register
+    - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources
+    # EH policy: route the exception object to the weak ZkvmThrow handler or
+    # fail fast - real unwinding is not available (yet) on the zkVM.
+    - value: --wrap=RhpThrowEx
+    - value: --wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast
+    # FP elimination: exact integer reimplementations of the two CoreLib
+    # methods whose managed bodies are stubbed by zisk.substitutions.xml.
+    # Every assembly embedding the shared HashHelpers source gets its own
+    # IsPrime copy - all of them must be diverted.
+    - value: --wrap=System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime
+    - value: --wrap=S_P_CoreLib_System_Collections_HashHelpers__IsPrime
+    - value: --wrap=System_Collections_Immutable_System_Collections_HashHelpers__IsPrime
+    - value: --wrap=System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets
+  ld_zisk:
+    # No terminal device on the real zkVM; the sim keeps the host console.
+    - value: --wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling
+    - value: --wrap=SystemNative_SetTerminalInvalidationHandler
+    - value: --wrap=SystemNative_Write

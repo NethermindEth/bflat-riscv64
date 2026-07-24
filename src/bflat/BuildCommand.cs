@@ -587,6 +587,57 @@ internal class BuildCommand : CommandBase
         }
     }
 
+    /// <summary>
+    /// Appends the linker options a module declares in its module_params.yml
+    /// (copied into the layout as &lt;module&gt;.params.yml). The file is the
+    /// source of truth for the module's --wrap surface:
+    ///   options.ld      - applied for zisk and zisk_sim targets;
+    ///   options.ld_zisk - applied for the real zisk target only.
+    /// The parser is deliberately minimal: section headers are lines ending
+    /// in ':' with no value, entries are "- value: &lt;flag&gt;".
+    /// </summary>
+    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName, string libc)
+    {
+        string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
+        if (!File.Exists(paramsPath))
+            return;
+
+        string section = null;
+        foreach (string rawLine in File.ReadAllLines(paramsPath))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith("#"))
+                continue;
+
+            if (!line.StartsWith("-"))
+            {
+                int colon = line.IndexOf(':');
+                if (colon > 0)
+                {
+                    string key = line.Substring(0, colon).Trim();
+                    string rest = line.Substring(colon + 1).Trim();
+                    // "ld:"/"ld_zisk:" open a flag section; any "key: value"
+                    // pair (repo:, tag:, ...) closes the current one.
+                    section = rest.Length == 0 ? key : null;
+                }
+                continue;
+            }
+
+            if (section != "ld" && section != "ld_zisk")
+                continue;
+            if (section == "ld_zisk" && libc != "zisk")
+                continue;
+
+            const string prefix = "- value:";
+            if (!line.StartsWith(prefix))
+                throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{section}'");
+
+            string flag = line.Substring(prefix.Length).Trim();
+            if (flag.Length > 0)
+                ldArgs.Append(flag + " ");
+        }
+    }
+
     void PatchRiscvAbi(string path)
     {
         const long offset = 0x30;
@@ -2215,90 +2266,17 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"--wrap=inline_bump_alloc_aligned ");
-                }
-                /* rhp */
+                /* rhp: the wrap surface is declared in the module's
+                 * module_params.yml (packed as rhp.params.yml). What is NOT
+                 * wrapped anymore, and why the originals work on .NET 10 +
+                 * uGC alloc-context budgets: allocation helpers (upstream
+                 * riscv64 AllocFast.S + GcAllocInternal), thread statics
+                 * (plain TLS field + managed jagged arrays), the Lock family
+                 * incl. DeadlockAwareAcquire (truthful IsHeldByCurrentThread
+                 * breaks recursive cctor cycles), CheckCastAny, cgroup
+                 * initializers, GetDefaultLocaleName, and friends. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
-                /* Allocation helpers are NOT wrapped anymore: upstream .NET 10
-                 * ships riscv64 AllocFast.S (RhpNewFast & friends) whose
-                 * inline bump works once uGC hands out an alloc_context
-                 * budget (uGCHeap::Alloc refill quantum), and the slow path
-                 * (GcAllocInternal) already carries the MaxLength/overflow
-                 * checks the old wraps reimplemented. */
-                ldArgs.Append($"--wrap=RhpPInvoke ");
-                ldArgs.Append($"--wrap=RhpPInvokeReturn ");
-                /* No-op the reverse P/Invoke transition: the real one parks the
-                 * thread at a GC-safe point, which deadlocks when a managed
-                 * exception handler is entered from __wrap_RhpThrowEx (thread
-                 * already cooperative, single-threaded zkVM never rendezvous). */
-                ldArgs.Append($"--wrap=RhpReversePInvoke ");
-                ldArgs.Append($"--wrap=RhpReversePInvokeReturn ");
-                ldArgs.Append($"--wrap=RhBulkMoveWithWriteBarrier ");
-                /* CheckCastAny (cast cache = Interlocked + statics),
-                 * UInt32ToDecStrForKnownSmallNumber (lazy string cache),
-                 * Thread::IsDetached, WaitForForegroundThreads, the cgroup
-                 * initializers (open() is stubbed to -1 in pal),
-                 * Environment's NonGC static base (cgroup double math gone
-                 * via the ProcessorCount=1 substitution) and
-                 * GetDefaultLocaleName (unreachable under forced invariant
-                 * globalization) are no longer wrapped - their originals
-                 * work now that allocation, thread statics and locks do. */
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
-                /* ProcessorNumberSpeedCheck is no longer wrapped here: the
-                 * built-in zisk.substitutions.xml stubs it to false at compile
-                 * time, which folds the method away entirely - a --wrap against
-                 * the vanished symbol would only trip --wrap-check. */
-                /* Thread statics are NOT wrapped anymore either: native
-                 * RhGetThreadStaticStorage is a plain TLS field access and the
-                 * managed GetUninlinedThreadStaticBaseForType only needs
-                 * working allocation, which the unwrapped AllocFast.S +
-                 * uGC alloc_context path now provides. */
-                /* Lock machinery is NOT wrapped anymore. With real thread
-                 * statics (ManagedThreadId) restored, System.Threading.Lock
-                 * works as designed on the single-threaded guest: the
-                 * uncontended CAS fast path always succeeds, the blocking
-                 * slow path is unreachable (no other thread can hold a lock),
-                 * and ClassConstructorRunner's own DeadlockAwareAcquire
-                 * breaks recursive cctor cycles via the now-truthful
-                 * Lock.IsHeldByCurrentThread. The old stubs (Enter/Exit
-                 * no-ops, IsHeldByCurrentThread==1, C-side cctor tracking)
-                 * predated working thread statics. */
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
-                ldArgs.Append($"--wrap=_Z24PalGetMaximumStackBoundsPPvS0_ ");
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"--wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling ");
-                    ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
-                    ldArgs.Append($"--wrap=SystemNative_Write ");
-                }
-                /* musl's scanf/float-parsing members (vfscanf.o, floatscan.o,
-                 * fmodl.o) are the only libc.a members with real F/D
-                 * instructions in the stock hard-float Alpine build, and
-                 * ziskemu rejects any FP in .text regardless of
-                 * reachability. Wrapping the entry points redirects every
-                 * reference to the pal stubs, so the linker never pulls the
-                 * FP-carrying members in. (In-image callers are only the
-                 * CGroup probes, whose /proc inputs can't open on zisk.) */
-                ldArgs.Append($"--wrap=vfscanf ");
-                ldArgs.Append($"--wrap=__isoc99_vfscanf ");
-                ldArgs.Append($"--wrap=__floatscan ");
-                ldArgs.Append($"--wrap=RhpThrowEx ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
-                /* Method replacements implemented in the rhp module: the ILC
-                 * substitutions in zisk.substitutions.xml turn these managed
-                 * bodies into throw stubs (removing their F/D instructions from
-                 * the image) and the wraps divert every caller to the exact or
-                 * always-valid C reimplementations. All HashHelpers copies must
-                 * be wrapped: each embedding assembly compiles its own. */
-                ldArgs.Append($"--wrap=System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Collections_HashHelpers__IsPrime ");
-                ldArgs.Append($"--wrap=System_Collections_Immutable_System_Collections_HashHelpers__IsPrime ");
-                ldArgs.Append($"--wrap=System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rhp", libc);
 
                 /* libm: divert the math surface referenced by the runtime
                  * (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling)
@@ -2326,12 +2304,12 @@ internal class BuildCommand : CommandBase
                 }
 
                 /* asprintf is referenced only by the PAL's CGroup CPU-limit
-                 * parsing, whose initialization is already stubbed out above
-                 * (--wrap=_Z16InitializeCGroupv). Diverting it to a stub that
+                 * parsing, which cannot open its /proc//sys inputs on zisk
+                 * (pal's open() returns -1). Diverting it to a stub that
                  * returns -1 (the documented asprintf failure mode) keeps that
                  * dead path failing gracefully and, more importantly, stops
-                 * musl's vasprintf/fmt_fp/scalbn members - the last hard-float
-                 * F/D code in the image - from being pulled into the link. */
+                 * musl's vasprintf/fmt_fp/scalbn members - hard-float F/D
+                 * code - from being pulled into the link. */
                 ldArgs.Append($"--wrap=asprintf ");
 
                 /* gs_cookie */
@@ -2346,50 +2324,11 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpAssignRef ");
 
                 /* pal */
+                /* pal: syscall surface, bump allocator, FP-free printf/scanf
+                 * and the zisk exit protocol. The wrap surface is declared in
+                 * the module's module_params.yml (packed as pal.params.yml). */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
-                ldArgs.Append($"--wrap=getenv ");
-                ldArgs.Append($"--wrap=getcwd ");
-                ldArgs.Append($"--wrap=getpid ");
-                ldArgs.Append($"--wrap=getegid ");
-                ldArgs.Append($"--wrap=geteuid ");
-                ldArgs.Append($"--wrap=sched_getaffinity ");
-                ldArgs.Append($"--wrap=sched_getcpu ");
-                ldArgs.Append($"--wrap=open ");
-                ldArgs.Append($"--wrap=__libc_malloc_impl ");
-                ldArgs.Append($"--wrap=__libc_realloc ");
-                ldArgs.Append($"--wrap=__libc_free ");
-                ldArgs.Append($"--wrap=calloc ");
-                ldArgs.Append($"--wrap=pthread_create ");
-                ldArgs.Append($"--wrap=pthread_sigmask ");
-                ldArgs.Append($"--wrap=__clock_gettime ");
-                ldArgs.Append($"--wrap=clock_gettime ");
-                ldArgs.Append($"--wrap=__malloc_allzerop ");
-                ldArgs.Append($"--wrap=mmap ");
-                ldArgs.Append($"--wrap=munmap ");
-                ldArgs.Append($"--wrap=mlock ");
-                ldArgs.Append($"--wrap=munlock ");
-                ldArgs.Append($"--wrap=mlockall ");
-                ldArgs.Append($"--wrap=munlockall ");
-                ldArgs.Append($"--wrap=sched_yield ");
-                ldArgs.Append($"--wrap=sigaction ");
-                ldArgs.Append($"--wrap=signal ");
-                ldArgs.Append($"--wrap=syscall ");
-                ldArgs.Append($"--wrap=sysconf ");
-                /* FP-free vfprintf (pal module): keeps musl's vfprintf.o - and
-                 * its fmt_fp float formatter, the last F/D code in the image -
-                 * out of the link. Every printf/fprintf/snprintf routes here. */
-                ldArgs.Append($"--wrap=vfprintf ");
-                /* musl exit()/_Exit()/abort() issue exit_group (syscall 94),
-                 * which ZisK does not treat as program end. Redirect them to
-                 * pal's __wrap_* which emit the real ZisK exit ecall (a7=93). */
-                ldArgs.Append($"--wrap=exit ");
-                ldArgs.Append($"--wrap=_Exit ");
-                ldArgs.Append($"--wrap=abort ");
-                if (libc == "zisk")
-                {
-                    /* Hide write() in Zisk */
-                    ldArgs.Append($"--wrap=__stdio_write ");
-                }
+                AppendModuleParams(ldArgs, ziskLibPath, "pal", libc);
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
