@@ -36,19 +36,48 @@
 #define ZKVM_STUB_PINVOKE 1
 #endif
 
+/*
+ * ACSL (Frama-C) helper definitions shared by the function contracts below.
+ *
+ * align8              - size rounded up to the 8-byte allocation granule;
+ * valid_method_table  - readability of the MethodTable header words this
+ *                       module accesses (u16 component size at +0, u32 base
+ *                       size at +4);
+ * mt_base_size_l /
+ * mt_component_size_l - logic views of those two header fields in a given
+ *                       memory state L.
+ */
+/*@ logic integer align8(integer x) = ((x + 7) / 8) * 8;
+
+    predicate valid_method_table(void *mt) =
+        \valid_read((char *)mt + (0 .. 7));
+
+    logic integer mt_base_size_l{L}(void *mt) =
+        \at(*((unsigned int *)((char *)mt + 4)), L);
+
+    logic integer mt_component_size_l{L}(void *mt) =
+        \at(*((unsigned short *)((char *)mt + 0)), L);
+*/
+
 #if ZKVM_STUB_PINVOKE
+/*@ assigns \nothing; */
 void
 __wrap_RhpPInvoke(void *pFrame)
 {
     (void)pFrame;
 }
 
+/*@ assigns \nothing; */
 void
 __wrap_RhpPInvokeReturn(void *pFrame)
 {
     (void)pFrame;
 }
 #else
+/* Pass-through wrappers: their contract is that of the real runtime helpers
+ * (__real_RhpPInvoke / __real_RhpPInvokeReturn), which build and tear down a
+ * PInvokeTransitionFrame; that behaviour is outside the scope of these ACSL
+ * specifications. */
 extern void __real_RhpPInvoke(void *pFrame);
 extern void __real_RhpPInvokeReturn(void *pFrame);
 
@@ -67,6 +96,13 @@ __wrap_RhpPInvokeReturn(void *pFrame)
 
 /* Bulk reference copy. uGC has no write barrier, so this is just a move.
  * memmove resolves to the libziskos DMA-accelerated wrapper. */
+/*@ requires len == 0 ||
+        (\valid((char *)dest + (0 .. len - 1)) &&
+         \valid_read((char *)src + (0 .. len - 1)));
+    assigns ((char *)dest)[0 .. len - 1];
+    ensures \forall integer i; 0 <= i < len ==>
+        ((char *)dest)[i] == \old(((char *)src)[i]);
+*/
 void
 __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
 {
@@ -87,6 +123,13 @@ extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumber
  * bounds): no nested malloc call, single alignment step, leaf function.
  * --wrap=RhpNewFast (rhp/module_params.yml) still redirects callers there. */
 
+/*@ requires valid_method_table(methodTable);
+    assigns \result \from methodTable;
+    allocates \result;
+    ensures \result == \null ||
+        (\valid((char *)\result + (0 .. 23)) &&
+         *((void **)\result) == methodTable);
+*/
 void *
 __wrap_RhpNewObject(void *methodTable, int allocFlags)
 {
@@ -126,30 +169,53 @@ __wrap_RhpNewObject(void *methodTable, int allocFlags)
 #define STRING_BASE_SIZE         0x16
 #define STRING_COMPONENT_SIZE    0x2
 
+/*@ requires x <= SIZE_MAX - 7;
+    assigns \nothing;
+    ensures \result == align8(x);
+    ensures x <= \result < x + 8;
+    ensures \result % 8 == 0;
+*/
 static inline size_t
 align_up_8(size_t x)
 {
     return (x + 7u) & ~(size_t)7u;
 }
 
+/*@ requires valid_method_table(methodTable);
+    assigns \nothing;
+    ensures \result == mt_base_size_l{Pre}(methodTable);
+*/
 static inline uint32_t
 mt_base_size(void *methodTable)
 {
     return *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
 }
 
+/*@ requires valid_method_table(methodTable);
+    assigns \nothing;
+    ensures \result == mt_component_size_l{Pre}(methodTable);
+*/
 static inline uint16_t
 mt_component_size(void *methodTable)
 {
     return *(volatile uint16_t *)((uint8_t *)methodTable + MT_COMPONENT_SIZE_OFFSET);
 }
 
+/*@ requires \valid((void **)((char *)obj + OBJ_EETYPE_OFFSET));
+    assigns *((void **)((char *)obj + OBJ_EETYPE_OFFSET));
+    ensures *((void **)((char *)obj + OBJ_EETYPE_OFFSET)) == methodTable;
+*/
 static inline void
 init_object_header(void *obj, void *methodTable)
 {
     *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
 }
 
+/*@ requires \valid((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET));
+    assigns *((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET));
+    ensures *((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET)) ==
+        (uint32_t)numElements;
+*/
 static inline void
 init_array_length(void *obj, unsigned long numElements)
 {
@@ -165,6 +231,10 @@ init_array_length(void *obj, unsigned long numElements)
  * writes land out of bounds. We instead fail loudly. */
 #define MAX_ARRAY_LENGTH 0x7FFFFFC7u
 
+/*@ assigns \nothing;
+    ensures \false;
+    exits \exit_status == 255;
+*/
 __attribute__((noreturn, noinline, cold))
 static void
 rhp_alloc_overflow(void)
@@ -175,6 +245,18 @@ rhp_alloc_overflow(void)
 /* base + numElements*componentSize, 8-byte aligned, with element-count,
  * multiply and add overflow checks. Terminates instead of returning a
  * wrapped (too-small) size. */
+/*@ // Call-site facts: baseSize is 0x16 or 0x18, componentSize is 2, 8 or a
+    // u16 MethodTable component size, so the aligned total cannot wrap even
+    // at the MAX_ARRAY_LENGTH element-count ceiling.
+    requires baseSize <= 4096;
+    requires componentSize <= 65536;
+    assigns \nothing;
+    exits \exit_status == 255;
+    ensures numElements <= MAX_ARRAY_LENGTH;
+    ensures \result == align8(baseSize + numElements * componentSize);
+    ensures \result % 8 == 0;
+    ensures \result >= baseSize;
+*/
 static inline size_t
 array_alloc_size(size_t baseSize, unsigned long numElements, size_t componentSize)
 {
@@ -190,6 +272,17 @@ array_alloc_size(size_t baseSize, unsigned long numElements, size_t componentSiz
     return align_up_8(bytes);
 }
 
+/*@ assigns \result \from methodTable, numElements;
+    allocates \result;
+    exits \exit_status == 255;
+    ensures numElements <= MAX_ARRAY_LENGTH;
+    ensures \result == \null ||
+        \fresh(\result, align8(SZARRAY_BASE_SIZE + numElements * 8));
+    ensures \result == \null ||
+        (*((void **)\result) == methodTable &&
+         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
+             (uint32_t)numElements);
+*/
 void *
 __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
 {
@@ -207,6 +300,20 @@ __wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
     return obj;
 }
 
+/*@ requires valid_method_table(methodTable);
+    assigns \result \from methodTable, numElements;
+    allocates \result;
+    exits \exit_status == 255;
+    ensures numElements <= MAX_ARRAY_LENGTH;
+    ensures \result == \null ||
+        \fresh(\result,
+               align8(SZARRAY_BASE_SIZE +
+                      numElements * mt_component_size_l{Pre}(methodTable)));
+    ensures \result == \null ||
+        (*((void **)\result) == methodTable &&
+         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
+             (uint32_t)numElements);
+*/
 void *
 __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
 {
@@ -225,6 +332,19 @@ __wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
     return obj;
 }
 
+/*@ assigns \result \from methodTable, numElements;
+    allocates \result;
+    exits \exit_status == 255;
+    ensures numElements <= MAX_ARRAY_LENGTH;
+    ensures \result == \null ||
+        \fresh(\result,
+               align8(STRING_BASE_SIZE +
+                      numElements * STRING_COMPONENT_SIZE));
+    ensures \result == \null ||
+        (*((void **)\result) == methodTable &&
+         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
+             (uint32_t)numElements);
+*/
 void *
 __wrap_RhNewString(void *methodTable, unsigned long numElements)
 {
@@ -242,6 +362,10 @@ __wrap_RhNewString(void *methodTable, unsigned long numElements)
     return obj;
 }
 
+/* Pass-through: bypasses the cast cache and delegates verbatim to the managed
+ * CheckCastAny_NoCacheLookup helper, whose contract (return the object on
+ * success, throw InvalidCastException via RhpThrowEx otherwise) cannot be
+ * expressed here — no ACSL clauses are stated to avoid a false spec. */
 void **
 __wrap_S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny(
     unsigned int *param_1, unsigned int **param_2)
@@ -250,16 +374,36 @@ __wrap_S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny(
         param_1, param_2);
 }
 
+/*@ assigns \nothing; */
 void
 __wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register()
 {
 }
 
+/*@ assigns \nothing; */
 void
 __wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources()
 {
 }
 
+/*@ requires value == \null || \valid(value + (0 .. valueLength - 1));
+    assigns value[0 .. 5];
+
+    behavior buffer_too_small:
+      assumes value == \null || valueLength < 6;
+      assigns \nothing;
+      ensures \result == 0;
+
+    behavior ok:
+      assumes value != \null && valueLength >= 6;
+      assigns value[0 .. 5];
+      ensures \result == 1;
+      ensures value[0] == 'e' && value[1] == 'n' && value[2] == '_' &&
+              value[3] == 'U' && value[4] == 'S' && value[5] == '\0';
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int32_t
 __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
 {
@@ -274,6 +418,13 @@ __wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
     return 1;
 }
 
+/*@ // The contract describes the production configuration, in which the
+    // __test_processor_number_speed_check environment variable is unset and
+    // the function is a pure stub. The __real_ escape hatch is test-only and
+    // inherits the managed implementation's (unspecified) behaviour.
+    assigns \nothing;
+    ensures \result == 1;
+*/
 int
 __wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void)
 {
@@ -298,10 +449,18 @@ static uint8_t thread_static_storage[THREAD_STATIC_STORAGE_SIZE]
     __attribute__((aligned(64))) = { 0 };
 static uint8_t *thread_static_ptr = thread_static_storage;
 
+/*@ global invariant tss_ptr_in_bounds:
+      &thread_static_storage[0] <= thread_static_ptr <=
+      &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE;
+*/
+
 /*
  * Wrapper for RhGetThreadStaticStorage - returns a pointer to the storage struct
  * with the managed array reference at offset 0.
  */
+/*@ assigns \nothing;
+    ensures \result == &g_thread_static_storage;
+*/
 void *
 __wrap_RhGetThreadStaticStorage(void)
 {
@@ -318,12 +477,32 @@ typedef struct ThreadStaticsKeyedStore
 
 static ThreadStaticsKeyedStore g_tss_by_type_manager[TSS_MAX_TYPEMANAGERS];
 
+/*@ global invariant tss_slots_in_storage:
+      \forall integer m, s;
+        0 <= m < TSS_MAX_TYPEMANAGERS && 0 <= s < TSS_MAX_SLOTS ==>
+          (g_tss_by_type_manager[m].slots[s] == \null ||
+           (&thread_static_storage[0] <=
+                (uint8_t *)g_tss_by_type_manager[m].slots[s] &&
+            (uint8_t *)g_tss_by_type_manager[m].slots[s] <
+                &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE));
+*/
+
+/*@ requires \valid_read((uint32_t *)p);
+    assigns \nothing;
+    ensures \result == *((uint32_t *)p);
+*/
 static inline uint32_t
 tss_read_u32(const void *p)
 {
     return *(const volatile uint32_t *)p;
 }
 
+/*@ requires a > 0 && (a & (a - 1)) == 0;
+    requires x <= SIZE_MAX - (a - 1);
+    assigns \nothing;
+    ensures \result % a == 0;
+    ensures x <= \result < x + a;
+*/
 static inline size_t
 tss_align_up(size_t x, size_t a)
 {
@@ -337,6 +516,77 @@ void *_param_2 = 0;
 uint32_t _typeManagerIndex = 0;
 uint32_t rhp_tss_counter = 0;
 
+/*
+ * ACSL views of the two raw arguments: param_1 carries the TypeManagerSlot
+ * (typeManagerIndex is the u32 at +8), param_2 carries the per-type slot
+ * index in its low 32 bits.
+ */
+/*@ logic integer tss_tm_index{L}(void *p) =
+        p == \null ? 0
+                   : \at(*((unsigned int *)((char *)p + 8)), L);
+
+    logic integer tss_slot(void *p) = (unsigned int)(size_t)p;
+*/
+
+/*@ requires param_1 == \null || \valid_read((char *)param_1 + (8 .. 11));
+    assigns _param_1, _param_2, _typeManagerIndex, rhp_tss_counter,
+            thread_static_ptr,
+            g_tss_by_type_manager[0 .. TSS_MAX_TYPEMANAGERS - 1],
+            thread_static_storage[0 .. THREAD_STATIC_STORAGE_SIZE - 1];
+    ensures \result == 0 ||
+        (&thread_static_storage[0] <= (uint8_t *)\result &&
+         (uint8_t *)\result + TSS_SLOT_BYTES <=
+             &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE);
+
+    behavior out_of_range:
+      assumes tss_tm_index{Pre}(param_1) >= TSS_MAX_TYPEMANAGERS ||
+              tss_slot(param_2) >= TSS_MAX_SLOTS;
+      assigns \nothing;
+      ensures \result == 0;
+
+    behavior cached:
+      assumes tss_tm_index{Pre}(param_1) < TSS_MAX_TYPEMANAGERS &&
+              tss_slot(param_2) < TSS_MAX_SLOTS &&
+              g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                  .slots[tss_slot(param_2)] != \null;
+      assigns _param_1, _param_2, _typeManagerIndex, rhp_tss_counter;
+      ensures (void *)\result ==
+          \old(g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                   .slots[tss_slot(param_2)]);
+      ensures thread_static_ptr == \old(thread_static_ptr);
+
+    behavior fresh_slot:
+      assumes tss_tm_index{Pre}(param_1) < TSS_MAX_TYPEMANAGERS &&
+              tss_slot(param_2) < TSS_MAX_SLOTS &&
+              g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                  .slots[tss_slot(param_2)] == \null &&
+              thread_static_ptr + TSS_SLOT_BYTES <=
+                  &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE;
+      assigns _param_1, _param_2, _typeManagerIndex, rhp_tss_counter,
+              thread_static_ptr,
+              g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                  .slots[tss_slot(param_2)],
+              thread_static_ptr[0 .. TSS_SLOT_BYTES - 1];
+      ensures (uint8_t *)\result == \old(thread_static_ptr);
+      ensures thread_static_ptr == \old(thread_static_ptr) + TSS_SLOT_BYTES;
+      ensures g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                  .slots[tss_slot(param_2)] == (void *)\result;
+      ensures \forall integer i; 0 <= i < TSS_SLOT_BYTES ==>
+          ((uint8_t *)\result)[i] == 0;
+
+    behavior storage_exhausted:
+      assumes tss_tm_index{Pre}(param_1) < TSS_MAX_TYPEMANAGERS &&
+              tss_slot(param_2) < TSS_MAX_SLOTS &&
+              g_tss_by_type_manager[tss_tm_index{Pre}(param_1)]
+                  .slots[tss_slot(param_2)] == \null &&
+              thread_static_ptr + TSS_SLOT_BYTES >
+                  &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE;
+      assigns _param_1, _param_2, _typeManagerIndex, rhp_tss_counter;
+      ensures \result == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1, void *param_2)
 {
     /* typeManagerIndex is read from param_1 + 8 (matches lw s3,8(s2) in disassembly) */
@@ -416,36 +666,50 @@ long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStatic
     return (long)p;
 }
 
+/*@ assigns \nothing; */
 void __wrap__Z16InitializeCGroupv(void)
 {
 }
 
+/*@ assigns \nothing; */
 void __wrap__Z19InitializeCpuCGroupv(void)
 {
 }
 
+/*@ assigns \nothing; */
 void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
 {
 }
 
+/*@ assigns \nothing; */
 void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
 {
 }
+
+/*@ // The zkVM guest is single-threaded; thread id 1 is the only thread.
+    assigns \nothing;
+    ensures \result == 1;
+*/
 int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
 {
     return 1;
 }
 
+/*@ assigns \nothing; */
 void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
 {
 }
 
+/*@ assigns \nothing;
+    ensures \result == param_2;
+*/
 void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
 {
     return param_2;
 }
 
 /* Bypass the TypeLoader lock assertion */
+/*@ assigns \nothing; */
 void __wrap_S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld(void)
 {
 }
@@ -453,6 +717,9 @@ void __wrap_S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__Ve
 /*
  * Every Lock is conceptually held by the only thread.
  */
+/*@ assigns \nothing;
+    ensures \result == 1;
+*/
 int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *self)
 {
     (void)self;
@@ -469,6 +736,39 @@ int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *se
 static void *g_active_cctors[ACTIVE_CCTOR_MAX];
 static int   g_active_cctor_count = 0;
 
+/*@ global invariant active_cctor_count_bounds:
+      0 <= g_active_cctor_count <= ACTIVE_CCTOR_MAX;
+*/
+
+/*@ requires 0 <= g_active_cctor_count <= ACTIVE_CCTOR_MAX;
+    assigns g_active_cctors[0 .. ACTIVE_CCTOR_MAX - 1], g_active_cctor_count;
+    ensures \result == 0 || \result == 1;
+
+    behavior recursive_reentry:
+      assumes \exists integer i;
+          0 <= i < g_active_cctor_count && g_active_cctors[i] == ctx;
+      assigns \nothing;
+      ensures \result == 0;
+
+    behavior first_entry:
+      assumes (\forall integer i;
+          0 <= i < g_active_cctor_count ==> g_active_cctors[i] != ctx) &&
+          g_active_cctor_count < ACTIVE_CCTOR_MAX;
+      assigns g_active_cctors[g_active_cctor_count], g_active_cctor_count;
+      ensures g_active_cctor_count == \old(g_active_cctor_count) + 1;
+      ensures g_active_cctors[\old(g_active_cctor_count)] == ctx;
+      ensures \result == 1;
+
+    behavior table_full:
+      assumes (\forall integer i;
+          0 <= i < g_active_cctor_count ==> g_active_cctors[i] != ctx) &&
+          g_active_cctor_count == ACTIVE_CCTOR_MAX;
+      assigns \nothing;
+      ensures \result == 1;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int __wrap_S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire(
     void *cctorChain, int idx, void *ctx)
 {
@@ -488,32 +788,48 @@ int __wrap_S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__D
     return 1;
 }
 
+/*@ assigns \nothing; */
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
 {
 }
 
+/*@ assigns \nothing; */
 void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
 {
 }
 
+/*@ assigns \nothing; */
 void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
 {
 }
 
-int __wrap__ZN6Thread10IsDetachedEv(void *)
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
+int __wrap__ZN6Thread10IsDetachedEv(void *thread)
 {
+    (void)thread;
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 1;
+*/
 int __wrap_System_Console_Interop_Sys__InitializeTerminalAndSignalHandling(void)
 {
     return 1;
 }
 
+/*@ assigns \nothing; */
 void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param)
 {
 }
 
+/*@ // The write is swallowed: the guest console is a no-op device, but the
+    // caller is told the full buffer was consumed so it does not retry.
+    assigns \nothing;
+    ensures \result == bufferSize;
+*/
 int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
 {
     return bufferSize;
@@ -521,6 +837,9 @@ int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
 
 extern void *S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(int value);
 
+/* Pass-through: delegates to the managed UInt32ToDecStr_NoCacheLookup helper,
+ * which allocates and returns a managed string. Managed allocation effects
+ * cannot be captured in ACSL here, so no clauses are stated. */
 void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int value)
 {
     return S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(value);
@@ -533,12 +852,14 @@ void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int va
  * is entered from __wrap_RhpThrowEx, the thread is ALREADY cooperative, so the
  * real transition spins on a GC rendezvous that never comes in the
  * single-threaded, never-collecting zkVM. No-op it (matches zerolib). */
+/*@ assigns \nothing; */
 void
 __wrap_RhpReversePInvoke(void *pFrame)
 {
     (void)pFrame;
 }
 
+/*@ assigns \nothing; */
 void
 __wrap_RhpReversePInvokeReturn(void *pFrame)
 {
@@ -554,6 +875,15 @@ __wrap_RhpReversePInvokeReturn(void *pFrame)
  * does not exit, so the handler decides what happens next. */
 extern void ZkvmThrow(void *exceptionObj) __attribute__((weak));
 
+/*@ // Two configurations exist. Without a linked ZkvmThrow handler (weak
+    // symbol resolves to null) the function never returns and terminates the
+    // guest with exit status 1. With a handler, control transfers to managed
+    // code whose effects cannot be specified here; the function returns
+    // normally only in that configuration. The weak-symbol test is a link-time
+    // property, not expressible as an ACSL assumes clause, so only the exit
+    // status of the fallback path is stated formally.
+    exits \exit_status == 1;
+*/
 void __wrap_RhpThrowEx(void *exceptionObj)
 {
     if (ZkvmThrow != NULL)
@@ -566,6 +896,10 @@ void __wrap_RhpThrowEx(void *exceptionObj)
 
 /* FailFast carries a message string (or null), not an exception object, so it
  * keeps the plain fail-fast path rather than routing through ZkvmThrow. */
+/*@ assigns \nothing;
+    ensures \false;
+    exits \exit_status == 1;
+*/
 void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
 {
     exit(1);
@@ -579,6 +913,29 @@ void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
  * System.Collections.Concurrent and System.Collections.Immutable copies -
  * their identical bodies are folded into a single symbol by the compiler's
  * method body folding. */
+/*@ // Mirrors the managed HashHelpers.IsPrime exactly, including its quirks:
+    // odd candidates are "prime" iff no odd divisor d with d*d <= candidate
+    // divides them (so 1 and 9-free odd composites below 9 report prime, as
+    // upstream does), and the only even prime is 2. GetPrime never passes
+    // negative values.
+    requires candidate >= 0;
+    assigns \nothing;
+    ensures \result == 0 || \result == 1;
+
+    behavior odd:
+      assumes candidate % 2 == 1;
+      ensures \result == 1 <==>
+          (\forall integer d;
+             3 <= d && d % 2 == 1 && d * d <= candidate ==>
+                 candidate % d != 0);
+
+    behavior even:
+      assumes candidate % 2 == 0;
+      ensures \result == 1 <==> candidate == 2;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int
 __wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(int candidate)
 {
@@ -597,12 +954,50 @@ __wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(int
 /* Each assembly embedding the shared HashHelpers source gets its own copy of
  * IsPrime; with the ILC substitution turning the managed bodies into throw
  * stubs, every copy's callers must be diverted to the C implementation. */
+/*@ // Exact alias of the Concurrent copy above; same contract.
+    requires candidate >= 0;
+    assigns \nothing;
+    ensures \result == 0 || \result == 1;
+
+    behavior odd:
+      assumes candidate % 2 == 1;
+      ensures \result == 1 <==>
+          (\forall integer d;
+             3 <= d && d % 2 == 1 && d * d <= candidate ==>
+                 candidate % d != 0);
+
+    behavior even:
+      assumes candidate % 2 == 0;
+      ensures \result == 1 <==> candidate == 2;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int
 __wrap_S_P_CoreLib_System_Collections_HashHelpers__IsPrime(int candidate)
 {
     return __wrap_System_Collections_Concurrent_System_Collections_HashHelpers__IsPrime(candidate);
 }
 
+/*@ // Exact alias of the Concurrent copy above; same contract.
+    requires candidate >= 0;
+    assigns \nothing;
+    ensures \result == 0 || \result == 1;
+
+    behavior odd:
+      assumes candidate % 2 == 1;
+      ensures \result == 1 <==>
+          (\forall integer d;
+             3 <= d && d % 2 == 1 && d * d <= candidate ==>
+                 candidate % d != 0);
+
+    behavior even:
+      assumes candidate % 2 == 0;
+      ensures \result == 1 <==> candidate == 2;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int
 __wrap_System_Collections_Immutable_System_Collections_HashHelpers__IsPrime(int candidate)
 {
@@ -626,6 +1021,16 @@ static const int rhp_primes[] = {
     4166287, 4999559, 5999471, 7199369
 };
 
+/*@ // Any positive bucket count is functionally correct (collisions chain);
+    // the guarantees that matter to the caller are: the count covers the
+    // entry count, is positive, and is odd (never a power of two, so hash
+    // distribution is preserved).
+    requires 0 <= hashCodesLength <= 0x7FFFFFFF;
+    assigns \nothing;
+    ensures \result >= hashCodesLength;
+    ensures \result >= 3;
+    ensures \result % 2 == 1;
+*/
 int
 __wrap_System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets(
     void *hashCodesRef, long hashCodesLength, int hashCodesAreUnique)
