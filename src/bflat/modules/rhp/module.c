@@ -7,28 +7,16 @@
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
-#include <inttypes.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define POISONED_POINTER ((void *)0xF)
-
-#define _DEBUG (0)
 
 /* RhpPInvoke / RhpPInvokeReturn build and tear down a PInvokeTransitionFrame
  * so the GC can scan/suspend a thread that has entered native code. The
  * zkVM guest is single-threaded, uGC never collects (so threads are never
  * suspended and the frame is never scanned), and RhpThrowEx fails fast
  * instead of unwinding (so the frame is never walked for EH). The whole
- * transition is therefore dead weight. ZKVM_STUB_PINVOKE=1 (default)
- * replaces both helpers with no-ops; set to 0 to restore the real ones. */
-#ifndef ZKVM_STUB_PINVOKE
-#define ZKVM_STUB_PINVOKE 1
-#endif
-
-#if ZKVM_STUB_PINVOKE
+ * transition is therefore dead weight. */
 /*@ assigns \nothing; */
 void
 __wrap_RhpPInvoke(void *pFrame)
@@ -42,26 +30,6 @@ __wrap_RhpPInvokeReturn(void *pFrame)
 {
     (void)pFrame;
 }
-#else
-/* Pass-through wrappers: their contract is that of the real runtime helpers
- * (__real_RhpPInvoke / __real_RhpPInvokeReturn), which build and tear down a
- * PInvokeTransitionFrame; that behaviour is outside the scope of these ACSL
- * specifications. */
-extern void __real_RhpPInvoke(void *pFrame);
-extern void __real_RhpPInvokeReturn(void *pFrame);
-
-void
-__wrap_RhpPInvoke(void *pFrame)
-{
-    __real_RhpPInvoke(pFrame);
-}
-
-void
-__wrap_RhpPInvokeReturn(void *pFrame)
-{
-    __real_RhpPInvokeReturn(pFrame);
-}
-#endif
 
 /* Bulk reference copy. uGC has no write barrier, so this is just a move.
  * memmove resolves to the libziskos DMA-accelerated wrapper. */

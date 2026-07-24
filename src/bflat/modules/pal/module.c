@@ -12,16 +12,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#define _DEBUG (0)
-
-/* zkVM RAM is zero-initialised and the downward bump allocator never reuses
- * memory, so a freshly handed-out block is already all-zero — the per-object
- * memset is redundant.
- */
-#ifndef ZKVM_FAST_ALLOC
-#define ZKVM_FAST_ALLOC 1
-#endif
-
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
 
@@ -125,7 +115,9 @@ zk_heap_reset(void *m)
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
-#if ZKVM_FAST_ALLOC
+    /* Downward bump allocation. zkVM RAM is zero-initialised and the heap
+     * never reuses memory, so every handed-out block is already all-zero.
+     * Each block is preceded by an 8-byte size header (used by realloc). */
     if (mem == 0)
         mem = (uint8_t *)_kernel_heap_top;
 
@@ -133,97 +125,14 @@ __wrap___libc_malloc_impl(unsigned long n)
     uintptr_t new_tmp = align_down_8_uintptr((uintptr_t)mem - req_aligned);
     uintptr_t new_len = new_tmp - 8u;
 
+    /* Bounds check: return NULL instead of writing below the heap and
+     * silently corrupting the caller's stack (the historic pc=0 crash). */
     if (new_len < (uintptr_t)_kernel_heap_bottom)
         return NULL;
 
     mem = (uint8_t *)new_len;
     *(uint64_t *)new_len = (uint64_t)req_aligned;
     return (void *)new_tmp;
-#else
-    /* NOTE: This allocator is a simple downward bump allocator.
-     * It is intentionally verbose for diagnostics. */
-    void     *tmp;
-    uint64_t *len;
-
-    uint8_t  *saved_mem = mem;
-    uintptr_t top = (uintptr_t)_kernel_heap_top;
-    uintptr_t bottom = (uintptr_t)_kernel_heap_bottom;
-
-    /* Initialize bump pointer */
-    if (mem == 0)
-        mem = (uint8_t *)top;
-
-    /* Defensive: ensure we print meaningful diagnostics even if mem is corrupt */
-    uintptr_t mem_before = (uintptr_t)mem;
-
-    /* Align requested size to 8 so our "len" header stays aligned */
-    size_t req = (size_t)n;
-    size_t req_aligned = (req + 7u) & ~(size_t)7u;
-
-    /* Compute new pointer using uintptr_t to avoid UB on pointer underflow */
-    uintptr_t new_tmp_u = align_down_8_uintptr(mem_before - (uintptr_t)req_aligned);
-    uintptr_t new_len_u = new_tmp_u - 8u;
-
-    tmp = (void *)new_tmp_u;
-    len = (uint64_t *)new_len_u;
-
-    /* Emit maximum diagnostics with correct pointer formatting */
-#if _DEBUG
-    printf(
-        "malloc(n=%lu aligned=%zu) mem@%p saved_mem=%p mem_before=%#" PRIxPTR
-        " top=%#" PRIxPTR " bottom=%#" PRIxPTR
-        " -> tmp=%#" PRIxPTR " len=%#" PRIxPTR
-        "\n",
-        n,
-        req_aligned,
-        (void *)&mem,
-        (void *)saved_mem,
-        mem_before,
-        top,
-        bottom,
-        (uintptr_t)tmp,
-        (uintptr_t)len
-    );
-
-    /* Basic range diagnostics (do not trap; just log loudly) */
-    if (bottom >= top)
-    {
-        printf("malloc WARN: heap bounds invalid: bottom=%#" PRIxPTR " top=%#" PRIxPTR "\n", bottom, top);
-    }
-    if (mem_before < bottom || mem_before > top)
-    {
-        printf("malloc WARN: mem pointer out of range before alloc: mem_before=%#" PRIxPTR " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
-               mem_before, bottom, top);
-    }
-    if (new_len_u < bottom || new_tmp_u > top)
-    {
-        printf("malloc WARN: computed ptrs out of heap range: tmp=%#" PRIxPTR " len=%#" PRIxPTR " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
-               new_tmp_u, new_len_u, bottom, top);
-    }
-#endif
-
-    /* Bounds check: if the new pointers go below heap bottom, the heap is
-     * exhausted.  Return NULL instead of writing to stack/ROM memory and
-     * silently corrupting the caller's saved registers (the historic pc=0
-     * crash where ra was zeroed by the subsequent calloc memset). */
-    if (new_len_u < bottom || new_tmp_u > top)
-    {
-#if _DEBUG
-        printf("malloc OOM: new_tmp=%#" PRIxPTR " new_len=%#" PRIxPTR
-               " (bottom=%#" PRIxPTR " top=%#" PRIxPTR ")\n",
-               new_tmp_u, new_len_u, bottom, top);
-#endif
-        return NULL;
-    }
-
-    mem = (uint8_t *)new_len_u;
-
-    /* Store allocation size header */
-    *len = (uint64_t)req_aligned;
-
-    /* Return pointer to usable payload */
-    return tmp;
-#endif
 }
 
 /* __wrap_RhpNewFast is gone: object allocation now flows through the
@@ -246,16 +155,10 @@ __wrap___libc_realloc(void *p, unsigned long n)
 
     if (!p)
     {
-#if _DEBUG
-        printf("realloc(p=NULL, n=%lu): delegating to malloc\n", n);
-#endif
         return __wrap___libc_malloc_impl(n);
     }
 
     len = (uint64_t *)((uint8_t *)p - 8u);
-#if _DEBUG
-    printf("realloc(p=%p, n=%lu): old_len=%" PRIu64 " header@%p\n", p, n, *len, (void *)len);
-#endif
 
     if (*len >= (uint64_t)n)
     {
@@ -266,9 +169,6 @@ __wrap___libc_realloc(void *p, unsigned long n)
     tmp = __wrap___libc_malloc_impl(n);
     if (!tmp)
     {
-#if _DEBUG
-        printf("realloc(p=%p, n=%lu): malloc returned NULL\n", p, n);
-#endif
         return 0;
     }
 
@@ -287,14 +187,8 @@ __wrap_calloc(unsigned long nmemb, unsigned long size)
     if (nmemb != 0 && total / nmemb != size)
         return NULL;
 
-    void *p = __wrap___libc_malloc_impl((unsigned long)total);
-#if !ZKVM_FAST_ALLOC
-    /* Fast path: the bump allocator hands out fresh zero RAM, so the block
-     * is already zero. Only the safe path needs to clear it explicitly. */
-    if (p)
-        __builtin_memset(p, 0, total);
-#endif
-    return p;
+    /* No memset: the bump allocator hands out fresh zero RAM. */
+    return __wrap___libc_malloc_impl((unsigned long)total);
 }
 
 int
@@ -541,7 +435,6 @@ __wrap_syscall(long number, ...)
 {
     va_list args;
     long arg1, arg2, arg3, arg4, arg5, arg6;
-    long result;
 
     va_start(args, number);
     arg1 = va_arg(args, long);
