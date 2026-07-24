@@ -230,50 +230,11 @@ __wrap___libc_malloc_impl(unsigned long n)
 #endif
 }
 
-/* Tight fixed-size object allocator (the hot path, RhpNewFast).
- *
- * Defined here, in the same translation unit as the bump pointer `mem`, the
- * heap bounds and align_down_8_uintptr, so the downward bump is inlined
- * directly: NO nested malloc call, a SINGLE alignment step, and a leaf body
- * (eligible for frameless-leaf). This mirrors how x64/arm64 get fast
- * allocation - a tight RhpNewFast helper - rather than per-site JIT inlining
- * (which RyuJIT does on no target). --wrap=RhpNewFast (rhp module) redirects
- * managed callers here regardless of which .o defines the symbol. */
-void *
-__wrap_RhpNewFast(void *methodTable)
-{
-    const size_t MT_BASE_SIZE_OFFSET = 0x4;
-    const size_t MIN_OBJECT_SIZE     = 0x18;
-
-    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
-    size_t   total    = (size_t)baseSize;
-    if (total < MIN_OBJECT_SIZE)
-        total = MIN_OBJECT_SIZE;
-
-#if ZKVM_FAST_ALLOC
-    /* Inlined downward bump (mirrors __wrap___libc_malloc_impl fast path):
-     * one alignment, no call. zkVM RAM is zero so no memset is needed. */
-    if (mem == 0)
-        mem = (uint8_t *)_kernel_heap_top;
-    size_t    req        = (total + 7u) & ~(size_t)7u;
-    uintptr_t new_tmp    = align_down_8_uintptr((uintptr_t)mem - req);
-    uintptr_t new_len    = new_tmp - 8u;
-    if (new_len < (uintptr_t)_kernel_heap_bottom)
-        return 0;
-    mem                  = (uint8_t *)new_len;
-    *(uint64_t *)new_len = (uint64_t)req;        /* size header */
-    void *obj            = (void *)new_tmp;
-#else
-    total     = (total + 7u) & ~(size_t)7u;
-    void *obj = malloc(total);
-    if (obj) __builtin_memset(obj, 0, total);
-    if (!obj)
-        return 0;
-#endif
-
-    *(void **)obj = methodTable;                 /* MethodTable header at offset 0 */
-    return obj;
-}
+/* __wrap_RhpNewFast is gone: object allocation now flows through the
+ * runtime's own riscv64 AllocFast.S fast path (inline ee_alloc_context bump,
+ * budget refilled by uGCHeap::Alloc) and the GcAllocInternal slow path. The
+ * slow path ultimately lands in this file's wrapped malloc, so all managed
+ * memory still comes from the same downward bump heap. */
 
 void
 __wrap___libc_free(void *p)

@@ -17,14 +17,6 @@
 
 #define _DEBUG (0)
 
-/* zkVM RAM is zero-initialised and the bump allocator never reuses memory,
- * so a freshly malloc'd block is already all-zero. ZKVM_FAST_ALLOC=1
- * (default) drops the redundant per-object/array memset; set to 0 to
- * restore the explicit zeroing. Kept in sync with pal/module.c. */
-#ifndef ZKVM_FAST_ALLOC
-#define ZKVM_FAST_ALLOC 1
-#endif
-
 /* RhpPInvoke / RhpPInvokeReturn build and tear down a PInvokeTransitionFrame
  * so the GC can scan/suspend a thread that has entered native code. The
  * zkVM guest is single-threaded, uGC never collects (so threads are never
@@ -35,29 +27,6 @@
 #ifndef ZKVM_STUB_PINVOKE
 #define ZKVM_STUB_PINVOKE 1
 #endif
-
-/*
- * ACSL (Frama-C) helper definitions shared by the function contracts below.
- *
- * align8              - size rounded up to the 8-byte allocation granule;
- * valid_method_table  - readability of the MethodTable header words this
- *                       module accesses (u16 component size at +0, u32 base
- *                       size at +4);
- * mt_base_size_l /
- * mt_component_size_l - logic views of those two header fields in a given
- *                       memory state L.
- */
-/*@ logic integer align8(integer x) = ((x + 7) / 8) * 8;
-
-    predicate valid_method_table(void *mt) =
-        \valid_read((char *)mt + (0 .. 7));
-
-    logic integer mt_base_size_l{L}(void *mt) =
-        \at(*((unsigned int *)((char *)mt + 4)), L);
-
-    logic integer mt_component_size_l{L}(void *mt) =
-        \at(*((unsigned short *)((char *)mt + 0)), L);
-*/
 
 #if ZKVM_STUB_PINVOKE
 /*@ assigns \nothing; */
@@ -109,258 +78,18 @@ __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
     memmove(dest, src, len);
 }
 
-extern void *RhpNewObject(void *methodTable, int allocFlags);
-extern void *RhpGcAlloc(void *pEEType, unsigned int uFlags,
-    unsigned long numElements, void * pTransitionFrame);
-
-
 extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
     unsigned int *param_1, unsigned int **param_2);
 extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void);
 
-/* __wrap_RhpNewFast moved to pal/module.c so the downward bump allocator is
- * inlined directly into it (same translation unit as `mem` and the heap
- * bounds): no nested malloc call, single alignment step, leaf function.
- * --wrap=RhpNewFast (rhp/module_params.yml) still redirects callers there. */
-
-/*@ requires valid_method_table(methodTable);
-    assigns \result \from methodTable;
-    allocates \result;
-    ensures \result == \null ||
-        (\valid((char *)\result + (0 .. 23)) &&
-         *((void **)\result) == methodTable);
-*/
-void *
-__wrap_RhpNewObject(void *methodTable, int allocFlags)
-{
-    (void)allocFlags;
-
-    const size_t MT_BASE_SIZE_OFFSET = 0x4;
-    const size_t OBJ_EETYPE_OFFSET   = 0x0;
-    const size_t MIN_OBJECT_SIZE     = 0x18;
-
-    uint32_t baseSize = *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
-    size_t total = (size_t)baseSize;
-
-    if (total < MIN_OBJECT_SIZE)
-        total = MIN_OBJECT_SIZE;
-
-    /* Align allocation size to 8 bytes */
-    total = (total + 7u) & ~(size_t)7u;
-
-    void *obj = malloc(total);
-#if !ZKVM_FAST_ALLOC
-    if (obj) __builtin_memset(obj, 0, total);
-#endif
-    if (!obj)
-        return 0;
-
-    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
-    return obj;
-}
-
-#define OBJ_EETYPE_OFFSET        0x0
-#define ARRAY_LENGTH_OFFSET      0x8
-
-#define MT_COMPONENT_SIZE_OFFSET 0x0
-#define MT_BASE_SIZE_OFFSET      0x4
-
-#define SZARRAY_BASE_SIZE        0x18
-#define STRING_BASE_SIZE         0x16
-#define STRING_COMPONENT_SIZE    0x2
-
-/*@ requires x <= SIZE_MAX - 7;
-    assigns \nothing;
-    ensures \result == align8(x);
-    ensures x <= \result < x + 8;
-    ensures \result % 8 == 0;
-*/
-static inline size_t
-align_up_8(size_t x)
-{
-    return (x + 7u) & ~(size_t)7u;
-}
-
-/*@ requires valid_method_table(methodTable);
-    assigns \nothing;
-    ensures \result == mt_base_size_l{Pre}(methodTable);
-*/
-static inline uint32_t
-mt_base_size(void *methodTable)
-{
-    return *(volatile uint32_t *)((uint8_t *)methodTable + MT_BASE_SIZE_OFFSET);
-}
-
-/*@ requires valid_method_table(methodTable);
-    assigns \nothing;
-    ensures \result == mt_component_size_l{Pre}(methodTable);
-*/
-static inline uint16_t
-mt_component_size(void *methodTable)
-{
-    return *(volatile uint16_t *)((uint8_t *)methodTable + MT_COMPONENT_SIZE_OFFSET);
-}
-
-/*@ requires \valid((void **)((char *)obj + OBJ_EETYPE_OFFSET));
-    assigns *((void **)((char *)obj + OBJ_EETYPE_OFFSET));
-    ensures *((void **)((char *)obj + OBJ_EETYPE_OFFSET)) == methodTable;
-*/
-static inline void
-init_object_header(void *obj, void *methodTable)
-{
-    *(void **)((uint8_t *)obj + OBJ_EETYPE_OFFSET) = methodTable;
-}
-
-/*@ requires \valid((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET));
-    assigns *((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET));
-    ensures *((uint32_t *)((char *)obj + ARRAY_LENGTH_OFFSET)) ==
-        (uint32_t)numElements;
-*/
-static inline void
-init_array_length(void *obj, unsigned long numElements)
-{
-    *(uint32_t *)((uint8_t *)obj + ARRAY_LENGTH_OFFSET) = (uint32_t)numElements;
-}
-
-/* Largest element count an array or string may have. The length is stored in
- * a 32-bit field (init_array_length) and .NET itself rejects anything larger
- * (Array.MaxLength). Upstream NativeAOT's fast allocators bail to a slow path
- * that throws when this is exceeded or when the byte size overflows. The
- * earlier zkVM stubs omitted that guard, so an attacker-influenced element
- * count could wrap size_t and under-allocate, after which the header/length
- * writes land out of bounds. We instead fail loudly. */
-#define MAX_ARRAY_LENGTH 0x7FFFFFC7u
-
-/*@ assigns \nothing;
-    ensures \false;
-    exits \exit_status == 255;
-*/
-__attribute__((noreturn, noinline, cold))
-static void
-rhp_alloc_overflow(void)
-{
-    exit(255);
-}
-
-/* base + numElements*componentSize, 8-byte aligned, with element-count,
- * multiply and add overflow checks. Terminates instead of returning a
- * wrapped (too-small) size. */
-/*@ // Call-site facts: baseSize is 0x16 or 0x18, componentSize is 2, 8 or a
-    // u16 MethodTable component size, so the aligned total cannot wrap even
-    // at the MAX_ARRAY_LENGTH element-count ceiling.
-    requires baseSize <= 4096;
-    requires componentSize <= 65536;
-    assigns \nothing;
-    exits \exit_status == 255;
-    ensures numElements <= MAX_ARRAY_LENGTH;
-    ensures \result == align8(baseSize + numElements * componentSize);
-    ensures \result % 8 == 0;
-    ensures \result >= baseSize;
-*/
-static inline size_t
-array_alloc_size(size_t baseSize, unsigned long numElements, size_t componentSize)
-{
-    size_t bytes;
-
-    if (numElements > MAX_ARRAY_LENGTH)
-        rhp_alloc_overflow();
-    if (__builtin_mul_overflow((size_t)numElements, componentSize, &bytes))
-        rhp_alloc_overflow();
-    if (__builtin_add_overflow(bytes, baseSize, &bytes))
-        rhp_alloc_overflow();
-
-    return align_up_8(bytes);
-}
-
-/*@ assigns \result \from methodTable, numElements;
-    allocates \result;
-    exits \exit_status == 255;
-    ensures numElements <= MAX_ARRAY_LENGTH;
-    ensures \result == \null ||
-        \fresh(\result, align8(SZARRAY_BASE_SIZE + numElements * 8));
-    ensures \result == \null ||
-        (*((void **)\result) == methodTable &&
-         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
-             (uint32_t)numElements);
-*/
-void *
-__wrap_RhpNewPtrArrayFast(void *methodTable, unsigned long numElements)
-{
-    size_t total = array_alloc_size((size_t)SZARRAY_BASE_SIZE, numElements, 8u);
-
-    void *obj = malloc(total);
-#if !ZKVM_FAST_ALLOC
-    if (obj) __builtin_memset(obj, 0, total);
-#endif
-    if (!obj)
-        return 0;
-
-    init_object_header(obj, methodTable);
-    init_array_length(obj, numElements);
-    return obj;
-}
-
-/*@ requires valid_method_table(methodTable);
-    assigns \result \from methodTable, numElements;
-    allocates \result;
-    exits \exit_status == 255;
-    ensures numElements <= MAX_ARRAY_LENGTH;
-    ensures \result == \null ||
-        \fresh(\result,
-               align8(SZARRAY_BASE_SIZE +
-                      numElements * mt_component_size_l{Pre}(methodTable)));
-    ensures \result == \null ||
-        (*((void **)\result) == methodTable &&
-         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
-             (uint32_t)numElements);
-*/
-void *
-__wrap_RhpNewArrayFast(void *methodTable, unsigned long numElements)
-{
-    size_t comp = (size_t)mt_component_size(methodTable);
-    size_t total = array_alloc_size((size_t)SZARRAY_BASE_SIZE, numElements, comp);
-
-    void *obj = malloc(total);
-#if !ZKVM_FAST_ALLOC
-    if (obj) __builtin_memset(obj, 0, total);
-#endif
-    if (!obj)
-        return 0;
-
-    init_object_header(obj, methodTable);
-    init_array_length(obj, numElements);
-    return obj;
-}
-
-/*@ assigns \result \from methodTable, numElements;
-    allocates \result;
-    exits \exit_status == 255;
-    ensures numElements <= MAX_ARRAY_LENGTH;
-    ensures \result == \null ||
-        \fresh(\result,
-               align8(STRING_BASE_SIZE +
-                      numElements * STRING_COMPONENT_SIZE));
-    ensures \result == \null ||
-        (*((void **)\result) == methodTable &&
-         *((uint32_t *)((char *)\result + ARRAY_LENGTH_OFFSET)) ==
-             (uint32_t)numElements);
-*/
-void *
-__wrap_RhNewString(void *methodTable, unsigned long numElements)
-{
-    size_t total = array_alloc_size((size_t)STRING_BASE_SIZE, numElements, (size_t)STRING_COMPONENT_SIZE);
-
-    void *obj = malloc(total);
-#if !ZKVM_FAST_ALLOC
-    if (obj) __builtin_memset(obj, 0, total);
-#endif
-    if (!obj)
-        return 0;
-
-    init_object_header(obj, methodTable);
-    init_array_length(obj, numElements);
-    return obj;
-}
+/* Allocation helpers (RhpNewFast, RhpNewObject, RhpNewPtrArrayFast,
+ * RhpNewArrayFast, RhNewString) are no longer wrapped: upstream .NET 10
+ * ships riscv64 AllocFast.S whose inline bump on the thread's
+ * ee_alloc_context works once uGC hands out an allocation budget
+ * (uGCHeap::Alloc refill quantum), and the native slow path
+ * (GCHelpers.cpp: GcAllocInternal) already performs the Array.MaxLength
+ * and overflow checks the old wraps reimplemented - with the MethodTable
+ * layout owned by the runtime instead of hand-copied offsets here. */
 
 /* Pass-through: bypasses the cast cache and delegates verbatim to the managed
  * CheckCastAny_NoCacheLookup helper, whose contract (return the object on
@@ -487,15 +216,15 @@ static ThreadStaticsKeyedStore g_tss_by_type_manager[TSS_MAX_TYPEMANAGERS];
                 &thread_static_storage[0] + THREAD_STATIC_STORAGE_SIZE));
 */
 
-/*@ requires \valid_read((uint32_t *)p);
-    assigns \nothing;
-    ensures \result == *((uint32_t *)p);
-*/
-static inline uint32_t
-tss_read_u32(const void *p)
+/* Mirror of the managed struct
+ * Internal.Runtime.CompilerHelpers.StartupCodeHelpers.TypeManagerSlot
+ * ({ TypeManagerHandle TypeManager; int ModuleIndex; }): the field offset is
+ * derived by the compiler from the declaration instead of being hand-coded. */
+typedef struct TypeManagerSlot
 {
-    return *(const volatile uint32_t *)p;
-}
+    void    *pTypeManager;
+    int32_t  moduleIndex;
+} TypeManagerSlot;
 
 /*@ requires a > 0 && (a & (a - 1)) == 0;
     requires x <= SIZE_MAX - (a - 1);
@@ -517,18 +246,18 @@ uint32_t _typeManagerIndex = 0;
 uint32_t rhp_tss_counter = 0;
 
 /*
- * ACSL views of the two raw arguments: param_1 carries the TypeManagerSlot
- * (typeManagerIndex is the u32 at +8), param_2 carries the per-type slot
- * index in its low 32 bits.
+ * ACSL views of the two raw arguments: param_1 carries the TypeManagerSlot,
+ * param_2 carries the per-type slot index in its low 32 bits.
  */
 /*@ logic integer tss_tm_index{L}(void *p) =
         p == \null ? 0
-                   : \at(*((unsigned int *)((char *)p + 8)), L);
+                   : \at(((TypeManagerSlot *)p)->moduleIndex, L);
 
     logic integer tss_slot(void *p) = (unsigned int)(size_t)p;
 */
 
-/*@ requires param_1 == \null || \valid_read((char *)param_1 + (8 .. 11));
+/*@ requires param_1 == \null ||
+        \valid_read(&((TypeManagerSlot *)param_1)->moduleIndex);
     assigns _param_1, _param_2, _typeManagerIndex, rhp_tss_counter,
             thread_static_ptr,
             g_tss_by_type_manager[0 .. TSS_MAX_TYPEMANAGERS - 1],
@@ -589,10 +318,12 @@ uint32_t rhp_tss_counter = 0;
 */
 long __wrap_S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType(void *param_1, void *param_2)
 {
-    /* typeManagerIndex is read from param_1 + 8 (matches lw s3,8(s2) in disassembly) */
+    /* param_1 is the managed TypeManagerSlot* (matches lw s3,8(s2) in the
+     * caller's disassembly - ModuleIndex is the int32 after the pointer) */
     uint32_t typeManagerIndex = 0;
     if (param_1 != NULL)
-        typeManagerIndex = tss_read_u32((const uint8_t *)param_1 + 8);
+        typeManagerIndex =
+            (uint32_t)((const volatile TypeManagerSlot *)param_1)->moduleIndex;
 
     /* slot index comes in param_2; treat it as a 32-bit signed/unsigned index */
     uintptr_t slotU = (uintptr_t)param_2;

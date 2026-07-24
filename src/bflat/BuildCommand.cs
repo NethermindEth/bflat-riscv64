@@ -2221,11 +2221,12 @@ internal class BuildCommand : CommandBase
                 }
                 /* rhp */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
-                ldArgs.Append($"--wrap=RhpNewFast ");
-                ldArgs.Append($"--wrap=RhpNewObject ");
-                ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
-                ldArgs.Append($"--wrap=RhpNewArrayFast ");
-                ldArgs.Append($"--wrap=RhNewString ");
+                /* Allocation helpers are NOT wrapped anymore: upstream .NET 10
+                 * ships riscv64 AllocFast.S (RhpNewFast & friends) whose
+                 * inline bump works once uGC hands out an alloc_context
+                 * budget (uGCHeap::Alloc refill quantum), and the slow path
+                 * (GcAllocInternal) already carries the MaxLength/overflow
+                 * checks the old wraps reimplemented. */
                 ldArgs.Append($"--wrap=RhpPInvoke ");
                 ldArgs.Append($"--wrap=RhpPInvokeReturn ");
                 /* No-op the reverse P/Invoke transition: the real one parks the

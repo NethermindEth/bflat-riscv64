@@ -1,9 +1,5 @@
 options:
   ld:
-    - value: --wrap=RhpNewFast
-    - value: --wrap=RhpNewPtrArrayFast
-    - value: --wrap=RhpNewArrayFast
-    - value: --wrap=RhNewString
     - value: --wrap=RhpPInvoke
     - value: --wrap=RhpPInvokeReturn
     - value: --wrap=RhpReversePInvoke
