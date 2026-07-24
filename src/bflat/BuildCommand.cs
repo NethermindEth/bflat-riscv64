@@ -2236,10 +2236,17 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=RhpReversePInvoke ");
                 ldArgs.Append($"--wrap=RhpReversePInvokeReturn ");
                 ldArgs.Append($"--wrap=RhBulkMoveWithWriteBarrier ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
+                /* CheckCastAny (cast cache = Interlocked + statics),
+                 * UInt32ToDecStrForKnownSmallNumber (lazy string cache),
+                 * Thread::IsDetached, WaitForForegroundThreads, the cgroup
+                 * initializers (open() is stubbed to -1 in pal),
+                 * Environment's NonGC static base (cgroup double math gone
+                 * via the ProcessorCount=1 substitution) and
+                 * GetDefaultLocaleName (unreachable under forced invariant
+                 * globalization) are no longer wrapped - their originals
+                 * work now that allocation, thread statics and locks do. */
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
-                ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
                 /* ProcessorNumberSpeedCheck is no longer wrapped here: the
                  * built-in zisk.substitutions.xml stubs it to false at compile
                  * time, which folds the method away entirely - a --wrap against
@@ -2249,10 +2256,6 @@ internal class BuildCommand : CommandBase
                  * managed GetUninlinedThreadStaticBaseForType only needs
                  * working allocation, which the unwrapped AllocFast.S +
                  * uGC alloc_context path now provides. */
-                ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
-                ldArgs.Append($"--wrap=_Z19InitializeCpuCGroupv ");
-                ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
                 /* Lock machinery is NOT wrapped anymore. With real thread
                  * statics (ManagedThreadId) restored, System.Threading.Lock
                  * works as designed on the single-threaded guest: the
@@ -2266,8 +2269,6 @@ internal class BuildCommand : CommandBase
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber ");
-                ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
                 ldArgs.Append($"--wrap=_Z24PalGetMaximumStackBoundsPPvS0_ ");
                 if (libc == "zisk")
                 {
@@ -2275,6 +2276,17 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
                     ldArgs.Append($"--wrap=SystemNative_Write ");
                 }
+                /* musl's scanf/float-parsing members (vfscanf.o, floatscan.o,
+                 * fmodl.o) are the only libc.a members with real F/D
+                 * instructions in the stock hard-float Alpine build, and
+                 * ziskemu rejects any FP in .text regardless of
+                 * reachability. Wrapping the entry points redirects every
+                 * reference to the pal stubs, so the linker never pulls the
+                 * FP-carrying members in. (In-image callers are only the
+                 * CGroup probes, whose /proc inputs can't open on zisk.) */
+                ldArgs.Append($"--wrap=vfscanf ");
+                ldArgs.Append($"--wrap=__isoc99_vfscanf ");
+                ldArgs.Append($"--wrap=__floatscan ");
                 ldArgs.Append($"--wrap=RhpThrowEx ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
                 /* Method replacements implemented in the rhp module: the ILC

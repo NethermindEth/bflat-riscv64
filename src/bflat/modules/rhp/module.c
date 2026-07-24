@@ -78,10 +78,6 @@ __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
     memmove(dest, src, len);
 }
 
-extern void **S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
-    unsigned int *param_1, unsigned int **param_2);
-extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void);
-
 /* Allocation helpers (RhpNewFast, RhpNewObject, RhpNewPtrArrayFast,
  * RhpNewArrayFast, RhNewString) are no longer wrapped: upstream .NET 10
  * ships riscv64 AllocFast.S whose inline bump on the thread's
@@ -91,17 +87,15 @@ extern int __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumber
  * and overflow checks the old wraps reimplemented - with the MethodTable
  * layout owned by the runtime instead of hand-copied offsets here. */
 
-/* Pass-through: bypasses the cast cache and delegates verbatim to the managed
- * CheckCastAny_NoCacheLookup helper, whose contract (return the object on
- * success, throw InvalidCastException via RhpThrowEx otherwise) cannot be
- * expressed here — no ACSL clauses are stated to avoid a false spec. */
-void **
-__wrap_S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny(
-    unsigned int *param_1, unsigned int **param_2)
-{
-    return S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny_NoCacheLookup(
-        param_1, param_2);
-}
+/* No CheckCastAny cache-bypass anymore: the cast cache runs on Interlocked
+ * ops and statics, both functional now. Likewise UInt32ToDecStr's
+ * small-number string cache (lazy statics), Thread::IsDetached (trivial
+ * field read), WaitForForegroundThreads (returns immediately with zero
+ * foreground threads), the cgroup initializers (their /proc,/sys parses
+ * no-op against pal's stubbed open()), Environment's NonGC static base
+ * (its cctor lost the cgroup double math to the ProcessorCount=1
+ * substitution) and GetDefaultLocaleName (unreachable under the invariant
+ * globalization forced by pal's getenv) all run their original code. */
 
 /*@ assigns \nothing; */
 void
@@ -115,56 +109,6 @@ __wrap_S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEven
 {
 }
 
-/*@ requires value == \null || \valid(value + (0 .. valueLength - 1));
-    assigns value[0 .. 5];
-
-    behavior buffer_too_small:
-      assumes value == \null || valueLength < 6;
-      assigns \nothing;
-      ensures \result == 0;
-
-    behavior ok:
-      assumes value != \null && valueLength >= 6;
-      assigns value[0 .. 5];
-      ensures \result == 1;
-      ensures value[0] == 'e' && value[1] == 'n' && value[2] == '_' &&
-              value[3] == 'U' && value[4] == 'S' && value[5] == '\0';
-
-    complete behaviors;
-    disjoint behaviors;
-*/
-int32_t
-__wrap_GlobalizationNative_GetDefaultLocaleName(char *value, int valueLength)
-{
-    static const char def[] = "en_US"; /* sizeof == 6, includes NUL */
-
-    /* Report failure rather than overflowing a short caller buffer. The old
-     * stub wrote 6 bytes unconditionally, ignoring valueLength. */
-    if (value == NULL || valueLength < (int)sizeof(def))
-        return 0;
-
-    __builtin_memcpy(value, def, sizeof(def));
-    return 1;
-}
-
-/*@ // The contract describes the production configuration, in which the
-    // __test_processor_number_speed_check environment variable is unset and
-    // the function is a pure stub. The __real_ escape hatch is test-only and
-    // inherits the managed implementation's (unspecified) behaviour.
-    assigns \nothing;
-    ensures \result == 1;
-*/
-int
-__wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(void)
-{
-    if (getenv("__test_processor_number_speed_check") != NULL)
-    {
-        return __real_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck();
-    }
-    /* Stub implementation - original .NET function EH info preserved via reference above */
-    return 1;
-}
-
 /* The thread-statics emulation (ThreadStaticStorageLite, the keyed slot
  * store, __wrap_RhGetThreadStaticStorage and
  * __wrap_..ThreadStatics__GetUninlinedThreadStaticBaseForType) is gone: the
@@ -174,26 +118,6 @@ __wrap_S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck(
  * GetUninlinedThreadStaticBaseForType (ThreadStatics.cs) only builds jagged
  * object[][] storage with RhNewObject - no locks, no syscalls. The old wrap
  * predated working managed allocation under zkVM. */
-
-/*@ assigns \nothing; */
-void __wrap__Z16InitializeCGroupv(void)
-{
-}
-
-/*@ assigns \nothing; */
-void __wrap__Z19InitializeCpuCGroupv(void)
-{
-}
-
-/*@ assigns \nothing; */
-void __wrap___GetNonGCStaticBase_S_P_CoreLib_System_Environment(void)
-{
-}
-
-/*@ assigns \nothing; */
-void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
-{
-}
 
 /* The Lock family (Enter, EnterAndGetCurrentThreadId, TryEnterSlow_0,
  * Exit_0/Exit_1/ExitAll, get_IsHeldByCurrentThread), the TypeLoader lock
@@ -205,15 +129,6 @@ void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
  * DeadlockAwareAcquire breaks recursive cctor cycles through the
  * now-truthful Lock.IsHeldByCurrentThread - the exact mechanism our list of
  * active cctor contexts used to emulate. */
-
-/*@ assigns \nothing;
-    ensures \result == 0;
-*/
-int __wrap__ZN6Thread10IsDetachedEv(void *thread)
-{
-    (void)thread;
-    return 0;
-}
 
 /*@ assigns \nothing;
     ensures \result == 1;
@@ -236,16 +151,6 @@ void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param)
 int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
 {
     return bufferSize;
-}
-
-extern void *S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(int value);
-
-/* Pass-through: delegates to the managed UInt32ToDecStr_NoCacheLookup helper,
- * which allocates and returns a managed string. Managed allocation effects
- * cannot be captured in ACSL here, so no clauses are stated. */
-void *__wrap_S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber(int value)
-{
-    return S_P_CoreLib_System_Number__UInt32ToDecStr_NoSmallNumberCheck(value);
 }
 
 /* Reverse P/Invoke transition. The real CoreLib RhpReversePInvoke attaches the

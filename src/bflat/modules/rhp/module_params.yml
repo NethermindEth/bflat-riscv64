@@ -5,4 +5,3 @@ options:
     - value: --wrap=RhpReversePInvoke
     - value: --wrap=RhpReversePInvokeReturn
     - value: --wrap=RhBulkMoveWithWriteBarrier
-    - value: --wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny

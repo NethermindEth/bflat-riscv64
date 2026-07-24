@@ -635,3 +635,40 @@ __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
 {
     return __wrap___libc_malloc_impl(bytes);
 }
+
+/*
+ * musl's scanf/float-parsing cluster (vfscanf.o -> floatscan.o -> fmodl.o)
+ * is the only part of the stock hard-float (rv64gc) Alpine libc.a whose
+ * members carry real F/D instructions - and ziskemu translates the guest's
+ * whole .text, so one fld anywhere kills the image even if unreachable.
+ * Wrapping the entry points keeps those archive members out of the link
+ * entirely: every reference is redirected here, so the linker never pulls
+ * the members in. The only in-image callers are the CGroup probes
+ * (InitializeCGroup and friends), which on zisk can never open their
+ * /proc//sys inputs anyway - EOF ("matched nothing") is the honest answer.
+ */
+int
+__wrap_vfscanf(void *stream, const char *fmt, void *ap)
+{
+    (void)stream;
+    (void)fmt;
+    (void)ap;
+    return -1; /* EOF: no conversions performed */
+}
+
+int
+__wrap___isoc99_vfscanf(void *stream, const char *fmt, void *ap)
+{
+    return __wrap_vfscanf(stream, fmt, ap);
+}
+
+/* strtod-family backend; only linked via wrappers that never run on zisk.
+ * Returns 0 ("no number parsed"); soft-float long double, no F/D regs. */
+long double
+__wrap___floatscan(void *f, int prec, int pok)
+{
+    (void)f;
+    (void)prec;
+    (void)pok;
+    return 0;
+}
