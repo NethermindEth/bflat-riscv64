@@ -126,6 +126,8 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.o" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\musl\nofp.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.params.yml" />
 
     <!-- PAL -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
@@ -140,14 +142,20 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.params.yml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.params.yml" />
 
     <!-- RNG -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.params.yml" />
 
     <!-- rust_sys -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rust_sys\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rust_sys\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.params.yml" />
 
     <!-- security-stub -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\security-stub\module.o"
@@ -156,6 +164,8 @@
     <!-- gs_cookie -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\gs_cookie.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\gs_cookie.params.yml" />
 
     <!-- stdcppshim -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
@@ -164,6 +174,8 @@
     <!-- tls -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.params.yml" />
 
     <!-- uBootstrap -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ubootstrap\module.o"
@@ -178,6 +190,8 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHeap.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc-zero.params.yml" />
 
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"

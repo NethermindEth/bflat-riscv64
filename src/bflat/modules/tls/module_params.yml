@@ -1,6 +1,9 @@
+# Linker options owned by the tls module (packed as tls.params.yml).
+# Minimal TLS bootstrap without musl's ELF machinery: the foundation the
+# runtime's tp-relative accesses (AllocFast.S, thread statics) stand on.
 options:
   ld:
+    - value: --wrap=__tls_get_addr
     - value: --wrap=__init_tls
     - value: --wrap=__init_tp
     - value: --wrap=__copy_tls
-    - value: --wrap=__tls_get_addr

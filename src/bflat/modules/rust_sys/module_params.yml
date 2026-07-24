@@ -1,1 +1,6 @@
+# Linker options owned by the rust_sys module (packed as
+# rust_sys.params.yml). Bridges the ziskos Rust allocator onto the shared
+# bump heap.
 options:
+  ld:
+    - value: --wrap=sys_alloc_aligned

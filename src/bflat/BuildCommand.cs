@@ -589,53 +589,95 @@ internal class BuildCommand : CommandBase
 
     /// <summary>
     /// Appends the linker options a module declares in its module_params.yml
-    /// (copied into the layout as &lt;module&gt;.params.yml). The file is the
-    /// source of truth for the module's --wrap surface:
-    ///   options.ld      - applied for zisk and zisk_sim targets;
-    ///   options.ld_zisk - applied for the real zisk target only.
-    /// The parser is deliberately minimal: section headers are lines ending
-    /// in ':' with no value, entries are "- value: &lt;flag&gt;".
+    /// (copied into the layout as &lt;module&gt;.params.yml). The options.ld
+    /// section is the source of truth for the module's linker surface. Each
+    /// entry is "- value: &lt;flag&gt;" optionally followed by applicability
+    /// conditions on the same list item:
+    ///   libc: zisk            (scalar)
+    ///   libc: [zisk, musl]    (flow list)
+    ///   arch: riscv64
+    ///   os:   linux
+    /// Conditions are AND-ed; a missing condition does not constrain. The
+    /// parser is deliberately minimal (no YAML dependency) and fails loudly
+    /// on anything it does not understand.
     /// </summary>
-    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName, string libc)
+    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName,
+        string libc, TargetArchitecture arch, TargetOS os)
     {
         string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
         if (!File.Exists(paramsPath))
             return;
 
+        string libcName = (libc ?? "").ToLowerInvariant();
+        string archName = arch.ToString().ToLowerInvariant();
+        string osName = os.ToString().ToLowerInvariant();
+
         string section = null;
+        string pendingValue = null;
+        bool pendingApplies = true;
+
+        void Flush()
+        {
+            if (pendingValue != null && pendingApplies)
+                ldArgs.Append(pendingValue + " ");
+            pendingValue = null;
+            pendingApplies = true;
+        }
+
+        bool ConditionHolds(string key, string val)
+        {
+            string actual = key switch
+            {
+                "libc" => libcName,
+                "arch" => archName,
+                "os" => osName,
+                _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
+            };
+            foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
+            {
+                if (candidate.Trim().ToLowerInvariant() == actual)
+                    return true;
+            }
+            return false;
+        }
+
         foreach (string rawLine in File.ReadAllLines(paramsPath))
         {
             string line = rawLine.Trim();
             if (line.Length == 0 || line.StartsWith("#"))
                 continue;
 
-            if (!line.StartsWith("-"))
+            if (line.StartsWith("-"))
             {
-                int colon = line.IndexOf(':');
-                if (colon > 0)
-                {
-                    string key = line.Substring(0, colon).Trim();
-                    string rest = line.Substring(colon + 1).Trim();
-                    // "ld:"/"ld_zisk:" open a flag section; any "key: value"
-                    // pair (repo:, tag:, ...) closes the current one.
-                    section = rest.Length == 0 ? key : null;
-                }
+                Flush();
+                if (section != "ld")
+                    continue;
+                const string prefix = "- value:";
+                if (!line.StartsWith(prefix))
+                    throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{section}'");
+                pendingValue = line.Substring(prefix.Length).Trim();
                 continue;
             }
 
-            if (section != "ld" && section != "ld_zisk")
-                continue;
-            if (section == "ld_zisk" && libc != "zisk")
-                continue;
+            int colon = line.IndexOf(':');
+            if (colon <= 0)
+                throw new Exception($"{paramsPath}: unsupported line '{line}'");
+            string k = line.Substring(0, colon).Trim();
+            string rest = line.Substring(colon + 1).Trim();
 
-            const string prefix = "- value:";
-            if (!line.StartsWith(prefix))
-                throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{section}'");
+            // Condition attached to the current "- value:" entry.
+            if (pendingValue != null && (k == "libc" || k == "arch" || k == "os"))
+            {
+                pendingApplies &= ConditionHolds(k, rest);
+                continue;
+            }
 
-            string flag = line.Substring(prefix.Length).Trim();
-            if (flag.Length > 0)
-                ldArgs.Append(flag + " ");
+            // "ld:" opens the flag section; any "key: value" pair
+            // (repo:, tag:, file:, ...) or another header closes it.
+            Flush();
+            section = rest.Length == 0 ? k : null;
         }
+        Flush();
     }
 
     void PatchRiscvAbi(string path)
@@ -2262,7 +2304,11 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                /* nofp: FP trap stubs; the math-symbol wrap surface is
+                 * declared in nofp.params.yml. (The musl target links the
+                 * object without these wraps.) */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
@@ -2276,81 +2322,39 @@ internal class BuildCommand : CommandBase
                  * breaks recursive cctor cycles), CheckCastAny, cgroup
                  * initializers, GetDefaultLocaleName, and friends. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "rhp", libc);
+                AppendModuleParams(ldArgs, ziskLibPath, "rhp", libc, targetArchitecture, targetOS);
 
-                /* libm: divert the math surface referenced by the runtime
-                 * (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling)
-                 * to the nofp trap stubs. Keeps hard-float musl members out
-                 * of the link entirely: their F/D instructions would poison
-                 * the rv64ima .text, and these paths must never execute on
-                 * the zkVM anyway. */
-                foreach (string mathSym in new[]
-                {
-                    "acos", "acosf", "acosh", "acoshf",
-                    "asin", "asinf", "asinh", "asinhf",
-                    "atan", "atanf", "atan2", "atan2f", "atanh", "atanhf",
-                    "cbrt", "cbrtf", "ceil", "ceilf",
-                    "cos", "cosf", "cosh", "coshf",
-                    "exp", "expf", "floor", "floorf",
-                    "fma", "fmaf", "fmod", "fmodf",
-                    "log", "logf", "log10", "log10f", "log2", "log2f",
-                    "modf", "modff", "pow", "powf",
-                    "sin", "sinf", "sinh", "sinhf",
-                    "sqrt", "sqrtf", "tan", "tanf", "tanh", "tanhf",
-                    "scalbn", // musl fmt_fp dependency, see nofp module
-                })
-                {
-                    ldArgs.Append($"--wrap={mathSym} ");
-                }
-
-                /* asprintf is referenced only by the PAL's CGroup CPU-limit
-                 * parsing, which cannot open its /proc//sys inputs on zisk
-                 * (pal's open() returns -1). Diverting it to a stub that
-                 * returns -1 (the documented asprintf failure mode) keeps that
-                 * dead path failing gracefully and, more importantly, stops
-                 * musl's vasprintf/fmt_fp/scalbn members - hard-float F/D
-                 * code - from being pulled into the link. */
-                ldArgs.Append($"--wrap=asprintf ");
 
                 /* gs_cookie */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
-                ldArgs.Append($"--wrap=__security_cookie ");
+                AppendModuleParams(ldArgs, ziskLibPath, "gs_cookie", libc, targetArchitecture, targetOS);
 
-                /* rhp_native */
+                /* rhp_native: write barriers reduced to the bare store. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
-                ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
-                ldArgs.Append($"--wrap=RhpCheckedAssignRef ");
-                ldArgs.Append($"--wrap=RhpByRefAssignRef ");
-                ldArgs.Append($"--wrap=RhpAssignRef ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rhp_native", libc, targetArchitecture, targetOS);
 
                 /* pal */
                 /* pal: syscall surface, bump allocator, FP-free printf/scanf
                  * and the zisk exit protocol. The wrap surface is declared in
                  * the module's module_params.yml (packed as pal.params.yml). */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "pal", libc);
+                AppendModuleParams(ldArgs, ziskLibPath, "pal", libc, targetArchitecture, targetOS);
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
-                ldArgs.Append($"--wrap=__tls_get_addr ");
-                ldArgs.Append($"--wrap=__init_tls ");
-                ldArgs.Append($"--wrap=__init_tp ");
-                ldArgs.Append($"--wrap=__copy_tls ");
+                AppendModuleParams(ldArgs, ziskLibPath, "tls", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"--no-whole-archive ");
 
                 /* rng */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
-                ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
-                ldArgs.Append($"--wrap=CryptoNative_EnsureOpenSslInitialized ");
-                ldArgs.Append($"--wrap=CryptoNative_GetRandomBytes ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rng_stupid", libc, targetArchitecture, targetOS);
 
                 /* rust_sys */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
-                ldArgs.Append($"--wrap=sys_alloc_aligned ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rust_sys", libc, targetArchitecture, targetOS);
 
                 /* ugc */
-                ldArgs.Append($"--wrap=GC_Initialize ");
-                ldArgs.Append($"--wrap=GC_VersionInfo ");
+                AppendModuleParams(ldArgs, ziskLibPath, "ugc-zero", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");

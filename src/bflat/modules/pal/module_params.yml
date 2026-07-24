@@ -1,9 +1,8 @@
 # Linker options owned by the pal module. BuildCommand reads this file from
-# the compiler layout (zisk/pal.params.yml) and appends the flags whenever
-# the module is linked:
-#   ld      - zisk and zisk_sim targets
-#   ld_zisk - real-zisk target only
-# Every --wrap here has its __wrap_* definition in module.c.
+# the compiler layout (zisk/pal.params.yml) and appends each entry whenever
+# the module is linked and the entry's conditions (libc/arch/os, AND-ed,
+# scalar or [list]) hold. Every --wrap here has its __wrap_* definition in
+# module.c.
 options:
   ld:
     # Process/environment identity stubs for the OS-less guest; getenv is
@@ -56,8 +55,9 @@ options:
     - value: --wrap=exit
     - value: --wrap=_Exit
     - value: --wrap=abort
-  ld_zisk:
     # ziskos bump-allocator bridge onto the shared heap.
     - value: --wrap=inline_bump_alloc_aligned
+      libc: zisk
     # Hide write() on the real zkVM; the sim keeps host stdio.
     - value: --wrap=__stdio_write
+      libc: zisk

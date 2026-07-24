@@ -1,3 +1,5 @@
+# Linker options owned by the gs_cookie module (packed as
+# gs_cookie.params.yml). Provides the constant stack-protector cookie.
 options:
   ld:
     - value: --wrap=__security_cookie

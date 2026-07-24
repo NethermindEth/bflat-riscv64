@@ -4,3 +4,8 @@ options:
   tag: v1.0.6-exp
   releases:
     file: ugc-riscv64.tar.gz
+  # Linker options (packed as ugc-zero.params.yml): plug uGC in as the GC
+  # implementation in place of the built-in clrgc.
+  ld:
+    - value: --wrap=GC_Initialize
+    - value: --wrap=GC_VersionInfo

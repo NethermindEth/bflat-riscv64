@@ -1,9 +1,8 @@
 # Linker options owned by the rhp module. BuildCommand reads this file from
-# the compiler layout (zisk/rhp.params.yml) and appends the flags whenever
-# the module is linked:
-#   ld      - zisk and zisk_sim targets
-#   ld_zisk - real-zisk target only
-# Every --wrap here has its __wrap_* definition in module.c.
+# the compiler layout (zisk/rhp.params.yml) and appends each entry whenever
+# the module is linked and the entry's conditions (libc/arch/os, AND-ed,
+# scalar or [list]) hold. Every --wrap here has its __wrap_* definition in
+# module.c.
 options:
   ld:
     # P/Invoke transition frames are dead weight: the guest is single-
@@ -32,8 +31,10 @@ options:
     - value: --wrap=S_P_CoreLib_System_Collections_HashHelpers__IsPrime
     - value: --wrap=System_Collections_Immutable_System_Collections_HashHelpers__IsPrime
     - value: --wrap=System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets
-  ld_zisk:
     # No terminal device on the real zkVM; the sim keeps the host console.
     - value: --wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling
+      libc: zisk
     - value: --wrap=SystemNative_SetTerminalInvalidationHandler
+      libc: zisk
     - value: --wrap=SystemNative_Write
+      libc: zisk
