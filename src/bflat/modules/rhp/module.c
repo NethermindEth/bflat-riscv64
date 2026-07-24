@@ -195,122 +195,16 @@ void __wrap_S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads(void)
 {
 }
 
-/*@ // The zkVM guest is single-threaded; thread id 1 is the only thread.
-    assigns \nothing;
-    ensures \result == 1;
-*/
-int __wrap_S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId(void)
-{
-    return 1;
-}
-
-/*@ assigns \nothing; */
-void __wrap_S_P_CoreLib_System_Threading_Lock__Enter(long param_1)
-{
-}
-
-/*@ assigns \nothing;
-    ensures \result == param_2;
-*/
-void *__wrap_S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0(void *param_1, void *param_2)
-{
-    return param_2;
-}
-
-/* Bypass the TypeLoader lock assertion */
-/*@ assigns \nothing; */
-void __wrap_S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld(void)
-{
-}
-
-/*
- * Every Lock is conceptually held by the only thread.
- */
-/*@ assigns \nothing;
-    ensures \result == 1;
-*/
-int __wrap_S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread(void *self)
-{
-    (void)self;
-    return 1;
-}
-
-/* DeadlockAwareAcquire decides whether to run a cctor body. Real CoreLib uses
- * Lock.IsHeldByCurrentThread to detect recursive entry (A's cctor accesses B,
- * B's cctor accesses A → second call returns 0 and breaks the cycle). Our
- * Lock wraps are no-ops, so the real check is useless and we must track
- * "currently running" cctor contexts ourselves. Without this, recursive cctor
- * chains keep re-running their bodies and blow the stack. */
-#define ACTIVE_CCTOR_MAX 4096
-static void *g_active_cctors[ACTIVE_CCTOR_MAX];
-static int   g_active_cctor_count = 0;
-
-/*@ global invariant active_cctor_count_bounds:
-      0 <= g_active_cctor_count <= ACTIVE_CCTOR_MAX;
-*/
-
-/*@ requires 0 <= g_active_cctor_count <= ACTIVE_CCTOR_MAX;
-    assigns g_active_cctors[0 .. ACTIVE_CCTOR_MAX - 1], g_active_cctor_count;
-    ensures \result == 0 || \result == 1;
-
-    behavior recursive_reentry:
-      assumes \exists integer i;
-          0 <= i < g_active_cctor_count && g_active_cctors[i] == ctx;
-      assigns \nothing;
-      ensures \result == 0;
-
-    behavior first_entry:
-      assumes (\forall integer i;
-          0 <= i < g_active_cctor_count ==> g_active_cctors[i] != ctx) &&
-          g_active_cctor_count < ACTIVE_CCTOR_MAX;
-      assigns g_active_cctors[g_active_cctor_count], g_active_cctor_count;
-      ensures g_active_cctor_count == \old(g_active_cctor_count) + 1;
-      ensures g_active_cctors[\old(g_active_cctor_count)] == ctx;
-      ensures \result == 1;
-
-    behavior table_full:
-      assumes (\forall integer i;
-          0 <= i < g_active_cctor_count ==> g_active_cctors[i] != ctx) &&
-          g_active_cctor_count == ACTIVE_CCTOR_MAX;
-      assigns \nothing;
-      ensures \result == 1;
-
-    complete behaviors;
-    disjoint behaviors;
-*/
-int __wrap_S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire(
-    void *cctorChain, int idx, void *ctx)
-{
-    (void)cctorChain;
-    (void)idx;
-
-    /* Linear search — list is small in practice (one entry per unique cctor
-     * ever touched). Once a cctor completes, the runtime zeroes *ctx and the
-     * caller (EnsureClassConstructorRun) short-circuits without ever reaching
-     * this wrap again, so we never need to pop. */
-    for (int i = 0; i < g_active_cctor_count; i++)
-        if (g_active_cctors[i] == ctx)
-            return 0; /* recursive — break the cycle */
-
-    if (g_active_cctor_count < ACTIVE_CCTOR_MAX)
-        g_active_cctors[g_active_cctor_count++] = ctx;
-    return 1;
-}
-
-/*@ assigns \nothing; */
-void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_0(void)
-{
-}
-
-/*@ assigns \nothing; */
-void __wrap_S_P_CoreLib_System_Threading_Lock__Exit_1(void)
-{
-}
-
-/*@ assigns \nothing; */
-void __wrap_S_P_CoreLib_System_Threading_Lock__ExitAll(void)
-{
-}
+/* The Lock family (Enter, EnterAndGetCurrentThreadId, TryEnterSlow_0,
+ * Exit_0/Exit_1/ExitAll, get_IsHeldByCurrentThread), the TypeLoader lock
+ * assertion bypass and the C-side DeadlockAwareAcquire cctor tracking are
+ * gone: with real thread statics restored, System.Threading.Lock works as
+ * designed on the single-threaded guest. The uncontended CAS fast path
+ * always succeeds, the blocking slow path is unreachable (no second thread
+ * can ever hold a lock), and ClassConstructorRunner's own
+ * DeadlockAwareAcquire breaks recursive cctor cycles through the
+ * now-truthful Lock.IsHeldByCurrentThread - the exact mechanism our list of
+ * active cctor contexts used to emulate. */
 
 /*@ assigns \nothing;
     ensures \result == 0;

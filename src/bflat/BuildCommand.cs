@@ -2253,18 +2253,16 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"--wrap=_Z19InitializeCpuCGroupv ");
                 ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
                 ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Enter ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterScope ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0 ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnter_0 ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnter_Outlined ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire ");
-                ldArgs.Append($"--wrap=S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld ");
+                /* Lock machinery is NOT wrapped anymore. With real thread
+                 * statics (ManagedThreadId) restored, System.Threading.Lock
+                 * works as designed on the single-threaded guest: the
+                 * uncontended CAS fast path always succeeds, the blocking
+                 * slow path is unreachable (no other thread can hold a lock),
+                 * and ClassConstructorRunner's own DeadlockAwareAcquire
+                 * breaks recursive cctor cycles via the now-truthful
+                 * Lock.IsHeldByCurrentThread. The old stubs (Enter/Exit
+                 * no-ops, IsHeldByCurrentThread==1, C-side cctor tracking)
+                 * predated working thread statics. */
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
                 //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
