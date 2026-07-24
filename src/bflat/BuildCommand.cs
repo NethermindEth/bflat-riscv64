@@ -385,6 +385,76 @@ class CustomILProvider : ILProvider
     }
 }
 
+/// <summary>
+/// Scans a method's IL for floating point - the back-end for the --error-on-float
+/// gate.
+///
+/// Detection targets ONLY the IL opcodes that actually emit a hardware FP
+/// instruction on the soft-float lp64 target: conv.r4/r8/r.un (integer->float =
+/// fcvt) and ckfinite. It deliberately does NOT flag ldc.r4/r8, ld/st ind/elem
+/// .r4/.r8: those merely move float *bits*, which the backend lowers to ordinary
+/// integer loads/stores/immediates when no FPU is present (e.g. Single/Double.
+/// GetHashCode reinterpret the bits via SingleToUInt32Bits and emit zero FP, and
+/// a double field initialized to a constant is an integer store). Flagging those
+/// produced false positives against binaries the emulator accepts as FP-free.
+///
+/// Known gap: the polymorphic arithmetic opcodes (add/mul/...) are typed by their
+/// operands, so a method doing `a*b` on two floats with no conversion carries no
+/// FP opcode of its own and is not caught here. In practice float arithmetic is
+/// reached through a conversion (any int<->float in the expression) which IS
+/// flagged; the emulator run remains the ground-truth backstop for the residual.
+///
+/// The caller scans ONLY methods that were actually emitted
+/// (CompilationResults.CompiledMethodBodies): dead FP branches in shared generics
+/// and preinit-folded cctors (Stopwatch..cctor) are never emitted, so they raise
+/// no false alarm.
+/// </summary>
+static class ILFloatScanner
+{
+    /// <summary>Name of the first FP opcode found in the body, or null.</summary>
+    public static string Find(MethodIL il)
+    {
+        byte[] b = il.GetILBytes();
+        if (b == null)
+            return null;
+        int p = 0;
+        while (p < b.Length)
+        {
+            ILOpcode op = (b[p] == 0xFE && p + 1 < b.Length)
+                ? (ILOpcode)(0xFE00 + b[p + 1])
+                : (ILOpcode)b[p];
+
+            switch (op)
+            {
+                case ILOpcode.conv_r4:
+                case ILOpcode.conv_r8:
+                case ILOpcode.conv_r_un:
+                case ILOpcode.ckfinite:
+                    return op.ToString();
+            }
+
+            // Advance past this instruction so operand bytes are never misread as
+            // opcodes. switch is variable-length (uint32 count + that many int32
+            // targets); everything else has a fixed size from GetSize.
+            if (op == ILOpcode.switch_)
+            {
+                if (p + 5 > b.Length) break;
+                uint n = (uint)(b[p + 1] | (b[p + 2] << 8) | (b[p + 3] << 16) | (b[p + 4] << 24));
+                p += 5 + (int)n * 4;
+            }
+            else if (op.IsValid())
+            {
+                p += op.GetSize();
+            }
+            else
+            {
+                break; // unknown/invalid opcode - stop rather than misparse operands
+            }
+        }
+        return null;
+    }
+}
+
 internal class BuildCommand : CommandBase
 {
     private const string DefaultSystemModule = "System.Private.CoreLib";
@@ -401,6 +471,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
     private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
     private static Option<bool> WrapCheckOption = new Option<bool>("--wrap-check", "Verify every --wrap= linker flag points to a real symbol; fails the build if any is missing");
+    private static Option<bool> ErrorOnFloatOption = new Option<bool>("--error-on-float", "Scan the compiled (post-substitution) IL and fail the build if any method still carries floating point (float/double). Intended for no-FPU targets such as zisk.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
@@ -497,6 +568,7 @@ internal class BuildCommand : CommandBase
             ExtLibOption,
             SymChartOption,
             WrapCheckOption,
+            ErrorOnFloatOption,
         };
         command.Handler = new BuildCommand();
 
@@ -1731,6 +1803,50 @@ internal class BuildCommand : CommandBase
         CompilationResults compilationResults = compilation.Compile(objectFilePath, ObjectDumper.Compose(dumpers));
         compileWatch.Complete();
 
+        // --error-on-float: fail the build if any EMITTED method's (post-
+        // substitution) IL still carries floating point. Scanning only the methods
+        // that were actually compiled (CompiledMethodBodies) - not every method the
+        // compiler merely queried - keeps preinit-folded cctors and dead generic
+        // instantiations from raising false alarms. Reported by managed method name.
+        if (result.GetValueForOption(ErrorOnFloatOption))
+        {
+            var offenders = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            int allowed = 0;
+            foreach (MethodDesc emitted in compilationResults.CompiledMethodBodies)
+            {
+                MethodIL emittedIL;
+                try { emittedIL = ilProvider.GetMethodIL(emitted); }
+                catch { continue; }
+                if (emittedIL == null)
+                    continue;
+                string reason = ILFloatScanner.Find(emittedIL);
+                if (reason == null)
+                    continue;
+
+                if (IsKnownDeadFloatMethod(emitted))
+                {
+                    // The conv is real IL but sits in a block the JIT proves dead
+                    // (a disabled-feature guard reached through a local, which the
+                    // IL-level substitution cannot fold). Surfaced as a warning so
+                    // it stays auditable rather than silently ignored.
+                    Console.WriteLine($"warning: --error-on-float: ignoring known dead FP in {emitted}  [{reason}]");
+                    allowed++;
+                    continue;
+                }
+                offenders[emitted.ToString()] = reason;
+            }
+
+            if (offenders.Count > 0)
+            {
+                Console.Error.WriteLine($"error: --error-on-float: {offenders.Count} compiled method(s) carry floating point:");
+                foreach (var kv in offenders)
+                    Console.Error.WriteLine($"  {kv.Key}  [{kv.Value}]");
+                return 1;
+            }
+
+            Console.WriteLine($"--error-on-float: OK (no floating point in any compiled method{(allowed > 0 ? $"; {allowed} known-dead site(s) ignored" : "")})");
+        }
+
         string exportsFile = null;
         if (nativeLib)
         {
@@ -2366,6 +2482,32 @@ internal class BuildCommand : CommandBase
         }
 
         return exitCode;
+    }
+
+    // Methods whose IL genuinely contains an FP conversion, but only inside a
+    // block the JIT proves unreachable on this target (a disabled-feature guard
+    // reached through a local, which IL-level substitution cannot constant-fold),
+    // so no FP instruction is ever emitted. Confirmed against the FP-free emulator.
+    // Matched by owning type + name (signature-independent) and reported as a
+    // warning by the --error-on-float gate rather than failing the build.
+    private static readonly (string typeNamespace, string typeName, string method)[] s_knownDeadFloatMethods =
+    {
+        // Lock.TryEnterSlow: `double durationNs = (Stopwatch.GetTimestamp()-start)
+        // * 1e9 / Stopwatch.Frequency` behind `if (areContentionEventsEnabled)`,
+        // where areContentionEventsEnabled = NativeRuntimeEventSource.Log.IsEnabled
+        // (...) - always false because EventPipe/EventSource is disabled here.
+        ("System.Threading", "Lock", "TryEnterSlow"),
+    };
+
+    private static bool IsKnownDeadFloatMethod(MethodDesc method)
+    {
+        MethodDesc typical = method.GetTypicalMethodDefinition();
+        if (typical.OwningType is not MetadataType mt)
+            return false;
+        foreach (var (ns, name, m) in s_knownDeadFloatMethods)
+            if (typical.Name == m && mt.Name == name && mt.Namespace == ns)
+                return true;
+        return false;
     }
 
     private static void RunSymbolChart(string binaryPath, string homePath, bool verbose, Logger logger)
