@@ -26,7 +26,7 @@
   <!-- Infer dotnet/blob/codeanalysis version -->
   <PropertyGroup>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.b23</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p1</RuntimeVersionPostfix>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x7</RuntimeVersionPostfix>
 
     <!-- Full runtime release tag. RuntimeVersion stays the plain NuGet
