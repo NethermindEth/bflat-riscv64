@@ -17,16 +17,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Built-in ILLink substitutions applied to zisk/zisk_sim builds
-         (see BuildCommand). LogicalName pins the manifest resource name
-         independently of any RootNamespace. -->
-    <EmbeddedResource Include="zisk.substitutions.xml" LogicalName="zisk.substitutions.xml" />
-    <!-- C# body-substitution snippets compiled at guest-build time (see
-         BuildCommand.TryCompileZiskSnippets). Excluded from bflat's own
-         compilation - it references CoreLib internals that only exist in the
-         guest's reference set - and shipped as an embedded resource instead. -->
-    <Compile Remove="zisk.snippets.cs" />
-    <EmbeddedResource Include="zisk.snippets.cs" LogicalName="zisk.snippets.cs" />
+    <!-- Module payloads are data shipped into the compiler layout, never
+         part of bflat's own compilation (zisk_subst's snippets reference
+         CoreLib internals that only exist in the guest's reference set). -->
+    <Compile Remove="modules\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -192,6 +186,14 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc-zero.params.yml" />
+
+    <!-- zisk_subst: ILC-stage managed substitutions (no native object) -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk_subst.params.yml" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.substitutions.xml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.substitutions.xml" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.snippets.cs"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.snippets.cs" />
 
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"

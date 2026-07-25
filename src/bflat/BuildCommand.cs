@@ -588,11 +588,10 @@ internal class BuildCommand : CommandBase
     }
 
     /// <summary>
-    /// Appends the linker options a module declares in its module_params.yml
-    /// (copied into the layout as &lt;module&gt;.params.yml). The options.ld
-    /// section is the source of truth for the module's linker surface. Each
-    /// entry is "- value: &lt;flag&gt;" optionally followed by applicability
-    /// conditions on the same list item:
+    /// Reads one options section of a module's params.yml (packed into the
+    /// layout as &lt;module&gt;.params.yml) and yields the entries whose
+    /// applicability conditions hold. An entry is "- &lt;kind&gt;: &lt;value&gt;"
+    /// optionally followed by conditions on the same list item:
     ///   libc: zisk            (scalar)
     ///   libc: [zisk, musl]    (flow list)
     ///   arch: riscv64
@@ -601,25 +600,27 @@ internal class BuildCommand : CommandBase
     /// parser is deliberately minimal (no YAML dependency) and fails loudly
     /// on anything it does not understand.
     /// </summary>
-    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName,
-        string libc, TargetArchitecture arch, TargetOS os)
+    IEnumerable<KeyValuePair<string, string>> ReadModuleParams(string paramsPath,
+        string section, string libc, TargetArchitecture arch, TargetOS os)
     {
-        string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
+        var entries = new List<KeyValuePair<string, string>>();
         if (!File.Exists(paramsPath))
-            return;
+            return entries;
 
         string libcName = (libc ?? "").ToLowerInvariant();
         string archName = arch.ToString().ToLowerInvariant();
         string osName = os.ToString().ToLowerInvariant();
 
-        string section = null;
+        string currentSection = null;
+        string pendingKind = null;
         string pendingValue = null;
         bool pendingApplies = true;
 
         void Flush()
         {
-            if (pendingValue != null && pendingApplies)
-                ldArgs.Append(pendingValue + " ");
+            if (pendingKind != null && pendingApplies)
+                entries.Add(new KeyValuePair<string, string>(pendingKind, pendingValue));
+            pendingKind = null;
             pendingValue = null;
             pendingApplies = true;
         }
@@ -650,12 +651,13 @@ internal class BuildCommand : CommandBase
             if (line.StartsWith("-"))
             {
                 Flush();
-                if (section != "ld")
+                if (currentSection != section)
                     continue;
-                const string prefix = "- value:";
-                if (!line.StartsWith(prefix))
-                    throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{section}'");
-                pendingValue = line.Substring(prefix.Length).Trim();
+                int c = line.IndexOf(':');
+                if (c <= 1)
+                    throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{currentSection}'");
+                pendingKind = line.Substring(1, c - 1).Trim();
+                pendingValue = line.Substring(c + 1).Trim();
                 continue;
             }
 
@@ -665,19 +667,72 @@ internal class BuildCommand : CommandBase
             string k = line.Substring(0, colon).Trim();
             string rest = line.Substring(colon + 1).Trim();
 
-            // Condition attached to the current "- value:" entry.
-            if (pendingValue != null && (k == "libc" || k == "arch" || k == "os"))
+            // Condition attached to the current list entry.
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os"))
             {
                 pendingApplies &= ConditionHolds(k, rest);
                 continue;
             }
 
-            // "ld:" opens the flag section; any "key: value" pair
+            // "ld:"/"ilc:" open a section; any "key: value" pair
             // (repo:, tag:, file:, ...) or another header closes it.
             Flush();
-            section = rest.Length == 0 ? k : null;
+            currentSection = rest.Length == 0 ? k : null;
         }
         Flush();
+        return entries;
+    }
+
+    /// <summary>
+    /// Appends the linker options a module declares in the options.ld section
+    /// of its params.yml. Every entry must be "- value: &lt;flag&gt;".
+    /// </summary>
+    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName,
+        string libc, TargetArchitecture arch, TargetOS os)
+    {
+        string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
+        foreach (var entry in ReadModuleParams(paramsPath, "ld", libc, arch, os))
+        {
+            if (entry.Key != "value")
+                throw new Exception($"{paramsPath}: unsupported ld entry kind '{entry.Key}'");
+            if (entry.Value.Length > 0)
+                ldArgs.Append(entry.Value + " ");
+        }
+    }
+
+    /// <summary>
+    /// Collects the ILC-stage files (substitutions XML / body-substitution
+    /// C# snippets) declared by any module's params.yml options.ilc section:
+    ///   - substitutions: file.xml
+    ///   - snippets: file.cs
+    /// File paths are relative to the layout directory. Same per-entry
+    /// libc/arch/os conditions as options.ld.
+    /// </summary>
+    (List<string> Substitutions, List<string> Snippets) CollectModuleIlcFiles(
+        string libPath, string libc, TargetArchitecture arch, TargetOS os)
+    {
+        var substitutions = new List<string>();
+        var snippets = new List<string>();
+        if (!Directory.Exists(libPath))
+            return (substitutions, snippets);
+
+        foreach (string paramsPath in Directory.GetFiles(libPath, "*.params.yml").OrderBy(p => p))
+        {
+            foreach (var entry in ReadModuleParams(paramsPath, "ilc", libc, arch, os))
+            {
+                string fullPath = Path.Combine(libPath, entry.Value);
+                if (!File.Exists(fullPath))
+                    throw new Exception($"{paramsPath}: ilc file '{entry.Value}' not found in layout");
+                switch (entry.Key)
+                {
+                    case "substitutions": substitutions.Add(fullPath); break;
+                    case "snippets": snippets.Add(fullPath); break;
+                    default:
+                        throw new Exception($"{paramsPath}: unsupported ilc entry kind '{entry.Key}'");
+                }
+            }
+        }
+        return (substitutions, snippets);
     }
 
     void PatchRiscvAbi(string path)
@@ -801,37 +856,22 @@ internal class BuildCommand : CommandBase
             PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
     }
 
-    // Reads the zisk body-substitution snippet source, shipped as an embedded
-    // resource (zisk.snippets.cs) rather than an inline string constant.
-    private static string ReadZiskSnippetsSource()
-    {
-        using Stream s = typeof(BuildCommand).Assembly.GetManifestResourceStream("zisk.snippets.cs");
-        if (s == null)
-            return null;
-        using var r = new StreamReader(s);
-        return r.ReadToEnd();
-    }
-
-    // Compiles the zisk.snippets.cs source against the same references with
-    // accessibility checks disabled, emits it to a temp module, and returns the
-    // path (null on failure - substitution is then simply skipped).
-    private string TryCompileZiskSnippets(string[] references, string[] defines, string langVersion)
+    // Compiles the module-declared snippet sources against the same references
+    // with accessibility checks disabled, emits them to a temp module, and
+    // returns the path (null on failure - substitution is then simply skipped).
+    private string TryCompileZiskSnippets(IReadOnlyList<string> sourcePaths, string[] references, string[] defines, string langVersion)
     {
         try
         {
-            string source = ReadZiskSnippetsSource();
-            if (source == null)
-            {
-                Console.Error.WriteLine("warning: zisk.snippets.cs resource not found");
-                return null;
-            }
 
             if (!LanguageVersionFacts.TryParse(langVersion, out LanguageVersion langVer))
                 langVer = LanguageVersion.Latest;
 
             var parseOptions = new CSharpParseOptions(langVer, DocumentationMode.None,
                 preprocessorSymbols: defines ?? Array.Empty<string>());
-            var tree = CSharpSyntaxTree.ParseText(source, parseOptions);
+            var trees = new List<SyntaxTree>();
+            foreach (string sourcePath in sourcePaths)
+                trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(sourcePath), parseOptions, path: sourcePath));
 
             var metadataReferences = new List<MetadataReference>();
             foreach (var reference in references)
@@ -878,7 +918,7 @@ internal class BuildCommand : CommandBase
                 options = (CSharpCompilationOptions)withBinderFlags.Invoke(options, new[] { ignoreAccessibility });
             }
 
-            var compilation = CSharpCompilation.Create("__ZiskSnippets", new[] { tree }, metadataReferences, options);
+            var compilation = CSharpCompilation.Create("__ZiskSnippets", trees, metadataReferences, options);
             string path = Path.GetTempFileName();
             using (var fs = File.Create(path))
             {
@@ -1362,19 +1402,25 @@ internal class BuildCommand : CommandBase
             [compiledModuleName] = compiledModulePath,
         };
 
-        // zkVM body-substitution snippets: compile the C# snippet source (the
-        // zisk.snippets.cs resource) against the same references, with
-        // accessibility checks ignored so it can touch CoreLib internals/privates,
-        // and register the resulting module so the type system resolves its methods.
+        // zkVM body-substitution machinery, declared by modules in their
+        // params.yml options.ilc sections (e.g. zisk_subst): substitutions XML
+        // for ILC and C# snippet sources compiled against the same references,
+        // with accessibility checks ignored so they can touch CoreLib
+        // internals/privates; the resulting module is registered so the type
+        // system resolves its methods.
         const string snippetsModuleName = "__ZiskSnippets";
         string snippetsModulePath = null;
+        List<string> moduleSubstitutionFiles = new List<string>();
         if (libc == "zisk" || libc == "zisk_sim")
         {
+            (moduleSubstitutionFiles, List<string> snippetFiles) =
+                CollectModuleIlcFiles(ziskLibPath, libc, targetArchitecture, targetOS);
             // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
             // not the public ref assemblies (references): the snippet needs the
             // private nested types (Random.CompatSeedImpl, ...) that ref
             // assemblies strip out.
-            snippetsModulePath = TryCompileZiskSnippets(referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
+            if (snippetFiles.Count > 0)
+                snippetsModulePath = TryCompileZiskSnippets(snippetFiles, referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
             if (snippetsModulePath != null)
                 inputFilePaths[snippetsModuleName] = snippetsModulePath;
         }
@@ -1602,19 +1648,18 @@ internal class BuildCommand : CommandBase
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
 
-        if (libc == "zisk" || libc == "zisk_sim")
+        // Built-in substitutions for the zkVM targets, declared by modules
+        // (zisk_subst's zisk.substitutions.xml): thread-pool tuning and similar
+        // machinery that is provably dead on a single-threaded guest but drags
+        // floating-point code into the rv64ima image. Applied before user
+        // files; the parser rejects duplicate method entries, so user files
+        // extend rather than override this set.
+        foreach (string substitutionFile in moduleSubstitutionFiles)
         {
-            // Built-in substitutions for the zkVM targets (embedded
-            // zisk.substitutions.xml): thread-pool tuning and similar machinery
-            // that is provably dead on a single-threaded guest but drags
-            // floating-point code into the rv64ima image. Applied before user
-            // files; the parser rejects duplicate method entries, so user files
-            // extend rather than override this set.
-            using Stream ziskSubstitutions =
-                typeof(BuildCommand).Assembly.GetManifestResourceStream("zisk.substitutions.xml");
+            using FileStream mfs = File.OpenRead(substitutionFile);
             substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
-                logger, typeSystemContext, XmlReader.Create(ziskSubstitutions),
-                "zisk.substitutions.xml", featureSwitches));
+                logger, typeSystemContext, XmlReader.Create(mfs),
+                substitutionFile, featureSwitches));
         }
         foreach (string substitutionFilePath in result.GetValueForOption(SubstitutionFilePathsOption) ?? Array.Empty<string>())
         {

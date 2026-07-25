@@ -1,0 +1,17 @@
+# Managed-code substitution surface for the zkVM targets (packed as
+# zisk_subst.params.yml). No native object: this module carries the
+# ILC-stage inputs that reshape managed code before compilation.
+#
+#   substitutions - ILLink.Substitutions XML (stub/remove method bodies,
+#                   fold feature fields; applied before user -substitution
+#                   files, duplicates rejected so users extend, not override)
+#   snippets      - C# sources compiled at guest-build time against the
+#                   implementation assemblies (accessibility ignored) whose
+#                   method bodies replace the originals (see
+#                   BuildCommand.TryCompileZiskSnippets)
+#
+# Entries take the same libc/arch/os conditions as options.ld.
+options:
+  ilc:
+    - substitutions: zisk.substitutions.xml
+    - snippets: zisk.snippets.cs
