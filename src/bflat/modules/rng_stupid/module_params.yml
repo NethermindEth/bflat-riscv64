@@ -1,3 +1,6 @@
+# Linker options owned by the rng_stupid module (packed as
+# rng_stupid.params.yml). Deterministic "randomness" by design: proofs
+# must be reproducible, and OpenSSL init must never run.
 options:
   ld:
     - value: --wrap=minipal_get_cryptographically_secure_random_bytes

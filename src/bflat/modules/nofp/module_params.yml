@@ -1,0 +1,68 @@
+# Linker options owned by the nofp module (packed as nofp.params.yml).
+# Applied only for the zisk/zisk_sim targets; the musl target links nofp.o
+# without these wraps.
+options:
+  ld:
+    # libm: divert the math surface referenced by the runtime
+    # (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling) to the nofp
+    # trap stubs. Keeps hard-float musl members out of the link entirely:
+    # their F/D instructions would poison the rv64ima .text, and these
+    # paths must never execute on the zkVM anyway.
+    - value: --wrap=acos
+    - value: --wrap=acosf
+    - value: --wrap=acosh
+    - value: --wrap=acoshf
+    - value: --wrap=asin
+    - value: --wrap=asinf
+    - value: --wrap=asinh
+    - value: --wrap=asinhf
+    - value: --wrap=atan
+    - value: --wrap=atanf
+    - value: --wrap=atan2
+    - value: --wrap=atan2f
+    - value: --wrap=atanh
+    - value: --wrap=atanhf
+    - value: --wrap=cbrt
+    - value: --wrap=cbrtf
+    - value: --wrap=ceil
+    - value: --wrap=ceilf
+    - value: --wrap=cos
+    - value: --wrap=cosf
+    - value: --wrap=cosh
+    - value: --wrap=coshf
+    - value: --wrap=exp
+    - value: --wrap=expf
+    - value: --wrap=floor
+    - value: --wrap=floorf
+    - value: --wrap=fma
+    - value: --wrap=fmaf
+    - value: --wrap=fmod
+    - value: --wrap=fmodf
+    - value: --wrap=log
+    - value: --wrap=logf
+    - value: --wrap=log10
+    - value: --wrap=log10f
+    - value: --wrap=log2
+    - value: --wrap=log2f
+    - value: --wrap=modf
+    - value: --wrap=modff
+    - value: --wrap=pow
+    - value: --wrap=powf
+    - value: --wrap=sin
+    - value: --wrap=sinf
+    - value: --wrap=sinh
+    - value: --wrap=sinhf
+    - value: --wrap=sqrt
+    - value: --wrap=sqrtf
+    - value: --wrap=tan
+    - value: --wrap=tanf
+    - value: --wrap=tanh
+    - value: --wrap=tanhf
+    # musl fmt_fp dependency, see nofp module
+    - value: --wrap=scalbn
+    # asprintf is referenced only by the PAL's CGroup CPU-limit parsing,
+    # which cannot open its /proc//sys inputs on zisk (pal's open() returns
+    # -1). The stub returns -1 (the documented asprintf failure mode) and,
+    # more importantly, keeps musl's vasprintf/fmt_fp/scalbn members -
+    # hard-float F/D code - out of the link.
+    - value: --wrap=asprintf

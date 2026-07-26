@@ -99,10 +99,6 @@ Zisk linking includes additional postprocessing steps to prepare the final binar
  ```
  The matching is done by the content of `builds` array (`arch`, `os`, `libc` must match target platform in bflat). If the match is found, the `static_lib` is linked to the target binary, and the `dotnet_lib` is compiled and added to the target binary. Their paths are relative to bflat manifest path.
  
-## Known issues
-
-The main limitation is that **memory is never freed**. Our GC (`ugc-zero`) allocates from a downward bump allocator and never collects, so every allocation lives until the program exits. This is acceptable for the target workload — short-lived zkVM executions whose working set fits in the heap — but a long-running or allocation-heavy program will exhaust the heap and fail. Size the heap for the whole run.
-
 ## License
 
 Nethermind bflat follows original GNU Affero GPL v3 license that was used for the original bflat.

@@ -1,0 +1,180 @@
+<!--
+  Built-in ILLink.Substitutions for the zisk/zisk_sim targets, applied by
+  BuildCommand before any user-provided -\-substitution files.
+
+  Only entries that are semantics-preserving for EVERY guest on a
+  single-threaded, bump-allocated zkVM belong here. Application policy
+  decisions (e.g. "this guest never formats a double", "never binds config
+  from strings") stay in the guest's own substitution file. User files must
+  not re-declare methods listed here: the parser rejects duplicates.
+-->
+<linker>
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Hill climbing (thread-count auto-tuning) runs double/Complex math on
+         worker-count samples. A single-threaded zkVM has exactly one worker
+         forever, so the tuner is meaningless: IsDisabled=true folds the gate
+         in PortableThreadPool.ShouldAdjustMaxWorkersActive, and the ctor
+         (double[] sample windows) plus ForceChange (the only other reachable
+         entry points) are stubbed so the remaining references touch nothing. -->
+    <type fullname="System.Threading.PortableThreadPool/HillClimbing">
+      <field name="IsDisabled" value="true" />
+      <method signature="System.Void .ctor()" body="stub" />
+      <method signature="System.Void ForceChange(System.Int32,System.Threading.PortableThreadPool/HillClimbing/StateOrTransition)" body="stub" />
+    </type>
+
+    <!-- The gate thread drives worker-count tuning and CPU-utilization
+         sampling (double math in CpuUtilizationReader); it never starts on a
+         single-threaded zkVM. An empty body lets ILC trim the reader too. -->
+    <type fullname="System.Threading.PortableThreadPool/GateThread">
+      <method signature="System.Void GateThreadStart()" body="stub" />
+    </type>
+
+    <!-- Times a burst of GetCurrentProcessorNumber calls against Stopwatch to
+         decide whether per-processor striping is worthwhile - double math for
+         a question that is meaningless on a deterministic single-core zkVM.
+         "false" = keep the cached (non-striped) path, matching reality. -->
+    <type fullname="System.Threading.ProcessorIdCache">
+      <method signature="System.Boolean ProcessorNumberSpeedCheck()" body="stub" value="false" />
+    </type>
+
+    <!-- The zkVM guest runs on exactly one hart, so 1 is the exact processor
+         count. Folding it also eliminates the Unix cgroup CPU-quota parsing
+         (Math.Ceiling over double) that otherwise inlines into every cctor
+         sizing a pool by ProcessorCount, and right-sizes those pools for a
+         single-threaded target as a bonus. -->
+    <type fullname="System.Environment">
+      <method signature="System.Int32 get_ProcessorCount()" body="stub" value="1" />
+    </type>
+
+    <!-- ArrayPool trim heuristic: compares GC memory load against thresholds
+         in double. 0 = MemoryPressure.Low, i.e. "keep pooled buffers" - the
+         right answer under a bump allocator that never trims anyway. -->
+    <type fullname="System.Buffers.Utilities">
+      <method signature="System.Buffers.Utilities/MemoryPressure GetMemoryPressure()" body="stub" value="0" />
+    </type>
+
+    <!-- HashHelpers.IsPrime bounds its divisor loop with (int)Math.Sqrt. The
+         managed body is replaced with a constant-returning stub (removing
+         the F/D instructions; body="remove" would poison callers with
+         no-return codegen); every caller is diverted by -\-wrap (BuildCommand)
+         to the exact integer reimplementation in the rhp module. The same
+         shared source is compiled into several assemblies - substitute all. -->
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+  </assembly>
+
+  <assembly fullname="System.Collections.Concurrent">
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+  </assembly>
+
+  <assembly fullname="System.Collections.Immutable">
+    <type fullname="System.Collections.HashHelpers">
+      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
+    </type>
+
+    <!-- CalcNumBuckets rates candidate bucket counts by collision percentage
+         in double math at collection-freeze time. The stub body (never
+         executed) sheds the F/D instructions and -\-wrap diverts callers to
+         the rhp module, which returns the smallest prime >= the entry count -
+         any bucket count is correct, collisions chain. LengthBuckets is NOT
+         substituted: its int[] return cannot be expressed as a stub value,
+         and body="remove" marks the method no-return, which poisons callers
+         (ILC emits a trap after the call instead of using the result). -->
+    <type fullname="System.Collections.Frozen.FrozenHashTable">
+      <method signature="System.Int32 CalcNumBuckets(System.ReadOnlySpan`1&lt;System.Int32&gt;,System.Boolean)" body="stub" value="1" />
+    </type>
+  </assembly>
+
+  <!--
+    Floating-point-carrying CoreLib methods. On a no-FPU target (rv64ima) any
+    hardware FP is invalid, so these are removed/stubbed for EVERY zisk guest.
+    Removing a method makes it throw if reached; a program that genuinely needs
+    floating point cannot run on this target anyway, so the loud failure is the
+    correct behavior. Methods with a valid NON-float path (primitive widening,
+    Convert.ChangeType) are handled by IL patches in BuildCommand instead, so
+    they are absent here.
+  -->
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Primitive-widening element copy / reflection arg coercion. The actual
+         conversions live in InvokeUtils.PrimitiveWiden (a switch that fcvt's for
+         float/double destinations), inlined into these two callers. Cross-
+         element-type widening TO float cannot run on an FPU-less target, and
+         cross-integer widening via Array.Copy / reflection is rare, so both are
+         removed (throw if reached) rather than IL-rewritten. Same-typed array
+         copies never reach here (they use the memmove fast path). -->
+    <type fullname="System.Array">
+      <method signature="System.Void CopyImplPrimitiveWiden(System.Array,System.Int32,System.Array,System.Int32,System.Int32)" body="remove" />
+    </type>
+    <type fullname="System.InvokeUtils">
+      <method signature="System.Exception ConvertOrWidenPrimitivesEnumsAndPointersIfPossible(System.Object,Internal.Runtime.MethodTable*,System.InvokeUtils/CheckArgumentSemantics,System.Object&amp;)" body="remove" />
+    </type>
+
+    <!-- Core float-to-string formatter (Dragon4/Grisu3 double math) and the
+         boxed Double/Single virtual/interface slots that reach it or carry
+         fcvt rounding directly. -->
+    <type fullname="System.Number">
+      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;&gt;&amp;,,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
+    </type>
+    <type fullname="System.Double">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Double)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
+      <method signature="System.Boolean Equals(System.Double)" body="remove" />
+      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+    </type>
+    <type fullname="System.Single">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Single)" body="remove" />
+      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
+      <method signature="System.Boolean Equals(System.Single)" body="remove" />
+      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+    </type>
+
+    <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
+         unaffected (only the double-input overload is removed). -->
+    <type fullname="System.Convert">
+      <method signature="System.Int32 ToInt32(System.Double)" body="remove" />
+    </type>
+
+    <!-- Math.Truncate(double): float-only; a cold dependency of date rounding. -->
+    <type fullname="System.Math">
+      <method signature="System.Double Truncate(System.Double)" body="remove" />
+    </type>
+
+    <!-- Timezone transition/validation math (double date arithmetic). zisk sets
+         System.TimeZoneInfo.Invariant, but these members stay reachable through
+         the custom-timezone API surface; cut them. UtcOffsetOutOfRange folds to
+         false (UTC offset 0 is always in +/-14h range). -->
+    <type fullname="System.TimeZoneInfo">
+      <method signature="System.DateTime TransitionTimeToDateTime(System.Int32,System.TimeZoneInfo/TransitionTime)" body="remove" />
+      <method signature="System.Boolean UtcOffsetOutOfRange(System.TimeSpan)" body="stub" value="false" />
+    </type>
+    <type fullname="System.TimeZoneInfo/AdjustmentRule">
+      <method signature="System.Boolean get_HasDaylightSaving()" body="stub" value="false" />
+      <method signature="System.Void ValidateAdjustmentRule(System.DateTime,System.DateTime,System.TimeSpan,System.TimeZoneInfo/TransitionTime,System.TimeZoneInfo/TransitionTime,System.Boolean)" body="stub" />
+    </type>
+
+    <!-- Reads boxed float/double constant values out of reflection metadata
+         (ParameterInfo.DefaultValue and enum/array constant collections). -->
+    <type fullname="System.Reflection.Runtime.General.NativeFormatMetadataReaderExtensions">
+      <method signature="System.Object ParseConstantNumericValue(Internal.Metadata.NativeFormat.Handle,Internal.Metadata.NativeFormat.MetadataReader)" body="remove" />
+      <method signature="System.Single[] ToArray(Internal.Metadata.NativeFormat.SingleCollection)" body="remove" />
+      <method signature="System.Double[] ToArray(Internal.Metadata.NativeFormat.DoubleCollection)" body="remove" />
+    </type>
+  </assembly>
+</linker>

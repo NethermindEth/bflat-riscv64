@@ -1,5 +1,12 @@
+# Linker options owned by the pal module. BuildCommand reads this file from
+# the compiler layout (zisk/pal.params.yml) and appends each entry whenever
+# the module is linked and the entry's conditions (libc/arch/os, AND-ed,
+# scalar or [list]) hold. Every --wrap here has its __wrap_* definition in
+# module.c.
 options:
   ld:
+    # Process/environment identity stubs for the OS-less guest; getenv is
+    # the config tunnel (invariant globalization & co).
     - value: --wrap=getenv
     - value: --wrap=getcwd
     - value: --wrap=getpid
@@ -7,15 +14,13 @@ options:
     - value: --wrap=geteuid
     - value: --wrap=sched_getaffinity
     - value: --wrap=sched_getcpu
+    - value: --wrap=sched_yield
     - value: --wrap=open
+    # The downward bump allocator - the only memory in the guest.
     - value: --wrap=__libc_malloc_impl
     - value: --wrap=__libc_realloc
     - value: --wrap=__libc_free
     - value: --wrap=calloc
-    - value: --wrap=pthread_create
-    - value: --wrap=pthread_sigmask
-    - value: --wrap=__clock_gettime
-    - value: --wrap=clock_gettime
     - value: --wrap=__malloc_allzerop
     - value: --wrap=mmap
     - value: --wrap=munmap
@@ -23,6 +28,36 @@ options:
     - value: --wrap=munlock
     - value: --wrap=mlockall
     - value: --wrap=munlockall
+    # No threads, no signals, no time, no syscall passthrough oddities.
+    - value: --wrap=pthread_create
+    - value: --wrap=pthread_sigmask
+    - value: --wrap=sigaction
+    - value: --wrap=signal
+    - value: --wrap=__clock_gettime
+    - value: --wrap=clock_gettime
+    - value: --wrap=syscall
+    - value: --wrap=sysconf
+    # The real PalGetMaximumStackBounds aborts under static musl on RISC-V
+    # (mremap EINVAL); report a synthetic 8 MiB window instead.
+    - value: --wrap=_Z24PalGetMaximumStackBoundsPPvS0_
+    # FP-free vfprintf: keeps musl's fmt_fp float formatter out of the link.
+    - value: --wrap=vfprintf
+    # musl's scanf/float-parsing members (vfscanf.o, floatscan.o, fmodl.o)
+    # are the only libc.a members with real F/D instructions in the stock
+    # hard-float Alpine build, and ziskemu rejects any FP in .text
+    # regardless of reachability. Redirecting every reference keeps those
+    # members out of the link entirely.
+    - value: --wrap=vfscanf
+    - value: --wrap=__isoc99_vfscanf
+    - value: --wrap=__floatscan
+    # musl exit()/_Exit()/abort() issue exit_group (syscall 94), which ZisK
+    # does not treat as program end; emit the real ZisK exit ecall (a7=93).
     - value: --wrap=exit
     - value: --wrap=_Exit
     - value: --wrap=abort
+    # ziskos bump-allocator bridge onto the shared heap.
+    - value: --wrap=inline_bump_alloc_aligned
+      libc: zisk
+    # Hide write() on the real zkVM; the sim keeps host stdio.
+    - value: --wrap=__stdio_write
+      libc: zisk

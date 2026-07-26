@@ -48,19 +48,289 @@ using Internal.TypeSystem.Ecma;
 
 using ILLink.Shared;
 
+/// <summary>
+/// MethodIL wrapper returning a rewritten copy of the inner body's IL stream.
+/// Metadata tokens keep resolving through the inner (Ecma) body, so a rewrite
+/// may freely reference any token already valid in the owning module; tokens
+/// injected by a rewrite (values chosen outside the module's real token space)
+/// are resolved from <paramref name="extraTokens"/> instead.
+///
+/// GetMethodILDefinition is overridden: for a shared generic instantiation the
+/// inner MethodIL is an InstantiatedMethodIL whose definition is the open body,
+/// and ILC's generic-dictionary / method-body-folding analysis reaches the
+/// method through that open definition. A wrapper that returned `this` (the
+/// default) would hand back an instantiated, rewritten body where the open one is
+/// expected, corrupting the generic dictionary layout (observed as a null
+/// WeakReference&lt;T&gt; MethodTable when the reflection type unifier grows).
+/// The IL bytes are identical between instantiation and definition (only token
+/// resolution differs), so the same rewritten bytes wrap the open definition.
+/// </summary>
+sealed class RewrittenMethodIL : MethodIL
+{
+    private readonly MethodIL _inner;
+    private readonly byte[] _bytes;
+    private readonly Dictionary<int, object> _extraTokens;
+    private readonly int _extraMaxStack;
+    private readonly LocalVariableDefinition[] _locals;
+
+    public RewrittenMethodIL(MethodIL inner, byte[] bytes, Dictionary<int, object> extraTokens = null, int extraMaxStack = 0, LocalVariableDefinition[] locals = null)
+    {
+        _inner = inner;
+        _bytes = bytes;
+        _extraTokens = extraTokens;
+        _extraMaxStack = extraMaxStack;
+        _locals = locals;
+    }
+
+    public override MethodDesc OwningMethod => _inner.OwningMethod;
+    public override int MaxStack => _inner.MaxStack + _extraMaxStack;
+    public override bool IsInitLocals => _inner.IsInitLocals;
+    public override byte[] GetILBytes() => _bytes;
+    public override LocalVariableDefinition[] GetLocals() => _locals ?? _inner.GetLocals();
+    public override ILExceptionRegion[] GetExceptionRegions() => _inner.GetExceptionRegions();
+    public override object GetObject(int token, NotFoundBehavior notFoundBehavior = NotFoundBehavior.Throw)
+        => _extraTokens != null && _extraTokens.TryGetValue(token, out object o)
+            ? o
+            : _inner.GetObject(token, notFoundBehavior);
+
+    public override MethodIL GetMethodILDefinition()
+    {
+        MethodIL innerDef = _inner.GetMethodILDefinition();
+        return innerDef == _inner
+            ? this   // already the open definition (e.g. a non-generic method)
+            : new RewrittenMethodIL(innerDef, _bytes, _extraTokens, _extraMaxStack, _locals);
+    }
+}
+
+/// <summary>
+/// Rewrites the double growth-ratio in ConcurrentUnifierW(Keyed)`2.Container.Resize
+/// (live/len &lt; 0.75) into the exactly equivalent integer predicate
+/// live*4 &lt; len*3, dropping the only FP instructions from that shared generic
+/// method. Applied ONLY to the post-scan (codegen) IL provider: Resize is a
+/// shared generic body, so the scanner must see the ORIGINAL IL to compute the
+/// correct generic-dictionary dependencies (WeakReference&lt;T&gt; etc.). The
+/// rewrite touches no tokens and no generic operations, so scan- and codegen-IL
+/// stay dependency-identical - the same split SubstitutedILProvider relies on
+/// for dead-branch elimination.
+/// </summary>
+sealed class UnifierResizeILProvider : ILProvider
+{
+    private readonly ILProvider _inner;
+
+    public UnifierResizeILProvider(ILProvider inner) => _inner = inner;
+
+    public override MethodIL GetMethodIL(MethodDesc method)
+    {
+        MethodIL body = _inner.GetMethodIL(method);
+        if (body == null ||
+            method.OwningType is not MetadataType cont ||
+            cont.Name != "Container" ||
+            cont.ContainingType is not MetadataType unifier ||
+            !unifier.Name.StartsWith("ConcurrentUnifierW") ||
+            method.Name != "Resize")
+        {
+            return body;
+        }
+
+        byte[] il = (byte[])body.GetILBytes().Clone();
+        // ldloc.0; conv.r8; ldarg.0; ldfld _entries; ldlen; conv.i4; conv.r8;
+        // div; ldc.r8 0.75; bge.un.s  ->  06 6C 02 7B ?? ?? ?? ?? 8E 69 6C 5B 23 <0.75> 34
+        byte[] pat = { 0x06, 0x6C, 0x02, 0x7B, 0, 0, 0, 0, 0x8E, 0x69, 0x6C, 0x5B,
+                       0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x3F, 0x34 };
+        bool[] mask = new bool[pat.Length];
+        for (int i = 0; i < mask.Length; i++) mask[i] = !(i >= 4 && i <= 7);
+        int at = ILRewrite.FindPattern(il, pat, mask);
+        if (at < 0)
+            return body;
+
+        byte t0 = il[at + 4], t1 = il[at + 5], t2 = il[at + 6], t3 = il[at + 7];
+        int p = at;
+        il[p++] = 0x06;                                    // ldloc.0
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x1A;                                    // ldc.i4.4
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x5A;                                    // mul   -> live*4
+        il[p++] = 0x02;                                    // ldarg.0
+        il[p++] = 0x7B; il[p++] = t0; il[p++] = t1; il[p++] = t2; il[p++] = t3; // ldfld _entries
+        il[p++] = 0x8E;                                    // ldlen
+        il[p++] = 0x69;                                    // conv.i4
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x19;                                    // ldc.i4.3
+        il[p++] = 0x6A;                                    // conv.i8
+        il[p++] = 0x5A;                                    // mul   -> len*3
+        for (int i = 0; i < 4; i++)
+            il[p++] = 0x00;                                // nop
+        il[p] = 0x2F;                                      // bge.s (same operand/target)
+        // Integer form holds live*4 while computing len*3: one slot deeper than
+        // the original double ratio peak.
+        return new RewrittenMethodIL(body, il, extraMaxStack: 1);
+    }
+}
+
+static class ILRewrite
+{
+    /// <summary>
+    /// Finds the single occurrence of <paramref name="pattern"/> in
+    /// <paramref name="haystack"/>; positions where <paramref name="mask"/> is
+    /// false match any byte. Returns -1 when absent or ambiguous (more than one
+    /// match is treated as not found - safer to leave the IL alone than to
+    /// rewrite the wrong site).
+    /// </summary>
+    public static int FindPattern(byte[] haystack, byte[] pattern, bool[] mask)
+    {
+        int found = -1;
+        for (int i = 0; i + pattern.Length <= haystack.Length; i++)
+        {
+            bool ok = true;
+            for (int j = 0; j < pattern.Length; j++)
+            {
+                if ((mask == null || mask[j]) && haystack[i + j] != pattern[j])
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok)
+            {
+                if (found >= 0)
+                    return -1;
+                found = i;
+            }
+        }
+        return found;
+    }
+}
+
+/// <summary>
+/// Presents the IL body of one method (<c>source</c>, typically a C# snippet
+/// compiled by Roslyn) as the body of another (<c>owner</c>, the method
+/// being compiled). Token resolution stays with the source body, so the snippet
+/// may freely reference any member visible in the module it was compiled in
+/// (which references the same CoreLib). The owner supplies the signature/generic
+/// context, so a static snippet <c>f(TSelf self, ...)</c> transplants cleanly
+/// onto an instance method with the same argument layout (arg0 = this = self).
+/// </summary>
+sealed class SubstituteBodyMethodIL : MethodIL
+{
+    private readonly MethodDesc _owner;
+    private readonly MethodIL _source;
+
+    public SubstituteBodyMethodIL(MethodDesc owner, MethodIL source) { _owner = owner; _source = source; }
+
+    public override MethodDesc OwningMethod => _owner;
+    public override int MaxStack => _source.MaxStack;
+    public override bool IsInitLocals => _source.IsInitLocals;
+    public override byte[] GetILBytes() => _source.GetILBytes();
+    public override LocalVariableDefinition[] GetLocals() => _source.GetLocals();
+    public override ILExceptionRegion[] GetExceptionRegions() => _source.GetExceptionRegions();
+    public override object GetObject(int token, NotFoundBehavior notFoundBehavior = NotFoundBehavior.Throw)
+        => _source.GetObject(token, notFoundBehavior);
+}
+
 class CustomILProvider : ILProvider
 {
     private ILProvider inner;
+    private bool zkvmTarget;
     public TypeSystemContext TypeContext;
 
-    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext)
+    /// <summary>
+    /// Maps a method being compiled to the C#-snippet method whose body replaces
+    /// it (see SubstituteBodyMethodIL). Populated after the snippet module is
+    /// compiled and loaded. Checked first in GetMethodIL, ahead of the remaining
+    /// targeted IL rewrites (TimeZoneInfo..cctor), so a snippet always wins.
+    /// </summary>
+    public Dictionary<MethodDesc, MethodDesc> BodySubstitutions;
+
+    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext, bool isZkvmTarget = false)
     {
         inner = innerProvider;
         TypeContext = typeContext;
+        zkvmTarget = isZkvmTarget;
     }
 
     public override MethodIL GetMethodIL(MethodDesc method)
     {
+        if (BodySubstitutions != null && BodySubstitutions.TryGetValue(method, out MethodDesc snippet))
+            return new SubstituteBodyMethodIL(method, inner.GetMethodIL(snippet));
+
+        // zkVM (rv64ima) IL rewrites the C# snippets cannot express. Most FP
+        // elimination is done by whole-body C# snippets (see the zisk.snippets.cs
+        // resource, compiled by TryCompileZiskSnippets and applied through
+        // BodySubstitutions above): Hashtable ctors/rehash, ValueType hashing,
+        // Random sampling and LengthBuckets all live there now. What remains here
+        // are the two cases a whole-body snippet is the wrong tool for:
+        //   * TimeZoneInfo..cctor - the FP is a single subexpression inside an
+        //     auto-generated static ctor; reproducing every static-field
+        //     initializer in a snippet would be fragile across CoreLib rebuilds,
+        //     so a surgical byte rewrite of just that subexpression is safer.
+        //   * ConcurrentUnifierW`2.Container.Resize - a SHARED GENERIC body the
+        //     scanner must see in its ORIGINAL form to compute correct generic-
+        //     dictionary dependencies, so it is rewritten codegen-only by
+        //     UnifierResizeILProvider (snippets apply in BOTH phases).
+
+        // TimeZoneInfo..cctor initializes s_daylightRuleMarker via
+        // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
+        // the only FPU code in the body. Rewrite the 19-byte sequence
+        //   ldsflda MinValue; ldc.r8 2.0; call AddMilliseconds
+        // into the tick-exact integer construction
+        //   ldc.i8 20000; newobj DateTime(int64); nop x5
+        // (2 ms = 20_000 ticks). Same stack effect, same length, so branch
+        // offsets and the trailing CreateFixedDateRule call are untouched.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType tzType &&
+            tzType.Namespace == "System" &&
+            tzType.Name == "TimeZoneInfo" &&
+            method.Name == ".cctor")
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            byte[] il = (byte[])body.GetILBytes().Clone();
+            // Anchor: ldc.r8 2.0 (23 00 00 00 00 00 00 00 40) preceded by
+            // ldsflda (7F + token) and followed by call (28 + token).
+            byte[] anchor = { 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40 };
+            int at = ILRewrite.FindPattern(il, anchor, null);
+            if (at >= 5 && il[at - 5] == 0x7F && il[at + 9] == 0x28)
+            {
+                var int64Type = TypeContext.GetWellKnownType(WellKnownType.Int64);
+                MethodDesc dateTimeTicksCtor = null;
+                foreach (MethodDesc ctor in ((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
+                             .Module.GetType("System", "DateTime").GetMethods())
+                {
+                    if (ctor.Name == ".ctor" && ctor.Signature.Length == 1 && ctor.Signature[0] == int64Type)
+                    {
+                        dateTimeTicksCtor = ctor;
+                        break;
+                    }
+                }
+
+                if (dateTimeTicksCtor != null)
+                {
+                    const int injectedToken = 0x0A7FFFF0;
+                    int p = at - 5;
+                    il[p++] = 0x21; // ldc.i8
+                    long ticks = 2 * 10_000; // 2 ms in ticks
+                    for (int i = 0; i < 8; i++)
+                        il[p++] = (byte)(ticks >> (8 * i));
+                    il[p++] = 0x73; // newobj
+                    il[p++] = unchecked((byte)injectedToken);
+                    il[p++] = unchecked((byte)(injectedToken >> 8));
+                    il[p++] = unchecked((byte)(injectedToken >> 16));
+                    il[p++] = unchecked((byte)(injectedToken >> 24));
+                    for (int i = 0; i < 5; i++)
+                        il[p++] = 0x00; // nop
+                    return new RewrittenMethodIL(body, il,
+                        new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
+                }
+            }
+            return body;
+        }
+
+        // NOTE: ValueType.RegularGetValueTypeHashCode (Single/Double struct fields
+        // hashed by value through FP registers), the whole System.Collections.
+        // Hashtable ctor/rehash family (the `float _loadFactor` load factor) and
+        // System.Random's compat-PRNG double sampling are all eliminated by
+        // whole-body C# snippets now (zisk.snippets.cs / BodySubstitutions) rather
+        // than hand-emitted IL - Roslyn guarantees each replacement body is valid.
+
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace == "System" &&
             owningType.Name == "OutOfMemoryException" &&
@@ -115,6 +385,76 @@ class CustomILProvider : ILProvider
     }
 }
 
+/// <summary>
+/// Scans a method's IL for floating point - the back-end for the --error-on-float
+/// gate.
+///
+/// Detection targets ONLY the IL opcodes that actually emit a hardware FP
+/// instruction on the soft-float lp64 target: conv.r4/r8/r.un (integer->float =
+/// fcvt) and ckfinite. It deliberately does NOT flag ldc.r4/r8, ld/st ind/elem
+/// .r4/.r8: those merely move float *bits*, which the backend lowers to ordinary
+/// integer loads/stores/immediates when no FPU is present (e.g. Single/Double.
+/// GetHashCode reinterpret the bits via SingleToUInt32Bits and emit zero FP, and
+/// a double field initialized to a constant is an integer store). Flagging those
+/// produced false positives against binaries the emulator accepts as FP-free.
+///
+/// Known gap: the polymorphic arithmetic opcodes (add/mul/...) are typed by their
+/// operands, so a method doing `a*b` on two floats with no conversion carries no
+/// FP opcode of its own and is not caught here. In practice float arithmetic is
+/// reached through a conversion (any int<->float in the expression) which IS
+/// flagged; the emulator run remains the ground-truth backstop for the residual.
+///
+/// The caller scans ONLY methods that were actually emitted
+/// (CompilationResults.CompiledMethodBodies): dead FP branches in shared generics
+/// and preinit-folded cctors (Stopwatch..cctor) are never emitted, so they raise
+/// no false alarm.
+/// </summary>
+static class ILFloatScanner
+{
+    /// <summary>Name of the first FP opcode found in the body, or null.</summary>
+    public static string Find(MethodIL il)
+    {
+        byte[] b = il.GetILBytes();
+        if (b == null)
+            return null;
+        int p = 0;
+        while (p < b.Length)
+        {
+            ILOpcode op = (b[p] == 0xFE && p + 1 < b.Length)
+                ? (ILOpcode)(0xFE00 + b[p + 1])
+                : (ILOpcode)b[p];
+
+            switch (op)
+            {
+                case ILOpcode.conv_r4:
+                case ILOpcode.conv_r8:
+                case ILOpcode.conv_r_un:
+                case ILOpcode.ckfinite:
+                    return op.ToString();
+            }
+
+            // Advance past this instruction so operand bytes are never misread as
+            // opcodes. switch is variable-length (uint32 count + that many int32
+            // targets); everything else has a fixed size from GetSize.
+            if (op == ILOpcode.switch_)
+            {
+                if (p + 5 > b.Length) break;
+                uint n = (uint)(b[p + 1] | (b[p + 2] << 8) | (b[p + 3] << 16) | (b[p + 4] << 24));
+                p += 5 + (int)n * 4;
+            }
+            else if (op.IsValid())
+            {
+                p += op.GetSize();
+            }
+            else
+            {
+                break; // unknown/invalid opcode - stop rather than misparse operands
+            }
+        }
+        return null;
+    }
+}
+
 internal class BuildCommand : CommandBase
 {
     private const string DefaultSystemModule = "System.Private.CoreLib";
@@ -131,6 +471,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
     private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
     private static Option<bool> WrapCheckOption = new Option<bool>("--wrap-check", "Verify every --wrap= linker flag points to a real symbol; fails the build if any is missing");
+    private static Option<bool> ErrorOnFloatOption = new Option<bool>("--error-on-float", "Scan the compiled (post-substitution) IL and fail the build if any method still carries floating point (float/double). Intended for no-FPU targets such as zisk.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
@@ -172,6 +513,11 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "Feature=[true|false]",
     };
 
+    private static Option<string[]> SubstitutionFilePathsOption = new Option<string[]>("--substitution", "ILLink.Substitutions file(s) to apply during compilation")
+    {
+        ArgumentHelpName = "file.xml",
+    };
+
     private static Option<string[]> ExtLibOption = new Option<string[]>("--extlib", "Link external library: repo:version (GitHub release with single .nupkg), path/URL to .nupkg, or path/URL to .bflat.manifest")
     {
         ArgumentHelpName = "repo:version|pkg.nupkg|pkg.bflat.manifest"
@@ -210,6 +556,7 @@ internal class BuildCommand : CommandBase
             MstatOption,
             DirectPInvokesOption,
             FeatureSwitchOption,
+            SubstitutionFilePathsOption,
             CommonOptions.ResourceOption,
             CommonOptions.StdLibOption,
             CommonOptions.DeterministicOption,
@@ -221,6 +568,7 @@ internal class BuildCommand : CommandBase
             ExtLibOption,
             SymChartOption,
             WrapCheckOption,
+            ErrorOnFloatOption,
         };
         command.Handler = new BuildCommand();
 
@@ -237,6 +585,154 @@ internal class BuildCommand : CommandBase
                 yield return file;
             }
         }
+    }
+
+    /// <summary>
+    /// Reads one options section of a module's params.yml (packed into the
+    /// layout as &lt;module&gt;.params.yml) and yields the entries whose
+    /// applicability conditions hold. An entry is "- &lt;kind&gt;: &lt;value&gt;"
+    /// optionally followed by conditions on the same list item:
+    ///   libc: zisk            (scalar)
+    ///   libc: [zisk, musl]    (flow list)
+    ///   arch: riscv64
+    ///   os:   linux
+    /// Conditions are AND-ed; a missing condition does not constrain. The
+    /// parser is deliberately minimal (no YAML dependency) and fails loudly
+    /// on anything it does not understand.
+    /// </summary>
+    IEnumerable<KeyValuePair<string, string>> ReadModuleParams(string paramsPath,
+        string section, string libc, TargetArchitecture arch, TargetOS os)
+    {
+        var entries = new List<KeyValuePair<string, string>>();
+        if (!File.Exists(paramsPath))
+            return entries;
+
+        string libcName = (libc ?? "").ToLowerInvariant();
+        string archName = arch.ToString().ToLowerInvariant();
+        string osName = os.ToString().ToLowerInvariant();
+
+        string currentSection = null;
+        string pendingKind = null;
+        string pendingValue = null;
+        bool pendingApplies = true;
+
+        void Flush()
+        {
+            if (pendingKind != null && pendingApplies)
+                entries.Add(new KeyValuePair<string, string>(pendingKind, pendingValue));
+            pendingKind = null;
+            pendingValue = null;
+            pendingApplies = true;
+        }
+
+        bool ConditionHolds(string key, string val)
+        {
+            string actual = key switch
+            {
+                "libc" => libcName,
+                "arch" => archName,
+                "os" => osName,
+                _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
+            };
+            foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
+            {
+                if (candidate.Trim().ToLowerInvariant() == actual)
+                    return true;
+            }
+            return false;
+        }
+
+        foreach (string rawLine in File.ReadAllLines(paramsPath))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith("#"))
+                continue;
+
+            if (line.StartsWith("-"))
+            {
+                Flush();
+                if (currentSection != section)
+                    continue;
+                int c = line.IndexOf(':');
+                if (c <= 1)
+                    throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{currentSection}'");
+                pendingKind = line.Substring(1, c - 1).Trim();
+                pendingValue = line.Substring(c + 1).Trim();
+                continue;
+            }
+
+            int colon = line.IndexOf(':');
+            if (colon <= 0)
+                throw new Exception($"{paramsPath}: unsupported line '{line}'");
+            string k = line.Substring(0, colon).Trim();
+            string rest = line.Substring(colon + 1).Trim();
+
+            // Condition attached to the current list entry.
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os"))
+            {
+                pendingApplies &= ConditionHolds(k, rest);
+                continue;
+            }
+
+            // "ld:"/"ilc:" open a section; any "key: value" pair
+            // (repo:, tag:, file:, ...) or another header closes it.
+            Flush();
+            currentSection = rest.Length == 0 ? k : null;
+        }
+        Flush();
+        return entries;
+    }
+
+    /// <summary>
+    /// Appends the linker options a module declares in the options.ld section
+    /// of its params.yml. Every entry must be "- value: &lt;flag&gt;".
+    /// </summary>
+    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName,
+        string libc, TargetArchitecture arch, TargetOS os)
+    {
+        string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
+        foreach (var entry in ReadModuleParams(paramsPath, "ld", libc, arch, os))
+        {
+            if (entry.Key != "value")
+                throw new Exception($"{paramsPath}: unsupported ld entry kind '{entry.Key}'");
+            if (entry.Value.Length > 0)
+                ldArgs.Append(entry.Value + " ");
+        }
+    }
+
+    /// <summary>
+    /// Collects the ILC-stage files (substitutions XML / body-substitution
+    /// C# snippets) declared by any module's params.yml options.ilc section:
+    ///   - substitutions: file.xml
+    ///   - snippets: file.cs
+    /// File paths are relative to the layout directory. Same per-entry
+    /// libc/arch/os conditions as options.ld.
+    /// </summary>
+    (List<string> Substitutions, List<string> Snippets) CollectModuleIlcFiles(
+        string libPath, string libc, TargetArchitecture arch, TargetOS os)
+    {
+        var substitutions = new List<string>();
+        var snippets = new List<string>();
+        if (!Directory.Exists(libPath))
+            return (substitutions, snippets);
+
+        foreach (string paramsPath in Directory.GetFiles(libPath, "*.params.yml").OrderBy(p => p))
+        {
+            foreach (var entry in ReadModuleParams(paramsPath, "ilc", libc, arch, os))
+            {
+                string fullPath = Path.Combine(libPath, entry.Value);
+                if (!File.Exists(fullPath))
+                    throw new Exception($"{paramsPath}: ilc file '{entry.Value}' not found in layout");
+                switch (entry.Key)
+                {
+                    case "substitutions": substitutions.Add(fullPath); break;
+                    case "snippets": snippets.Add(fullPath); break;
+                    default:
+                        throw new Exception($"{paramsPath}: unsupported ilc entry kind '{entry.Key}'");
+                }
+            }
+        }
+        return (substitutions, snippets);
     }
 
     void PatchRiscvAbi(string path)
@@ -257,98 +753,283 @@ internal class BuildCommand : CommandBase
     void PatchRiscvAbiStaticLib(string libPath, bool verbose)
     {
         if (verbose)
-            Console.WriteLine($"Patching RISC-V ABI in static library: {libPath}");
+            Console.WriteLine($"Patching RISC-V ABI in static library (in place): {libPath}");
 
-        // Create temp directory for extraction
-        string tempDir = Path.Combine(Path.GetTempPath(), $"bflat-patch-{Path.GetFileNameWithoutExtension(libPath)}-{Guid.NewGuid()}");
-        Directory.CreateDirectory(tempDir);
+        if (!File.Exists(libPath))
+        {
+            if (verbose)
+                Console.WriteLine($"Warning: {libPath} not found, skipping ABI patch");
+            return;
+        }
 
+        // Patch the float-ABI marker of every ELF member in place by walking the ar
+        // structure. Extract-and-repack (ar x / ar rcs) is unsafe here: musl's
+        // libc.a has multiple members that share a basename (e.g. free.lo), and
+        // extraction by name overwrites the earlier one on disk, silently dropping
+        // its symbols (this is why "free" went missing). Rewriting bytes in place
+        // preserves every member and the archive symbol index.
+        using var fs = new FileStream(libPath, FileMode.Open, FileAccess.ReadWrite);
+
+        byte[] magic = new byte[8];
+        if (fs.Read(magic, 0, 8) != 8 || System.Text.Encoding.ASCII.GetString(magic) != "!<arch>\n")
+        {
+            if (verbose)
+                Console.WriteLine($"Warning: {libPath} is not an ar archive, skipping ABI patch");
+            return;
+        }
+
+        int patched = 0;
+        byte[] header = new byte[60];
+        while (fs.Position + 60 <= fs.Length)
+        {
+            if (fs.Read(header, 0, 60) != 60)
+                break;
+
+            // Member size is a decimal ASCII string at bytes 48..57.
+            if (!long.TryParse(System.Text.Encoding.ASCII.GetString(header, 48, 10).Trim(), out long size))
+                break;
+
+            long dataPos = fs.Position;
+
+            // e_flags lives at offset 0x30 of the ELF header; patch it only for ELF
+            // members whose marker is hard-float (4) or hard-float+compressed (5).
+            // The armap/extended-name members are not ELF and are skipped.
+            if (size > 0x34)
+            {
+                byte[] ident = new byte[4];
+                fs.Read(ident, 0, 4);
+                if (ident[0] == 0x7f && ident[1] == (byte)'E' && ident[2] == (byte)'L' && ident[3] == (byte)'F')
+                {
+                    fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
+                    int b = fs.ReadByte();
+                    if (b == 4 || b == 5)
+                    {
+                        fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
+                        fs.WriteByte(0);
+                        patched++;
+                    }
+                }
+            }
+
+            // Advance to the next member; member data is padded to an even offset.
+            long next = dataPos + size;
+            if ((next & 1) == 1)
+                next++;
+            fs.Seek(next, SeekOrigin.Begin);
+        }
+
+        if (verbose)
+            Console.WriteLine($"Patched {patched} ELF member(s) in {libPath}");
+    }
+
+    // Normalize the RISC-V float-ABI marker of every prebuilt .NET runtime blob
+    // that the zisk/zisk_sim link pulls in, to soft-float (lp64). The zkVM stack
+    // is linked soft-float (crt1.o/crti.o/crtn.o/libc.a are patched above), but
+    // the runtime blobs (bootstrapper, WorkstationGC, PAL, minipal, ...) ship
+    // with the hard-float (lp64d) marker in some blob releases, and ld.lld
+    // rejects them with "different floating-point ABI from crt1.o". This flips
+    // only the ELF marker byte in place (see PatchRiscvAbi / PatchRiscvAbiStaticLib);
+    // it does NOT touch instructions, so it is safe only because the blobs
+    // contain no hardware FP (the guest is FP-free). Idempotent and tolerant of
+    // missing files.
+    void PatchRiscvAbiRuntimeBlobs(string libDir, bool verbose)
+    {
+        string[] objects =
+        {
+            "libbootstrapper.o", "libbootstrapperdll.o",
+        };
+        string[] archives =
+        {
+            "libSystem.Native.a", "libatomic.a", "libeventpipe-disabled.a",
+            "libaotminipal.a", "libstandalonegc-disabled.a", "libstdc++compat.a",
+            "libRuntime.WorkstationGC.a", "libSystem.IO.Compression.Native.a",
+            "libSystem.Security.Cryptography.Native.OpenSsl.a",
+            "libSystem.Globalization.Native.a",
+        };
+        foreach (string o in objects)
+        {
+            string path = Path.Combine(libDir, o);
+            if (File.Exists(path))
+                PatchRiscvAbi(path);
+        }
+        foreach (string a in archives)
+            PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
+    }
+
+    // Compiles the module-declared snippet sources against the same references
+    // with accessibility checks disabled, emits them to a temp module, and
+    // returns the path (null on failure - substitution is then simply skipped).
+    private string TryCompileZiskSnippets(IReadOnlyList<string> sourcePaths, string[] references, string[] defines, string langVersion)
+    {
         try
         {
-            // Extract .a archive using ar
-            string ar = Environment.GetEnvironmentVariable("BFLAT_AR");
-            if (ar == null)
-            {
-                string toolSuffix = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
-                string arPath = Path.Combine(CommonOptions.HomePath, "bin", "llvm-ar" + toolSuffix);
 
-                // If not found in HomePath, try system path
-                if (!File.Exists(arPath))
+            if (!LanguageVersionFacts.TryParse(langVersion, out LanguageVersion langVer))
+                langVer = LanguageVersion.Latest;
+
+            var parseOptions = new CSharpParseOptions(langVer, DocumentationMode.None,
+                preprocessorSymbols: defines ?? Array.Empty<string>());
+            var trees = new List<SyntaxTree>();
+            foreach (string sourcePath in sourcePaths)
+                trees.Add(CSharpSyntaxTree.ParseText(File.ReadAllText(sourcePath), parseOptions, path: sourcePath));
+
+            var metadataReferences = new List<MetadataReference>();
+            foreach (var reference in references)
+            {
+                var mref = MetadataReference.CreateFromFile(reference);
+                // Several CoreLib-internal types (HashHelpers, MethodTable,
+                // EETypeElementType) are ALSO defined in sibling assemblies
+                // (System.Collections.Concurrent/Immutable, System.Private.
+                // TypeLoader), so an unqualified reference is ambiguous (CS0433).
+                // Expose CoreLib under a `corelib` extern alias (in addition to
+                // global) so the snippet can name those types unambiguously.
+                if (Path.GetFileNameWithoutExtension(reference).Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase))
+                    mref = mref.WithAliases(new[] { "global", "corelib" });
+                metadataReferences.Add(mref);
+            }
+
+            var options = new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                allowUnsafe: true,
+                optimizationLevel: OptimizationLevel.Release,
+                deterministic: true,
+                metadataImportOptions: MetadataImportOptions.All)
+                // A snippet method that takes a private nested type as a parameter
+                // trips the accessibility-consistency errors (CS0050/CS0051); we
+                // are deliberately bypassing accessibility, so suppress them.
+                .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic>
                 {
-                    arPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "llvm-ar.exe" : "llvm-ar";
+                    ["CS0050"] = ReportDiagnostic.Suppress,
+                    ["CS0051"] = ReportDiagnostic.Suppress,
+                    ["CS0052"] = ReportDiagnostic.Suppress,
+                    ["CS0053"] = ReportDiagnostic.Suppress,
+                    ["CS0057"] = ReportDiagnostic.Suppress,
+                });
+
+            // Enable BinderFlags.IgnoreAccessibility (internal Roslyn API) so the
+            // snippet may reference private nested types and private members of
+            // the referenced CoreLib.
+            var binderFlagsType = typeof(CSharpCompilation).Assembly.GetType("Microsoft.CodeAnalysis.CSharp.BinderFlags");
+            var withBinderFlags = typeof(CSharpCompilationOptions).GetMethod("WithTopLevelBinderFlags",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (binderFlagsType != null && withBinderFlags != null)
+            {
+                object ignoreAccessibility = Enum.Parse(binderFlagsType, "IgnoreAccessibility");
+                options = (CSharpCompilationOptions)withBinderFlags.Invoke(options, new[] { ignoreAccessibility });
+            }
+
+            var compilation = CSharpCompilation.Create("__ZiskSnippets", trees, metadataReferences, options);
+            string path = Path.GetTempFileName();
+            using (var fs = File.Create(path))
+            {
+                var emitResult = compilation.Emit(fs);
+                if (!emitResult.Success)
+                {
+                    foreach (var d in emitResult.Diagnostics)
+                        if (d.Severity == DiagnosticSeverity.Error)
+                            Console.Error.WriteLine("zisk snippet: " + d);
+                    return null;
                 }
-
-                ar = arPath;
             }
-
-            // Extract archive
-            var extractProcess = Process.Start(new ProcessStartInfo
-            {
-                FileName = ar,
-                Arguments = $"x \"{libPath}\"",
-                WorkingDirectory = tempDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            });
-            extractProcess.WaitForExit();
-
-            if (extractProcess.ExitCode != 0)
-            {
-                if (verbose)
-                    Console.WriteLine($"Warning: Failed to extract {libPath}, skipping ABI patch");
-                return;
-            }
-
-            // Patch all .o files
-            var objectFiles = Directory.GetFiles(tempDir, "*.o");
-            foreach (var objFile in objectFiles)
-            {
-                if (verbose)
-                    Console.WriteLine($"  Patching {Path.GetFileName(objFile)}");
-                PatchRiscvAbi(objFile);
-            }
-
-            // Recreate archive with patched files
-            File.Delete(libPath);
-            var createArgs = new StringBuilder();
-            createArgs.Append($"rcs \"{libPath}\"");
-            foreach (var objFile in objectFiles)
-            {
-                createArgs.Append($" \"{Path.GetFileName(objFile)}\"");
-            }
-
-            var createProcess = Process.Start(new ProcessStartInfo
-            {
-                FileName = ar,
-                Arguments = createArgs.ToString(),
-                WorkingDirectory = tempDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            });
-            createProcess.WaitForExit();
-
-            if (createProcess.ExitCode != 0)
-            {
-                throw new Exception($"Failed to recreate static library {libPath}");
-            }
-
-            if (verbose)
-                Console.WriteLine($"Successfully patched {libPath}");
+            return path;
         }
-        finally
+        catch (Exception ex)
         {
-            // Clean up temp directory
-            try
-            {
-                Directory.Delete(tempDir, true);
-            }
-            catch
-            {
-                // Ignore cleanup errors
-            }
+            Console.Error.WriteLine($"warning: could not compile zisk snippets: {ex.Message}");
+            return null;
         }
+    }
+
+    // Maps CoreLib methods that carry floating point to the C# snippet methods
+    // (in __ZiskSnippets.Snippets) that replace their bodies, by name/signature.
+    // Targets absent from the closure (e.g. LengthBuckets when Immutable is not
+    // referenced) resolve to null and are simply skipped. Extend as snippets grow.
+    private static Dictionary<MethodDesc, MethodDesc> BuildZiskBodySubstitutions(CompilerTypeSystemContext ctx, EcmaModule snippetsModule)
+    {
+        var map = new Dictionary<MethodDesc, MethodDesc>();
+        var snippetType = (MetadataType)snippetsModule.GetType("__ZiskSnippets", "Snippets");
+        var int32 = ctx.GetWellKnownType(WellKnownType.Int32);
+        var single = ctx.GetWellKnownType(WellKnownType.Single);
+
+        MethodDesc Snippet(string name)
+        {
+            foreach (MethodDesc m in snippetType.GetMethods())
+                if (m.Name == name) return m;
+            return null;
+        }
+        void Add(MethodDesc target, MethodDesc snippet)
+        {
+            if (target != null && snippet != null) map[target] = snippet;
+        }
+        // Finds the single method of `type` named `name` whose parameter types
+        // (excluding `this`) match `sig` exactly; null if the type/method is absent.
+        MethodDesc Method(MetadataType type, string name, params TypeDesc[] sig)
+        {
+            if (type == null) return null;
+            foreach (MethodDesc m in type.GetMethods())
+            {
+                if (m.Name != name || m.Signature.Length != sig.Length) continue;
+                bool ok = true;
+                for (int i = 0; i < sig.Length; i++) ok &= m.Signature[i] == sig[i];
+                if (ok) return m;
+            }
+            return null;
+        }
+        MetadataType Type(ModuleDesc mod, string ns, string name)
+        {
+            try { return mod == null ? null : (MetadataType)mod.GetType(ns, name, NotFoundBehavior.ReturnNull); }
+            catch { return null; }
+        }
+        ModuleDesc Module(string simpleName)
+        {
+            try { return ctx.GetModuleForSimpleName(simpleName); }
+            catch { return null; }
+        }
+
+        // System.Random legacy compat PRNG (private nested impl types).
+        var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
+        var seedImpl = random.GetNestedType("CompatSeedImpl");
+        var derivedImpl = random.GetNestedType("CompatDerivedImpl");
+        Add(Method(seedImpl, "Next", int32), Snippet("RandomSeedNext1"));
+        Add(Method(seedImpl, "Next", int32, int32), Snippet("RandomSeedNext2"));
+        Add(Method(derivedImpl, "Next", int32), Snippet("RandomDerivedNext1"));
+        Add(Method(derivedImpl, "Next", int32, int32), Snippet("RandomDerivedNext2"));
+
+        // System.Collections.Hashtable ctor/rehash family (float _loadFactor).
+        var htType = Type(ctx.SystemModule, "System.Collections", "Hashtable");
+        var ieqCmp = Type(ctx.SystemModule, "System.Collections", "IEqualityComparer");
+        if (htType != null)
+        {
+            Add(Method(htType, ".ctor"), Snippet("HashtableCtor0"));
+            Add(Method(htType, ".ctor", int32), Snippet("HashtableCtorCap"));
+            Add(Method(htType, ".ctor", int32, single), Snippet("HashtableCtorCapLf"));
+            Add(Method(htType, ".ctor", int32, single, ieqCmp), Snippet("HashtableCtorCapLfCmp"));
+            Add(Method(htType, ".ctor", ieqCmp), Snippet("HashtableCtorCmp"));
+            Add(Method(htType, ".ctor", int32, ieqCmp), Snippet("HashtableCtorCapCmp"));
+            Add(Method(htType, "rehash", int32), Snippet("HashtableRehash"));
+        }
+
+        // System.ValueType.GetHashCode helper (Single/Double struct fields).
+        // RegularGetValueTypeHashCode has ref/byref params not conveniently
+        // nameable as TypeDesc[] here; match by name + parameter count (3) instead.
+        var vtType = Type(ctx.SystemModule, "System", "ValueType");
+        if (vtType != null)
+        {
+            foreach (MethodDesc m in vtType.GetMethods())
+                if (m.Name == "RegularGetValueTypeHashCode" && m.Signature.Length == 3)
+                    Add(m, Snippet("ValueTypeRegularHashCode"));
+        }
+
+        // System.Collections.Frozen.LengthBuckets (only if Immutable is present).
+        var lbType = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "LengthBuckets");
+        if (lbType != null)
+        {
+            foreach (MethodDesc m in lbType.GetMethods())
+                if (m.Name == "CreateLengthBucketsArrayIfAppropriate")
+                    Add(m, Snippet("LengthBucketsNone"));
+        }
+
+        return map;
     }
 
     public override int Handle(ParseResult result)
@@ -598,6 +1279,14 @@ internal class BuildCommand : CommandBase
         }
         ms.Seek(0, SeekOrigin.Begin);
 
+        // Persist the Roslyn output so the type system can load it through the
+        // standard path-based loader (registered in InputFilePaths below). This
+        // replaces the in-memory CacheOpenModule hook that required a runtime patch.
+        string compiledModulePath = Path.GetTempFileName();
+        using (var moduleFile = File.Create(compiledModulePath))
+            ms.CopyTo(moduleFile);
+        ms.Dispose();
+
         string outputFilePath = userSpecificedOutputFileName;
         if (outputFilePath == null)
         {
@@ -626,18 +1315,13 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        if (stdlib != StandardLibType.DotNet)
-        {
-            SettingsTunnel.EmitGCInfo = false;
-            SettingsTunnel.EmitEHInfo = false;
-            SettingsTunnel.EmitGSCookies = false;
-        }
-
         Console.WriteLine("Supports reflection: " + supportsReflection.ToString());
         CompilerTypeSystemContext typeSystemContext =
-            new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0, ms, compiledModuleName);
+            new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
-        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
+        CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
+            isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
+        ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -713,13 +1397,55 @@ internal class BuildCommand : CommandBase
             }
         }
 
-        typeSystemContext.InputFilePaths = new Dictionary<string, string>();
+        var inputFilePaths = new Dictionary<string, string>
+        {
+            [compiledModuleName] = compiledModulePath,
+        };
+
+        // zkVM body-substitution machinery, declared by modules in their
+        // params.yml options.ilc sections (e.g. zisk_subst): substitutions XML
+        // for ILC and C# snippet sources compiled against the same references,
+        // with accessibility checks ignored so they can touch CoreLib
+        // internals/privates; the resulting module is registered so the type
+        // system resolves its methods.
+        const string snippetsModuleName = "__ZiskSnippets";
+        string snippetsModulePath = null;
+        List<string> moduleSubstitutionFiles = new List<string>();
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            (moduleSubstitutionFiles, List<string> snippetFiles) =
+                CollectModuleIlcFiles(ziskLibPath, libc, targetArchitecture, targetOS);
+            // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
+            // not the public ref assemblies (references): the snippet needs the
+            // private nested types (Random.CompatSeedImpl, ...) that ref
+            // assemblies strip out.
+            if (snippetFiles.Count > 0)
+                snippetsModulePath = TryCompileZiskSnippets(snippetFiles, referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
+            if (snippetsModulePath != null)
+                inputFilePaths[snippetsModuleName] = snippetsModulePath;
+        }
+
+        typeSystemContext.InputFilePaths = inputFilePaths;
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
 
         typeSystemContext.SetSystemModule(typeSystemContext.GetModuleForSimpleName(systemModuleName));
 
         //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
+
+        if (snippetsModulePath != null)
+        {
+            try
+            {
+                EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
+                customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, snippetsModule);
+                Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"warning: zisk body-substitution snippets not applied: {ex.Message}");
+            }
+        }
 
         ilProvider = new HardwareIntrinsicILProvider(
             instructionSetSupport,
@@ -742,8 +1468,12 @@ internal class BuildCommand : CommandBase
 
         if (!disableReflection)
             initAssemblies.Add("System.Private.Reflection.Execution");
-        else
-            initAssemblies.Add("System.Private.DisabledReflection");
+        // else: System.Private.DisabledReflection no longer exists — reflection-free
+        // mode was removed from dotnet/runtime in the .NET 8 timeframe. Its module
+        // initializer only installed stub reflection callbacks; with the fully
+        // blocked metadata policies below there is nothing to initialize, so
+        // reflection APIs that reach the uninstalled callbacks fail fast at
+        // runtime instead of throwing the polite reflection-disabled exception.
 
         initAssemblies.Add("mscorlib");
         initAssemblies.Add("System");
@@ -886,6 +1616,15 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Globalization.Invariant", true);
         }
 
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            // Invariant timezone (UTC only): the deterministic zkVM guest has no
+            // timezone database, and the [FeatureSwitchDefinition] on
+            // TimeZoneInfo.Invariant lets ILC fold and trim the timezone-data
+            // loading paths (which also carry floating-point transition math).
+            featureSwitches.Add("System.TimeZoneInfo.Invariant", true);
+        }
+
         if (disableStackTraceData)
         {
             featureSwitches.Add("System.Diagnostics.StackTrace.IsSupported", false);
@@ -902,8 +1641,38 @@ internal class BuildCommand : CommandBase
             featureSwitches[name] = value;
         }
 
+        // User-provided ILLink.Substitutions XML (same format and wiring as ilc's
+        // --substitution): method body stubs/removals and static field value
+        // substitutions, constant-folded with branch elimination before scanning,
+        // so code guarded by a substituted value is trimmed from the image.
         BodyAndFieldSubstitutions substitutions = default;
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
+
+        // Built-in substitutions for the zkVM targets, declared by modules
+        // (zisk_subst's zisk.substitutions.xml): thread-pool tuning and similar
+        // machinery that is provably dead on a single-threaded guest but drags
+        // floating-point code into the rv64ima image. Applied before user
+        // files; the parser rejects duplicate method entries, so user files
+        // extend rather than override this set.
+        foreach (string substitutionFile in moduleSubstitutionFiles)
+        {
+            using FileStream mfs = File.OpenRead(substitutionFile);
+            substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
+                logger, typeSystemContext, XmlReader.Create(mfs),
+                substitutionFile, featureSwitches));
+        }
+        foreach (string substitutionFilePath in result.GetValueForOption(SubstitutionFilePathsOption) ?? Array.Empty<string>())
+        {
+            using FileStream fs = File.OpenRead(substitutionFilePath);
+            substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
+                logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+
+            fs.Seek(0, SeekOrigin.Begin);
+
+            resourceBlocks = ManifestResourceBlockingPolicy.UnionBlockings(resourceBlocks,
+                ManifestResourceBlockingPolicy.SubstitutionsReader.GetSubstitutions(
+                    logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+        }
 
         SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
         ILProvider unsubstitutedILProvider = ilProvider;
@@ -1092,6 +1861,16 @@ internal class BuildCommand : CommandBase
 
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
 
+            if (libc == "zisk" || libc == "zisk_sim")
+            {
+                // Codegen-only: rewrite the ConcurrentUnifier growth ratio to
+                // integer math AFTER scanning. Relies on RewrittenMethodIL
+                // correctly forwarding GetMethodILDefinition for this shared
+                // generic method (without which the generic dictionary layout
+                // is corrupted). See UnifierResizeILProvider.
+                ilProvider = new UnifierResizeILProvider(ilProvider);
+            }
+
             // Use a more precise IL provider that uses whole program analysis for dead branch elimination
             builder.UseILProvider(ilProvider);
 
@@ -1161,6 +1940,50 @@ internal class BuildCommand : CommandBase
         PerfWatch compileWatch = new PerfWatch("Native compile");
         CompilationResults compilationResults = compilation.Compile(objectFilePath, ObjectDumper.Compose(dumpers));
         compileWatch.Complete();
+
+        // --error-on-float: fail the build if any EMITTED method's (post-
+        // substitution) IL still carries floating point. Scanning only the methods
+        // that were actually compiled (CompiledMethodBodies) - not every method the
+        // compiler merely queried - keeps preinit-folded cctors and dead generic
+        // instantiations from raising false alarms. Reported by managed method name.
+        if (result.GetValueForOption(ErrorOnFloatOption))
+        {
+            var offenders = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            int allowed = 0;
+            foreach (MethodDesc emitted in compilationResults.CompiledMethodBodies)
+            {
+                MethodIL emittedIL;
+                try { emittedIL = ilProvider.GetMethodIL(emitted); }
+                catch { continue; }
+                if (emittedIL == null)
+                    continue;
+                string reason = ILFloatScanner.Find(emittedIL);
+                if (reason == null)
+                    continue;
+
+                if (IsKnownDeadFloatMethod(emitted))
+                {
+                    // The conv is real IL but sits in a block the JIT proves dead
+                    // (a disabled-feature guard reached through a local, which the
+                    // IL-level substitution cannot fold). Surfaced as a warning so
+                    // it stays auditable rather than silently ignored.
+                    Console.WriteLine($"warning: --error-on-float: ignoring known dead FP in {emitted}  [{reason}]");
+                    allowed++;
+                    continue;
+                }
+                offenders[emitted.ToString()] = reason;
+            }
+
+            if (offenders.Count > 0)
+            {
+                Console.Error.WriteLine($"error: --error-on-float: {offenders.Count} compiled method(s) carry floating point:");
+                foreach (var kv in offenders)
+                    Console.Error.WriteLine($"  {kv.Key}  [{kv.Value}]");
+                return 1;
+            }
+
+            Console.WriteLine($"--error-on-float: OK (no floating point in any compiled method{(allowed > 0 ? $"; {allowed} known-dead site(s) ignored" : "")})");
+        }
 
         string exportsFile = null;
         if (nativeLib)
@@ -1422,6 +2245,12 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-latomic ");
+                    // The prebuilt .NET runtime blobs (bootstrapper, WorkstationGC,
+                    // PAL, minipal, libatomic, ...) can ship with the hard-float
+                    // (lp64d) marker; normalize them all to soft-float so ld.lld
+                    // accepts them against the soft-float crt1.o.
+                    if (libc == "zisk" || libc == "zisk_sim")
+                        PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
@@ -1451,6 +2280,13 @@ internal class BuildCommand : CommandBase
             else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
+                // The zisk/zisk_sim stack is linked with the soft-float (lp64)
+                // ABI marker (see PatchRiscvAbi on crt1.o/crti.o above). The
+                // bundled musl libc.a still carries the hard-float (lp64d)
+                // marker, so normalize it too or ld.lld rejects every member
+                // with "different floating-point ABI from crt1.o".
+                if (libc == "zisk" || libc == "zisk_sim")
+                    PatchRiscvAbiStaticLib(firstLib + "/libc.a", verbose);
             }
 
             if (libc == "bionic")
@@ -1467,6 +2303,9 @@ internal class BuildCommand : CommandBase
             else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
+                // Same soft-float marker normalization as crt1.o/crti.o.
+                if (libc == "zisk" || libc == "zisk_sim")
+                    PatchRiscvAbi(firstLib + "/crtn.o");
             }
             else
             {
@@ -1510,142 +2349,57 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                /* nofp: FP trap stubs; the math-symbol wrap surface is
+                 * declared in nofp.params.yml. (The musl target links the
+                 * object without these wraps.) */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"--wrap=inline_bump_alloc_aligned ");
-                }
-                /* rhp */
+                /* rhp: the wrap surface is declared in the module's
+                 * module_params.yml (packed as rhp.params.yml). What is NOT
+                 * wrapped anymore, and why the originals work on .NET 10 +
+                 * uGC alloc-context budgets: allocation helpers (upstream
+                 * riscv64 AllocFast.S + GcAllocInternal), thread statics
+                 * (plain TLS field + managed jagged arrays), the Lock family
+                 * incl. DeadlockAwareAcquire (truthful IsHeldByCurrentThread
+                 * breaks recursive cctor cycles), CheckCastAny, cgroup
+                 * initializers, GetDefaultLocaleName, and friends. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
-                ldArgs.Append($"--wrap=RhpNewFast ");
-                ldArgs.Append($"--wrap=RhpNewObject ");
-                ldArgs.Append($"--wrap=RhpNewPtrArrayFast ");
-                ldArgs.Append($"--wrap=RhpNewArrayFast ");
-                ldArgs.Append($"--wrap=RhNewString ");
-                ldArgs.Append($"--wrap=RhpPInvoke ");
-                ldArgs.Append($"--wrap=RhpPInvokeReturn ");
-                /* No-op the reverse P/Invoke transition: the real one parks the
-                 * thread at a GC-safe point, which deadlocks when a managed
-                 * exception handler is entered from __wrap_RhpThrowEx (thread
-                 * already cooperative, single-threaded zkVM never rendezvous). */
-                ldArgs.Append($"--wrap=RhpReversePInvoke ");
-                ldArgs.Append($"--wrap=RhpReversePInvokeReturn ");
-                ldArgs.Append($"--wrap=RhBulkMoveWithWriteBarrier ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_TypeCast__CheckCastAny ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources ");
-                ldArgs.Append($"--wrap=GlobalizationNative_GetDefaultLocaleName ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ProcessorIdCache__ProcessorNumberSpeedCheck ");
-                ldArgs.Append($"--wrap=RhGetThreadStaticStorage ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_Internal_Runtime_ThreadStatics__GetUninlinedThreadStaticBaseForType ");
-                ldArgs.Append($"--wrap=_Z16InitializeCGroupv ");
-                ldArgs.Append($"--wrap=_Z19InitializeCpuCGroupv ");
-                ldArgs.Append($"--wrap=__GetNonGCStaticBase_S_P_CoreLib_System_Environment ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Thread__WaitForForegroundThreads ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Enter ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterAndGetCurrentThreadId ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__EnterScope ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnterSlow_0 ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnter_0 ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__TryEnter_Outlined ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_0 ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__Exit_1 ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__ExitAll ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Lock__get_IsHeldByCurrentThread ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Runtime_CompilerServices_ClassConstructorRunner__DeadlockAwareAcquire ");
-                ldArgs.Append($"--wrap=S_P_TypeLoader_Internal_Runtime_TypeLoader_TypeLoaderEnvironment__VerifyTypeLoaderLockHeld ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_ManagedThreadId__get_Current ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Enter ");
-                //ldArgs.Append($"--wrap=S_P_CoreLib_System_Threading_Monitor__Exit ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_Number__UInt32ToDecStrForKnownSmallNumber ");
-                ldArgs.Append($"--wrap=_ZN6Thread10IsDetachedEv ");
-                ldArgs.Append($"--wrap=_Z24PalGetMaximumStackBoundsPPvS0_ ");
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"--wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling ");
-                    ldArgs.Append($"--wrap=SystemNative_SetTerminalInvalidationHandler ");
-                    ldArgs.Append($"--wrap=SystemNative_Write ");
-                }
-                ldArgs.Append($"--wrap=RhpThrowEx ");
-                ldArgs.Append($"--wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rhp", libc, targetArchitecture, targetOS);
+
 
                 /* gs_cookie */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
-                ldArgs.Append($"--wrap=__security_cookie ");
+                AppendModuleParams(ldArgs, ziskLibPath, "gs_cookie", libc, targetArchitecture, targetOS);
 
-                /* rhp_native */
+                /* rhp_native: write barriers reduced to the bare store. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
-                ldArgs.Append($"--wrap=RhpAssignRefRiscV64 ");
-                ldArgs.Append($"--wrap=RhpCheckedAssignRef ");
-                ldArgs.Append($"--wrap=RhpByRefAssignRef ");
-                ldArgs.Append($"--wrap=RhpAssignRef ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rhp_native", libc, targetArchitecture, targetOS);
 
                 /* pal */
+                /* pal: syscall surface, bump allocator, FP-free printf/scanf
+                 * and the zisk exit protocol. The wrap surface is declared in
+                 * the module's module_params.yml (packed as pal.params.yml). */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
-                ldArgs.Append($"--wrap=getenv ");
-                ldArgs.Append($"--wrap=getcwd ");
-                ldArgs.Append($"--wrap=getpid ");
-                ldArgs.Append($"--wrap=getegid ");
-                ldArgs.Append($"--wrap=geteuid ");
-                ldArgs.Append($"--wrap=sched_getaffinity ");
-                ldArgs.Append($"--wrap=sched_getcpu ");
-                ldArgs.Append($"--wrap=open ");
-                ldArgs.Append($"--wrap=__libc_malloc_impl ");
-                ldArgs.Append($"--wrap=__libc_realloc ");
-                ldArgs.Append($"--wrap=__libc_free ");
-                ldArgs.Append($"--wrap=calloc ");
-                ldArgs.Append($"--wrap=pthread_create ");
-                ldArgs.Append($"--wrap=pthread_sigmask ");
-                ldArgs.Append($"--wrap=__clock_gettime ");
-                ldArgs.Append($"--wrap=clock_gettime ");
-                ldArgs.Append($"--wrap=__malloc_allzerop ");
-                ldArgs.Append($"--wrap=mmap ");
-                ldArgs.Append($"--wrap=munmap ");
-                ldArgs.Append($"--wrap=mlock ");
-                ldArgs.Append($"--wrap=munlock ");
-                ldArgs.Append($"--wrap=mlockall ");
-                ldArgs.Append($"--wrap=munlockall ");
-                ldArgs.Append($"--wrap=sched_yield ");
-                ldArgs.Append($"--wrap=sigaction ");
-                ldArgs.Append($"--wrap=signal ");
-                ldArgs.Append($"--wrap=syscall ");
-                ldArgs.Append($"--wrap=sysconf ");
-                /* musl exit()/_Exit()/abort() issue exit_group (syscall 94),
-                 * which ZisK does not treat as program end. Redirect them to
-                 * pal's __wrap_* which emit the real ZisK exit ecall (a7=93). */
-                ldArgs.Append($"--wrap=exit ");
-                ldArgs.Append($"--wrap=_Exit ");
-                ldArgs.Append($"--wrap=abort ");
-                if (libc == "zisk")
-                {
-                    /* Hide write() in Zisk */
-                    ldArgs.Append($"--wrap=__stdio_write ");
-                }
+                AppendModuleParams(ldArgs, ziskLibPath, "pal", libc, targetArchitecture, targetOS);
 
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
-                ldArgs.Append($"--wrap=__tls_get_addr ");
-                ldArgs.Append($"--wrap=__init_tls ");
-                ldArgs.Append($"--wrap=__init_tp ");
-                ldArgs.Append($"--wrap=__copy_tls ");
+                AppendModuleParams(ldArgs, ziskLibPath, "tls", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"--no-whole-archive ");
 
                 /* rng */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
-                ldArgs.Append($"--wrap=minipal_get_cryptographically_secure_random_bytes ");
-                ldArgs.Append($"--wrap=CryptoNative_EnsureOpenSslInitialized ");
-                ldArgs.Append($"--wrap=CryptoNative_GetRandomBytes ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rng_stupid", libc, targetArchitecture, targetOS);
 
                 /* rust_sys */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
-                ldArgs.Append($"--wrap=sys_alloc_aligned ");
+                AppendModuleParams(ldArgs, ziskLibPath, "rust_sys", libc, targetArchitecture, targetOS);
 
                 /* ugc */
-                ldArgs.Append($"--wrap=GC_Initialize ");
-                ldArgs.Append($"--wrap=GC_VersionInfo ");
+                AppendModuleParams(ldArgs, ziskLibPath, "ugc-zero", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");
@@ -1730,6 +2484,32 @@ internal class BuildCommand : CommandBase
         }
 
         return exitCode;
+    }
+
+    // Methods whose IL genuinely contains an FP conversion, but only inside a
+    // block the JIT proves unreachable on this target (a disabled-feature guard
+    // reached through a local, which IL-level substitution cannot constant-fold),
+    // so no FP instruction is ever emitted. Confirmed against the FP-free emulator.
+    // Matched by owning type + name (signature-independent) and reported as a
+    // warning by the --error-on-float gate rather than failing the build.
+    private static readonly (string typeNamespace, string typeName, string method)[] s_knownDeadFloatMethods =
+    {
+        // Lock.TryEnterSlow: `double durationNs = (Stopwatch.GetTimestamp()-start)
+        // * 1e9 / Stopwatch.Frequency` behind `if (areContentionEventsEnabled)`,
+        // where areContentionEventsEnabled = NativeRuntimeEventSource.Log.IsEnabled
+        // (...) - always false because EventPipe/EventSource is disabled here.
+        ("System.Threading", "Lock", "TryEnterSlow"),
+    };
+
+    private static bool IsKnownDeadFloatMethod(MethodDesc method)
+    {
+        MethodDesc typical = method.GetTypicalMethodDefinition();
+        if (typical.OwningType is not MetadataType mt)
+            return false;
+        foreach (var (ns, name, m) in s_knownDeadFloatMethods)
+            if (typical.Name == m && mt.Name == name && mt.Namespace == ns)
+                return true;
+        return false;
     }
 
     private static void RunSymbolChart(string binaryPath, string homePath, bool verbose, Logger logger)

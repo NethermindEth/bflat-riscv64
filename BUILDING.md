@@ -44,3 +44,30 @@ $ dotnet build src/bflat/bflat.csproj -t:BuildLayouts
 ```
 
 This will create a `layouts` directory at the repo root and place Linux- and Windows-hosted versions of the bflat compiler built with bflat. These are the bits that are available as prebuilt binaries.
+
+## Build variants
+
+The compiler can be built in two variants that differ in which runtime/blob
+release (NethermindEth/dotnet-riscv) gets bundled:
+
+- `perf` — performance-oriented runtime
+- `min` — minimal runtime
+
+The exact runtime release each variant maps to is defined in
+`src/bflat/bflat.variant.props`; `bflat --info` prints the bundled version.
+The variant is selected with the `Variant` MSBuild property (default: `perf`):
+
+```bash
+$ dotnet build src/bflat/bflat.csproj -p:Variant=min
+```
+
+or as the third argument of `build.sh`:
+
+```bash
+$ ./build.sh all riscv64 min
+```
+
+Both variants build into the usual `src/bflat/bin/…` tree, overwriting each
+other; switching variants re-extracts the runtime artifacts from the download
+cache (the downloads themselves are cached per variant, so nothing is
+re-downloaded). The Docker image packages whichever variant was built last.

@@ -18,7 +18,15 @@ jobs:
     container:
       image: ubuntu:26.04
       options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
-    name: Build RISC-V64 on Ubuntu 26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: perf
+            image: nethermindeth/bflat-riscv64
+          - variant: min
+            image: nethermindeth/bflat-riscv64-min
+    name: Build RISC-V64 (${{ matrix.variant }}) on Ubuntu 26.04
     steps:
       - name: Install dependencies
         run: |
@@ -61,19 +69,25 @@ jobs:
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
 
-      - name: Build bflat (riscv64)
-        run: ./build.sh bflat riscv64
+      - name: Build bflat (riscv64, ${{ matrix.variant }})
+        run: ./build.sh bflat riscv64 ${{ matrix.variant }}
 
       - name: Build Docker image
         run: |
           EXTRA_TAGS=""
           if [ "${{ github.event.inputs.publish }}" = "true" ]; then
-            EXTRA_TAGS="-t nethermindeth/bflat-riscv64:latest -t nethermindeth/bflat-riscv64:$GITHUB_SHA"
+            EXTRA_TAGS="-t ${{ matrix.image }}:latest -t ${{ matrix.image }}:$GITHUB_SHA"
           fi
           docker build --platform linux/amd64 \
-            -t nethermindeth/bflat-riscv64:test \
+            -t ${{ matrix.image }}:test \
             $EXTRA_TAGS \
             .
+
+      - name: Check packaged variant
+        run: |
+          docker run --rm --platform linux/amd64 \
+            ${{ matrix.image }}:test \
+            bash -lc "bflat --info && bflat --info | grep -A1 '^Variant' | grep -q '${{ matrix.variant }}'"
 
       - name: Smoke test bflat (zisk + zisk_sim)
         run: |
@@ -81,7 +95,7 @@ jobs:
           for libc in zisk zisk_sim; do
             echo "::group::Smoke build for libc=$libc"
             docker run --rm --platform linux/amd64 \
-              nethermindeth/bflat-riscv64:test \
+              ${{ matrix.image }}:test \
               bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'"
             echo "::endgroup::"
           done
@@ -96,5 +110,5 @@ jobs:
       - name: Publish to Docker Hub
         if: github.event.inputs.publish == 'true'
         run: |
-          docker push nethermindeth/bflat-riscv64:latest
-          docker push "nethermindeth/bflat-riscv64:$GITHUB_SHA"
+          docker push ${{ matrix.image }}:latest
+          docker push "${{ matrix.image }}:$GITHUB_SHA"

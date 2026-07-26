@@ -14,34 +14,19 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.IO;
-using System.IO.MemoryMappedFiles;
-using System.Reflection.PortableExecutable;
-
 using Internal.IL;
 using Internal.TypeSystem;
-using Internal.TypeSystem.Ecma;
 
 using ILCompiler;
 
 class BflatTypeSystemContext : CompilerTypeSystemContext
 {
-    public unsafe BflatTypeSystemContext(TargetDetails details, SharedGenericsMode genericsMode, DelegateFeature delegateFeatures, MemoryStream compiledModule, string compiledModuleName)
+    // The compiled module is registered through InputFilePaths in BuildCommand, so
+    // the context resolves it by simple name via the standard loader. This avoids
+    // the previous in-memory CacheOpenModule hook, which required a runtime-side
+    // patch to expose it.
+    public BflatTypeSystemContext(TargetDetails details, SharedGenericsMode genericsMode, DelegateFeature delegateFeatures)
         : base(details, genericsMode, delegateFeatures)
     {
-        var mappedFile = MemoryMappedFile.CreateNew(mapName: null, compiledModule.Length);
-        var vs = mappedFile.CreateViewStream();
-        compiledModule.CopyTo(vs);
-        compiledModule.Dispose();
-        vs.Dispose();
-
-        var accessor = mappedFile.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-
-        var safeBuffer = accessor.SafeMemoryMappedViewHandle;
-        var peReader = new PEReader((byte*)safeBuffer.DangerousGetHandle(), (int)safeBuffer.ByteLength);
-
-        var pdbReader = PortablePdbSymbolReader.TryOpenEmbedded(peReader, GetMetadataStringDecoder());
-
-        CacheOpenModule(compiledModuleName, compiledModuleName, EcmaModule.Create(this, peReader, null, pdbReader), accessor);
     }
 }
