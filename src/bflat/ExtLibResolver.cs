@@ -29,7 +29,12 @@ using Internal.TypeSystem;
 // Supported spec formats:
 //   1. https://github.com/owner/repo:tag   – GitHub release containing a single .nupkg
 //   2. path or URL ending in .nupkg        – extract the package and read *.bflat.manifest inside
-//   3. path or URL ending in .bflat.manifest – use the manifest directly (paths relative to manifest dir)
+//   3. path or URL ending in .bflat.manifest – use the manifest directly
+//
+// In every case, static_lib / dotnet_lib paths in the manifest are resolved
+// relative to the MANIFEST FILE'S OWN DIRECTORY (not the nupkg root). A package
+// ships the manifest next to the library it points at, so bare sibling names work
+// both when the package is extracted and when the manifest is used standalone.
 //
 // The *.bflat.manifest format is:
 // {
@@ -39,8 +44,8 @@ using Internal.TypeSystem;
 //       "arch": "riscv64",
 //       "os": "linux",
 //       "libc": "zisk",
-//       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",   <- relative to nupkg root
-//       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",     <- relative to nupkg root
+//       "static_lib": "libziskos.a",                    <- relative to manifest dir
+//       "dotnet_lib": "Nethermind.ZiskBindings.dll",    <- relative to manifest dir
 //       "dotnet_assemblyname": "Nethermind.ZiskBindings",
 //       "wrap_symbols": ["memcpy", "memset", "memmove", "memcmp"]    <- optional
 //     }
@@ -86,7 +91,7 @@ internal static class ExtLibResolver
             string nupkgPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
             string extractDir = ExtractNupkg(nupkgPath, verbose);
             string manifestPath = FindManifestInDirectory(extractDir);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir, nupkgRoot: extractDir);
+            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
         }
 
         // Case 3: .bflat.manifest (URL or local path)
@@ -225,7 +230,7 @@ internal static class ExtLibResolver
         // Extract and locate the manifest
         string extractDir = ExtractNupkg(nupkgPath, verbose);
         string manifestPath = FindManifestInDirectory(extractDir);
-        return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir, nupkgRoot: extractDir);
+        return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
     }
 
     // -------------------------------------------------------------------------
@@ -278,15 +283,18 @@ internal static class ExtLibResolver
 
     // Parse a *.bflat.manifest file, match the build entry against the target,
     // and return absolute paths to static_lib / dotnet_lib.
-    // When nupkgRoot is provided (nupkg-based cases), paths in the manifest are resolved
-    // relative to the nupkg root directory.  For standalone manifests (nupkgRoot == null),
-    // paths are resolved relative to the manifest file's own directory.
+    // static_lib / dotnet_lib paths in the manifest are resolved relative to the
+    // manifest file's own directory. This is the one base that is correct for both
+    // consumption modes: an extracted .nupkg ships the manifest next to its
+    // libraries (runtimes/<rid>/native/), and a standalone .bflat.manifest is used
+    // in place. Resolving a .nupkg against its root instead broke packages whose
+    // manifest references sibling files by bare name (e.g. static_lib "libziskos.a").
     private static Result ParseManifestAndResolveFiles(
         string manifestPath, bool verbose,
         TargetArchitecture targetArch, TargetOS targetOS, string libc,
-        string tempDir, string nupkgRoot = null)
+        string tempDir)
     {
-        string manifestDir = nupkgRoot ?? Path.GetDirectoryName(Path.GetFullPath(manifestPath));
+        string manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
         string manifestJson = File.ReadAllText(manifestPath);
 
         using JsonDocument doc = JsonDocument.Parse(manifestJson);
