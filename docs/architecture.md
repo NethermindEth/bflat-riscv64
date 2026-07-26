@@ -3,8 +3,8 @@ layout: default
 title: Architecture
 eyebrow: How it works
 lead: >
-  The full path from a C# source file to a Zisk-ready ELF, stage by stage,
-  with the responsible source files called out at every step.
+  What the build pipeline produces, why each stage is needed, and the
+  evidence it works. The exact mechanics are kept as background at the end.
 prev: /runtime/
 next: /modules/
 ---
@@ -13,9 +13,68 @@ next: /modules/
   {% include pipeline-diagram.html %}
 </div>
 
-Everything is orchestrated by `BuildCommand.cs` in `src/bflat/`. The
-extra steps unique to this fork only run when `--libc zisk` or
-`--libc zisk_sim` is passed.
+## What it produces
+
+bflat-riscv64 turns an ordinary C# program into a **single, fully static
+RISC-V64 ELF** that needs no operating system, no dynamic libraries, and
+nothing installed on the target. The same source compiles for three
+places without changes:
+
+- a **zkVM prover**, where the binary is executed and proven (Zisk is the
+  target supported today);
+- **`qemu-riscv64`** or any RISC-V64 Linux host, for debugging;
+- real RISC-V64 hardware.
+
+One command — `bflat build` — does it end to end.
+
+## Why the extra stages exist
+
+Stock .NET NativeAOT already compiles C# to a native binary, but that
+binary assumes a kernel, dynamic linking, floating-point hardware, and
+compressed instructions — none of which a zkVM provides. Rather than fork
+the compiler, bflat-riscv64 keeps Microsoft's NativeAOT untouched and wraps
+it: a **link step** that swaps the unsupported OS and runtime calls for
+zkVM-safe ones, an **ELF postprocessor** that satisfies the prover's loader,
+and **target-specific memory layouts**. These extra stages run only for the
+zkVM targets (`--libc zisk` / `--libc zisk_sim`); for every other target
+bflat behaves like upstream.
+
+## What you get — and how we know it works
+
+The pipeline links **real, unmodified C#** — exceptions, allocation,
+interface dispatch, generics — into a binary that loads and runs in the
+prover. The evidence is end-to-end rather than synthetic:
+
+- It drives Nethermind's
+  [StatelessExecutor](https://github.com/NethermindEth/nethermind), a real
+  Ethereum state-transition function in production C#, proven inside a zkVM
+  on every commit (see [Verification](verification.md)).
+- Every push rebuilds the compiler and all modules from source in CI
+  ([`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)),
+  then runs the bundled samples and the end-to-end proof on the public
+  [zk-testing dashboard](https://zk-testing.nethermind.dev).
+- **One source, three targets**: the identical `.cs` builds for the prover,
+  QEMU, and native RISC-V64.
+
+## How it works, at a glance
+
+| Stage | What happens | Unique to this fork? |
+|-------|--------------|----------------------|
+| **1 · Compile** | Microsoft's stock NativeAOT (ILC) compiles C# to a RISC-V64 object | No — upstream, unmodified |
+| **2 · Link** | `ld.lld` statically links it, swapping unsupported OS/runtime calls for the [link-time modules](modules.md) | Yes |
+| **3 · Postprocess** | A Python pass rewrites the ELF so the prover's loader accepts it (`zisk` only) | Yes |
+| **4 · Boot & run** | A tiny assembly entry point starts the runtime and calls `Main` — no kernel underneath | Yes |
+
+Everything is orchestrated by `BuildCommand.cs` in `src/bflat/`.
+
+---
+
+## Under the hood
+
+The rest of this page is the developer-facing walk-through of each stage —
+the exact switches, the link command, the postprocessor passes, and the
+boot sequence. It's reference material; skip it unless you're working on
+the pipeline itself.
 
 ## Stage 1 — Microsoft's NativeAOT (ILC) emits an object file
 
@@ -50,6 +109,28 @@ against the runtime's `lib/<arch>/<os>/<libc>` directory, downloaded
 from the [dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv)
 release matching the bflat version.
 
+### zkVM RyuJIT codegen knobs
+
+In optimized builds (`-O`, i.e. `optimizationMode != None`)
+`BuildCommand.cs` also passes a fixed set of RyuJIT tuning knobs to ILC.
+RyuJIT parses these integer values as **hexadecimal with no `0x` prefix**
+(`JitConfigProvider.getIntConfigValue` uses `NumberStyles.AllowHexSpecifier`),
+so `"2000"` means `0x2000` = 8192.
+
+| Knob | Value | Effect |
+|------|-------|--------|
+| `JitObjectStackAllocation` | `1` | Enable escape-analysis stack allocation |
+| `JitObjectStackAllocationSize` | `2000` (8192) | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by a matching runtime patch |
+| `JitExtDefaultPolicyMaxIL` | `200` (512) | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
+| `JitExtDefaultPolicyMaxBB` | `10` (16) | Max inlinee basic blocks (default 7) |
+| `JitRiscV64DmaCompare` | `1` | Lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814, src ; addi rd, dst, count` idiom that the ZisK transpiler folds into one `dma_xmemcmp` step. ZisK-only, paired with a matching runtime patch |
+| `RiscV64ElideLeafRaSave` | `1` | Elide RA spill/reload + frame in eligible leaf methods. A matching runtime patch refuses to elide methods whose LIR uses `REG_RA` as scratch (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP |
+
+These knobs trade ROM/`.text` size for fewer heap allocations and tighter
+hot paths; the comments in `BuildCommand.cs` note which to lower
+(`JitExtDefaultPolicyMaxIL`, `JitObjectStackAllocationSize`) if a workload
+overflows the fixed ZisK ROM.
+
 ## Stage 2 — The link command
 
 The final ELF is produced by `ld.lld` (Clang's linker, shipped with
@@ -66,10 +147,13 @@ ld.lld -static -nostdlib -m elf64lriscv \
         --wrap=inline_bump_alloc_aligned \
         <ziskLibPath>/rhp.o \
         --wrap=RhpNewFast --wrap=RhpNewObject ... \
+        --wrap=RhpThrowEx \
+        --wrap=RhpReversePInvoke --wrap=RhpReversePInvokeReturn ... \
         <ziskLibPath>/rhp_native.o \
         --wrap=RhpAssignRefRiscV64 --wrap=RhpCidResolve \
         <ziskLibPath>/pal.o \
         --wrap=getenv --wrap=getcwd ... --wrap=__stdio_write \
+        --wrap=exit --wrap=_Exit --wrap=abort \
         <ziskLibPath>/tls.o \
         --wrap=__tls_get_addr --wrap=__init_tls ... \
     --no-whole-archive \
@@ -135,3 +219,21 @@ When the binary starts (real, simulated, or proven), the entry point is
 There is no kernel underneath any of this. Every syscall the runtime
 might make is either wrapped to a no-op, returned as a constant, or (in
 `zisk_sim`) routed to musl's real implementation.
+
+## Exit and exceptions
+
+The program ends only when an `ecall` with `a7 == 93` (ZisK `CAUSE_EXIT`)
+is issued — musl's `exit`/`_Exit`/`abort` use `exit_group` (syscall 94),
+which ZisK does not treat as program end. So `pal` wraps all three to
+`zkvm_raw_exit`, which emits the real ZisK exit ecall (see the
+[pal module](modules.md#pal)).
+
+A managed `throw` is lowered to `RhpThrowEx`. The `rhp` wrapper hands the
+exception object to an optional, **weak** `ZkvmThrow` symbol that a program
+may export via `[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`; programs
+that don't define it fall back to `exit(1)`. So the handler can be entered
+from the throw path, `RhpReversePInvoke`/`RhpReversePInvokeReturn` are
+no-op'd — the real transition would spin on a GC rendezvous that never
+comes in the single-threaded, never-collecting zkVM. See the
+[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)
+and the [rhp module](modules.md#rhp).

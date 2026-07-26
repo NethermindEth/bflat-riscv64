@@ -3,25 +3,74 @@ layout: default
 title: Modules
 eyebrow: Link-time patches
 lead: >
-  Each module is a small, self-contained object file that the linker pulls
-  into the final binary. Together they replace exactly the parts of the
-  .NET runtime, musl, and compiler-RT that a zkVM cannot honour.
+  Why a zkVM needs these link-time modules, what each one replaces, and the
+  constraint it answers — with the per-module implementation detail at the end.
 prev: /architecture/
 next: /build/
 ---
 
-The modules live under `src/bflat/modules/`. Each one contains:
+## What they are
 
-- a `module.c`, `module.cpp`, or `module.S` source;
-- (optionally) a `module_params.yml` listing the linker switches it
-  needs (mostly `--wrap=` declarations);
-- the compiled `module.o`, produced by `build.sh modules riscv64`.
+Each module is a small, self-contained object file — C, C++, or assembly —
+that the linker pulls into the final binary, overriding a specific symbol via
+`--wrap=`. Together they replace exactly the parts of .NET, musl, and
+compiler-RT that a zkVM cannot honour, **without editing a single line of
+upstream source**.
 
-`BuildCommand.cs` wires these object files into the link line in a
-specific order. The list below describes them in roughly the order they
-matter at runtime.
+## Why it's done at link time
+
+The alternative — forking the runtime and musl — means re-merging on every
+upstream release. Instead each adaptation is an isolated object file plus a
+`--wrap=` redirect, so the upstream code stays pristine and a .NET version
+bump is a rebase, not a fork. (Same philosophy as the
+[runtime patches](runtime.md).)
+
+## The constraints they answer
+
+A zkVM gives you far less than a Linux host: no kernel (so no syscalls,
+files, threads, signals, or clock), no floating-point hardware, no
+compressed instructions, no randomness, and a requirement that every run be
+bit-for-bit reproducible. Each module closes one of those gaps.
+
+| Module | What it provides | Constraint it answers |
+|--------|------------------|-----------------------|
+| [ubootstrap](#ubootstrap) | Runtime entry point — brings .NET up and calls `Main` | No glibc-style startup / OS loader |
+| [zkvm_zisk · zkvm_zisk_sim](#zkvm-zisk) | `_start` + the memory layout the prover expects | No kernel; fixed prover memory map |
+| [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
+| [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
+| [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
+| [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
+| [nofp](#nofp) | Empty soft-float helpers | No floating-point hardware |
+| [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
+| [security-stub](#security-stub) | Security/GSS functions return failure | Unused network paths must still link |
+| [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
+| [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
+| [rust_sys](#rust-sys) | `sys_alloc_aligned` | Interop with adjacent Rust precompiles |
+| [ugc-zero](#ugc-zero) | A GC that allocates but never collects | Short-lived proof workloads |
+
+## Results
+
+Because every adaptation is a link-time object, **no upstream source is
+modified** to make C# run in a zkVM, and this same set of modules carries
+real production C# — Nethermind's
+[StatelessExecutor](https://github.com/NethermindEth/nethermind) — end to end
+through a zkVM prover on every commit. See [Verification](verification.md).
 
 ---
+
+## Under the hood
+
+The rest of this page documents each module in detail — the wrapped symbols,
+the data structures, and the assembly. It's developer reference; the
+[architecture page](architecture.md#stage-2--the-link-command) shows where
+these objects sit in the link line.
+
+The modules live under `src/bflat/modules/`. Each one contains a
+`module.c`/`module.cpp`/`module.S` source, an optional `module_params.yml`
+listing its linker switches (mostly `--wrap=` declarations), and the compiled
+`module.o` produced by `build.sh modules riscv64`. `BuildCommand.cs` wires
+them into the link line in a specific order; the sections below follow roughly
+the order they matter at runtime.
 
 ## ubootstrap — runtime entry point
 {: #ubootstrap }
@@ -53,15 +102,35 @@ The linker scripts diverge:
 
 | Aspect | `zisk` | `zisk_sim` |
 |--------|--------|------------|
-| Memory regions | Split ROM (`0x80000000`, 256 MiB) and RAM (`0xa0020000`, ~256 MiB) | Single segment starting at `0x10000` |
+| Image base | Split ROM (`0x80000000`, 256 MiB) and RAM (`0xa0020000`, ~256 MiB) | `0x50000000` (see below) |
 | Entry section | `.text.init` at the head of `.text` | Same |
 | Managed-code anchors | `__start___managedcode` / `__stop___managedcode` and the `__unbox` pair | Same |
-| Heap | Provided by `_kernel_heap_bottom..._kernel_heap_top` symbols at the tail of RAM | Explicit 150 MiB `.heap` section |
+| Heap | `_kernel_heap_bottom..._kernel_heap_top` at the tail of RAM | `.heap` as a `NOLOAD` segment mirroring the zisk RAM window (`0xa0020000..0xbfff0000`) |
+| Bump-pointer cell | `g_zk_bump_ptr` = `ORIGIN(ram)+LENGTH(ram)-8` = `0xbffefff8`; heap top lowered by 16 so the cell never overlaps | Same address, provided at the exact `0xbffefff8` |
 | Discarded sections | `.debug*`, `.comment`, `.riscv.attributes` | (looser — kept for ease of debugging) |
 
 Both linker scripts force code that contains the C# entry point to land
 near the start of `.text`, which keeps the call distance short enough
 for non-PIC near-jump encodings.
+
+**The fixed bump-pointer cell.** Both scripts reserve the top 8 bytes of
+the (real or mirrored) RAM map as a fixed-address cell, `g_zk_bump_ptr` at
+`0xbffefff8`, holding the downward bump pointer. Because the address is
+fixed, the JIT can bake it into machine code as an `lui`/`addiw`/`slli`
+immediate with **no relocation**, and JIT-emitted inline allocation shares
+the same pointer with `pal`'s C allocator. `pal/module.c` does
+`#define mem g_zk_bump_ptr` so both views are literally the same word.
+
+**Why `zisk_sim` rebases to `0x50000000`.** `pal/module.c` reaches the
+heap symbols (`g_zk_bump_ptr`, `_kernel_heap_top`/`_bottom`) with
+PC-relative `auipc`/`addi` pairs, whose reach is ±2 GB. From the usual
+`0x10000` base the fixed cell at `0xbffefff8` is ~2.68 GB away and
+`R_RISCV_PCREL_HI20` overflows; basing the image at `0x50000000` keeps the
+whole `0x50000000..0xbfff0000` span within ±2 GB. Real `zisk` avoids this
+by placing text in ROM at `0x80000000`. The `.heap` is declared `NOLOAD`
+so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
+zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
+lazily initialised exactly as on real zisk, and the binary stays small.
 
 ## pal — platform abstraction layer
 {: #pal }
@@ -86,6 +155,7 @@ that .NET calls during startup or runtime:
 | `__libc_malloc_impl`, `__libc_realloc`, `__libc_free` | A custom downward bump allocator using the heap symbols from the linker script |
 | `signal`, `sigaction`, `sched_yield` | No-ops |
 | `syscall` | Whitelist: 0x11b → 0; everything else → `__real_syscall` |
+| `exit`, `_Exit`, `abort` | Emit the real ZisK exit ecall (`a7 = 93`, `CAUSE_EXIT`) via `zkvm_raw_exit` |
 
 The bump allocator deserves a note: it grows downward from
 `_kernel_heap_top`, stores an 8-byte size header before each allocation,
@@ -93,29 +163,92 @@ and never frees. That is enough to satisfy a managed runtime whose own
 GC sits on top — see the `ugc-zero` module below — and it removes any
 need for musl's full `mallocng`, which is large and uses syscalls.
 
+The bump pointer itself lives in a **fixed-address cell** — the top 8 bytes
+of RAM (`g_zk_bump_ptr`, `0xbffefff8`), provided by the linker script —
+rather than a `static` variable. That lets JIT-emitted inline allocation
+reference it by a hardcoded constant address and share the very same
+pointer with this C allocator. zkVM RAM is zero at boot, so the cell starts
+at `0` and is lazily initialised to `_kernel_heap_top` on first use.
+
+**Clean termination.** ZisK only treats an `ecall` with `a7 == 93`
+(`CAUSE_EXIT`) as "program end"; its trap handler routes that to `ROM_EXIT`,
+whose instruction carries the `end` flag the emulator waits for. musl's
+`exit`/`_Exit` issue `exit_group` (94), which ZisK does not recognise — the
+run would stop "not completed". So `pal` wraps all three terminators to emit
+the real ZisK exit ecall (`abort` exits with `134` = 128 + SIGABRT).
+
+**`__wrap_RhpNewFast` — fixed-size fast path.** The hot allocation helper
+lives here (not in `rhp`), in the same translation unit as the bump pointer,
+the heap bounds, and `align_down_8_uintptr`, so the downward bump is inlined
+directly: no nested `malloc` call, a single alignment step, and a leaf body
+eligible for frameless-leaf codegen. This mirrors how x64/arm64 get fast
+allocation through a tight `RhpNewFast` rather than per-site JIT inlining.
+`--wrap=RhpNewFast` (declared by the `rhp` module) redirects managed callers
+here regardless of which object file defines the symbol.
+
 ## rhp — Redhawk Platform shims
 {: #rhp }
 
 **File:** `modules/rhp/module.c`
 
-Patches that target the .NET runtime itself. Two responsibilities:
+Patches that target the .NET runtime itself. Responsibilities:
 
-1. **Object allocators.** `RhpNewFast`, `RhpNewObject`,
-   `RhpNewArrayFast`, `RhpNewPtrArrayFast`, and `RhNewString` are
-   reimplemented on top of `calloc`. The originals expect a thread-local
-   allocation context; in our world there is exactly one thread and a
-   bump allocator, so a flat `calloc` is both simpler and provable.
+1. **Object allocators.** `RhpNewObject`, `RhpNewArrayFast`,
+   `RhpNewPtrArrayFast`, and `RhNewString` are reimplemented on top of the
+   bump allocator. The originals expect a thread-local allocation context;
+   in our world there is exactly one thread and a bump allocator, so a flat
+   path is both simpler and provable. The hottest helper, `RhpNewFast`, is
+   *not* here — it moved to [`pal`](#pal) so its downward bump is inlined
+   directly; the `--wrap=RhpNewFast` declaration that redirects callers
+   still lives in this module's `module_params.yml`.
 2. **Subsystem stubs.** EventPipe, ProcessorIdCache, default-locale
    queries, type-cast cache lookups, lock acquisition/release,
    thread-static storage, and a custom `RhpCidResolve` that bypasses the
    cached interface-dispatch fast path. Each of these would otherwise
    pull in code that touches signals, threads, or the OS.
+3. **Exceptions and exit.** `RhpThrowEx`, `RhpReversePInvoke`, and
+   `FailFast` are wrapped — see below.
 
 The `__rhp_cid_resolve_nocache` function (called via the assembly
 trampoline `__wrap_RhpCidResolve` in `rhp_native`) walks a dispatch cell
 manually, looks up the interface slot on the object's MethodTable, and
 returns the resolved target — replacing the fast-path cache that
 NativeAOT normally maintains in writable memory.
+
+### Managed exceptions
+
+A managed `throw` is lowered by the JIT to `CORINFO_HELP_THROW`, which
+calls `RhpThrowEx` with the exception object in `a0`. The wrapper hands
+that object to a **weak** `ZkvmThrow` symbol:
+
+```c
+extern void ZkvmThrow(void *exceptionObj) __attribute__((weak));
+
+void __wrap_RhpThrowEx(void *exceptionObj)
+{
+    if (ZkvmThrow != NULL) { ZkvmThrow(exceptionObj); return; }
+    exit(1);
+}
+```
+
+A program that exports `ZkvmThrow` via
+`[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]` takes full control of
+the throw and receives the live `Exception` reference (the `a0` pointer
+*is* the managed object reference). A program that doesn't export it links
+fine — the weak reference stays null and the wrapper falls back to
+`exit(1)`, preserving the old fail-fast behaviour. `FailFast` carries a
+message string, not an exception object, so it keeps the plain `exit(1)`
+path rather than routing through `ZkvmThrow`. See the
+[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler).
+
+To let the handler be entered from the throw path, `RhpReversePInvoke`
+and `RhpReversePInvokeReturn` are **no-op'd**. The real CoreLib transition
+attaches the thread and parks it at a GC-safe point — meaningful only for a
+native→managed boundary entered in preemptive mode. When a managed handler
+(an `[UnmanagedCallersOnly]` method) is entered from `__wrap_RhpThrowEx`,
+the thread is already cooperative, so the real transition would spin on a
+GC rendezvous that never comes in the single-threaded, never-collecting
+zkVM.
 
 ## rhp_native — assembly RISC-V64 patches
 {: #rhp-native }
@@ -183,6 +316,38 @@ A long list of `NetSecurityNative_*` functions that all return `-1`.
 .NET's networking stack references these even when no GSS is in use;
 returning failure is enough to prevent link errors and never gets
 executed at runtime in our workloads.
+
+## gs_cookie — neutralised stack cookie
+{: #gs-cookie }
+
+**File:** `modules/gs_cookie/module.c`
+
+One line — `__wrap___security_cookie = 0`, placed in `.data` and bound via
+`--wrap=__security_cookie`.
+
+Upstream .NET uses a GS cookie (stack canary) to catch buffer overruns: the
+JIT copies a process-global `__security_cookie` into each guarded frame and
+re-checks it on return, and the runtime seeds that global **once at startup**
+from a timer (`minipal_lowres_ticks`) into a read-only page. Neither half
+survives a zkVM:
+
+- **No entropy.** There is no clock, so a timer-seeded cookie is either
+  constant (no protection anyway) or non-deterministic — a different value each
+  run, which would make the proof non-reproducible.
+- **No page protection.** `mprotect` / `PalVirtualProtect` is a no-op in the
+  [pal](#pal) layer, and a read-only `.rodata` cookie collides with the
+  code/data-split layout the postprocessor manages.
+
+So the cookie is pinned to a constant `0` and the JIT's check always passes.
+This **disables stack-canary defense-in-depth by design** — an accepted
+trade-off for a single-threaded, deterministic guest with no untrusted
+in-process boundary. Forcing the symbol into `.data` also keeps it out of the
+read-only segment the postprocessor rewrites.
+
+Two paths reach this symbol: with `--stdlib dotnet` the JIT still emits the
+check and binds it to this wrapped `0`; for zerolib builds bflat instead tells
+ILC not to emit GS cookies at all (`SettingsTunnel.EmitGSCookies = false`,
+which bakes a constant into the code and emits no reference).
 
 ## stdcppshim — C++ allocator shims
 {: #stdcppshim }
