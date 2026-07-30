@@ -71,7 +71,9 @@ void* PalGetModuleHandleFromPointer(void* pointer);
 
 MANAGED_RUNTIME_EXPORT(GetRuntimeException)
 MANAGED_RUNTIME_EXPORT(RuntimeFailFast)
+MANAGED_RUNTIME_EXPORT(ThreadEntryPoint)
 MANAGED_RUNTIME_EXPORT(AppendExceptionStackFrame)
+MANAGED_RUNTIME_EXPORT(ResolveDispatch)
 MANAGED_RUNTIME_EXPORT(GetSystemArrayEEType)
 MANAGED_RUNTIME_EXPORT(OnFirstChanceException)
 MANAGED_RUNTIME_EXPORT(OnUnhandledException)
@@ -84,12 +86,19 @@ MANAGED_RUNTIME_EXPORT(ObjectiveCMarshalGetUnhandledExceptionPropagationHandler)
 
 typedef void (MANAGED_RUNTIME_EXPORT_CALLCONV *pfn)();
 
+// Mirror the stock libbootstrapper table exactly (see its
+// .rela.data.rel.ro._ZL19c_classlibFunctions). The bflat runtime fork
+// repurposes the historically-unused slots: 2 = ThreadEntryPoint and
+// 4 = ResolveDispatch - RhpCidResolve_Worker fetches slot 4 and CALLS IT
+// WITHOUT a null check, so a nullptr here turns the first interface
+// dispatch that misses the cache (e.g. string.Format's ISpanFormattable
+// probe on a boxed int) into a jump to address 0.
 static const pfn c_classlibFunctions[] = {
     &MANAGED_RUNTIME_EXPORT_NAME(GetRuntimeException),
     &MANAGED_RUNTIME_EXPORT_NAME(RuntimeFailFast),
-    nullptr, // &UnhandledExceptionHandler,
+    &MANAGED_RUNTIME_EXPORT_NAME(ThreadEntryPoint),
     &MANAGED_RUNTIME_EXPORT_NAME(AppendExceptionStackFrame),
-    nullptr, // &CheckStaticClassConstruction,
+    &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),
     &MANAGED_RUNTIME_EXPORT_NAME(GetSystemArrayEEType),
     &MANAGED_RUNTIME_EXPORT_NAME(OnFirstChanceException),
     &MANAGED_RUNTIME_EXPORT_NAME(OnUnhandledException),
