@@ -22,6 +22,12 @@ options:
     - value: --wrap=__libc_free
     - value: --wrap=calloc
     - value: --wrap=__malloc_allzerop
+    # Aligned allocation: musl's aligned_alloc/memalign walk mallocng chunk
+    # metadata the bump heap never writes, so route them through the bump
+    # allocator too (SystemNative_AlignedAlloc is the runtime-startup caller).
+    - value: --wrap=aligned_alloc
+    - value: --wrap=posix_memalign
+    - value: --wrap=memalign
     - value: --wrap=mmap
     - value: --wrap=munmap
     - value: --wrap=mlock
