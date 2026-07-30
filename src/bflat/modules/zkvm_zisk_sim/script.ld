@@ -39,6 +39,10 @@ SECTIONS
 
   .data : ALIGN(16)
   {
+    /* Opaque DSO token for __cxa_atexit registrations from .NET 11 GC
+     * static initializers; see zkvm_zisk/script.ld for the full story. */
+    PROVIDE_HIDDEN(__dso_handle = .);
+    . += 8;
     *(.data .data.*)
     *(.data.__security_cookie)
     *(.rodata)
