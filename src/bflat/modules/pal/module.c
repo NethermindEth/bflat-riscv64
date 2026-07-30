@@ -523,10 +523,55 @@ __wrap_sysconf(int n)
     }
 }
 
+/*
+ * SystemNative_AlignedAlloc (libSystem.Native) and any other over-aligned
+ * request tail-call libc aligned_alloc/posix_memalign/memalign. On stock musl
+ * (mallocng) those walk in-band chunk metadata that the bump allocator never
+ * writes - the meta read lands near null and aborts the guest during runtime
+ * startup (ziskemu: "Mem::read section not found addr 0x10"). Route them
+ * through the bump heap instead. The heap grows downward and hands out
+ * 8-byte-aligned blocks; for a stronger alignment, over-allocate by `align`
+ * and round the block's low address up so at least `size` bytes remain above
+ * the returned pointer. free() is a no-op, so the lost prefix never matters.
+ */
+void *
+__wrap_aligned_alloc(unsigned long align, unsigned long size)
+{
+    void     *p;
+    uintptr_t a;
+
+    if (align <= 8u)
+        return __wrap___libc_malloc_impl(size);
+
+    p = __wrap___libc_malloc_impl(size + align);
+    if (!p)
+        return NULL;
+
+    a = ((uintptr_t)p + (align - 1u)) & ~((uintptr_t)align - 1u);
+    return (void *)a;
+}
+
+int
+__wrap_posix_memalign(void **out, unsigned long align, unsigned long size)
+{
+    void *p = __wrap_aligned_alloc(align, size);
+
+    if (!p)
+        return 12; /* ENOMEM */
+    *out = p;
+    return 0;
+}
+
+void *
+__wrap_memalign(unsigned long align, unsigned long size)
+{
+    return __wrap_aligned_alloc(align, size);
+}
+
 void *
 __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
 {
-    return __wrap___libc_malloc_impl(bytes);
+    return __wrap_aligned_alloc(align, bytes);
 }
 
 /*
