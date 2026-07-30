@@ -114,9 +114,14 @@
 
     <!-- Core float-to-string formatter (Dragon4/Grisu3 double math) and the
          boxed Double/Single virtual/interface slots that reach it or carry
-         fcvt rounding directly. -->
+         fcvt rounding directly.
+         NOTE: the .NET 11 ILC signature matcher (ProcessLinkerXmlBase.
+         GetMethodSignature) renders a method's own generic parameters by NAME
+         (TChar/TNumber), not as empty variables. The pre-.NET-11 empty form
+         (ValueListBuilder`1&lt;&gt;&amp;,,...) silently stopped matching -> IL2009 ->
+         FormatFloat survived and re-carried FP. Keep the named form. -->
     <type fullname="System.Number">
-      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;&gt;&amp;,,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
+      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;TChar&gt;&amp;,TNumber,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
     </type>
     <type fullname="System.Double">
       <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />

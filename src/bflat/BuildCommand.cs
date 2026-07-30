@@ -124,10 +124,10 @@ sealed class UnifierResizeILProvider : ILProvider
         MethodIL body = _inner.GetMethodIL(method);
         if (body == null ||
             method.OwningType is not MetadataType cont ||
-            cont.Name != "Container" ||
+            !cont.Name.StringEquals("Container") ||
             cont.ContainingType is not MetadataType unifier ||
-            !unifier.Name.StartsWith("ConcurrentUnifierW") ||
-            method.Name != "Resize")
+            !unifier.Name.StringStartsWith("ConcurrentUnifierW") ||
+            !method.Name.StringEquals("Resize"))
         {
             return body;
         }
@@ -278,9 +278,9 @@ class CustomILProvider : ILProvider
         // offsets and the trailing CreateFixedDateRule call are untouched.
         if (zkvmTarget &&
             method.OwningType is MetadataType tzType &&
-            tzType.Namespace == "System" &&
-            tzType.Name == "TimeZoneInfo" &&
-            method.Name == ".cctor")
+            tzType.Namespace.StringEquals("System") &&
+            tzType.Name.StringEquals("TimeZoneInfo") &&
+            method.Name.StringEquals(".cctor"))
         {
             MethodIL body = inner.GetMethodIL(method);
             byte[] il = (byte[])body.GetILBytes().Clone();
@@ -295,7 +295,7 @@ class CustomILProvider : ILProvider
                 foreach (MethodDesc ctor in ((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
                              .Module.GetType("System", "DateTime").GetMethods())
                 {
-                    if (ctor.Name == ".ctor" && ctor.Signature.Length == 1 && ctor.Signature[0] == int64Type)
+                    if (ctor.Name.StringEquals(".ctor") && ctor.Signature.Length == 1 && ctor.Signature[0] == int64Type)
                     {
                         dateTimeTicksCtor = ctor;
                         break;
@@ -324,6 +324,81 @@ class CustomILProvider : ILProvider
             return body;
         }
 
+        // System.Number..cctor (.NET 11) builds s_sqrtTable = new SqrtCoefficients[256],
+        // where SqrtCoefficients is a {single, single, double} struct; the 256 elements
+        // are filled inline with 768 ldc.r4/ldc.r8 constants (the DiyFp128 sqrt
+        // polynomial used only by float FORMATTING). RyuJIT materializes each float
+        // constant with flw/fld + fsw/fsd - this is the dominant FP in a .NET 11 image
+        // (~1536 instructions). The table's sole reader is Number.DiyFp128Sqrt, reachable
+        // only through Number.FormatFloat, which zisk.substitutions.xml removes - so the
+        // table is dead. Keep the allocation (a zeroed SqrtCoefficients[256] - harmless
+        // even if ever indexed) but nop out the constant-filling body between the newarr
+        // and the stsfld: the array stays on the stack across the nops, so the store is
+        // still balanced, and no float constant survives. No-op on runtimes without
+        // s_sqrtTable (e.g. .NET 10), so the rewrite is safe to always apply.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType numType &&
+            numType.Namespace.StringEquals("System") &&
+            numType.Name.StringEquals("Number") &&
+            method.Name.StringEquals(".cctor"))
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            byte[] il = (byte[])body.GetILBytes().Clone();
+
+            // Locate `stsfld s_sqrtTable` and the last preceding
+            // `newarr SqrtCoefficients` by DECODING opcodes, not by scanning for
+            // raw 0x80/0x8D bytes: those bytes also occur inside the operands of
+            // the 768 ldc.r4/ldc.r8 constants that fill the table, and calling
+            // EcmaMethodIL.GetObject on such an operand tail resolves a malformed
+            // EntityHandle -> EcmaModule.GetObject throws BadImageFormatException
+            // (NotFoundBehavior.ReturnNull only suppresses "not found", never a
+            // malformed handle). That exception escapes GetMethodIL and makes ILC
+            // stub the entire cctor (System.Number then throws at first static
+            // access, i.e. any int.ToString()). Instruction-stepping guarantees
+            // GetObject only ever sees a real stsfld/newarr token.
+            int stPos = -1, naPos = -1;
+            for (int p = 0; p < il.Length; )
+            {
+                ILOpcode op = (il[p] == 0xFE && p + 1 < il.Length)
+                    ? (ILOpcode)(0xFE00 + il[p + 1]) : (ILOpcode)il[p];
+
+                if (op == ILOpcode.stsfld && p + 5 <= il.Length)
+                {
+                    int tok = il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24);
+                    if (body.GetObject(tok, NotFoundBehavior.ReturnNull) is FieldDesc fd &&
+                        fd.Name.StringEquals("s_sqrtTable"))
+                    {
+                        stPos = p;
+                        break; // naPos already holds the last preceding SqrtCoefficients newarr
+                    }
+                }
+                else if (op == ILOpcode.newarr && p + 5 <= il.Length)
+                {
+                    int tok = il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24);
+                    if (body.GetObject(tok, NotFoundBehavior.ReturnNull) is MetadataType mt &&
+                        mt.Name.StringEquals("SqrtCoefficients"))
+                        naPos = p;
+                }
+
+                if (op == ILOpcode.switch_)
+                {
+                    if (p + 5 > il.Length) break;
+                    uint n = (uint)(il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24));
+                    p += 5 + (int)n * 4;
+                }
+                else if (op.IsValid()) p += op.GetSize();
+                else break; // unknown opcode - stop rather than misparse operands
+            }
+
+            if (stPos >= 0 && naPos >= 0 && naPos + 5 <= stPos)
+            {
+                for (int p = naPos + 5; p < stPos; p++)
+                    il[p] = 0x00; // nop out the 768-constant SqrtCoefficients fill
+                return new RewrittenMethodIL(body, il);
+            }
+            return body;
+        }
+
         // NOTE: ValueType.RegularGetValueTypeHashCode (Single/Double struct fields
         // hashed by value through FP registers), the whole System.Collections.
         // Hashtable ctor/rehash family (the `float _loadFactor` load factor) and
@@ -332,16 +407,16 @@ class CustomILProvider : ILProvider
         // than hand-emitted IL - Roslyn guarantees each replacement body is valid.
 
         if (method.OwningType is MetadataType owningType &&
-            owningType.Namespace == "System" &&
-            owningType.Name == "OutOfMemoryException" &&
-            method.Name == "GetDefaultMessage")
+            owningType.Namespace.StringEquals("System") &&
+            owningType.Name.StringEquals("OutOfMemoryException") &&
+            method.Name.StringEquals("GetDefaultMessage"))
         {
             var stringType = TypeContext.GetWellKnownType(WellKnownType.String);
             FieldDesc emptyField = null;
 
             foreach (var field in stringType.GetFields())
             {
-                if (field.Name == "Empty" && field.IsStatic)
+                if (field.Name.StringEquals("Empty") && field.IsStatic)
                 {
                     emptyField = field;
                     break;
@@ -366,9 +441,9 @@ class CustomILProvider : ILProvider
         }
 
         if (method.OwningType is MetadataType owningType2 &&
-            owningType2.Namespace == "Internal.JitInterface" &&
-            owningType2.Name == "CorInfoImpl" &&
-            method.Name == "getAsyncInfo")
+            owningType2.Namespace.StringEquals("Internal.JitInterface") &&
+            owningType2.Name.StringEquals("CorInfoImpl") &&
+            method.Name.StringEquals("getAsyncInfo"))
         {
             return new ILStubMethodIL(
                 method,
@@ -954,7 +1029,7 @@ internal class BuildCommand : CommandBase
         MethodDesc Snippet(string name)
         {
             foreach (MethodDesc m in snippetType.GetMethods())
-                if (m.Name == name) return m;
+                if (m.Name.StringEquals(name)) return m;
             return null;
         }
         void Add(MethodDesc target, MethodDesc snippet)
@@ -968,7 +1043,7 @@ internal class BuildCommand : CommandBase
             if (type == null) return null;
             foreach (MethodDesc m in type.GetMethods())
             {
-                if (m.Name != name || m.Signature.Length != sig.Length) continue;
+                if (!m.Name.StringEquals(name) || m.Signature.Length != sig.Length) continue;
                 bool ok = true;
                 for (int i = 0; i < sig.Length; i++) ok &= m.Signature[i] == sig[i];
                 if (ok) return m;
@@ -1016,7 +1091,7 @@ internal class BuildCommand : CommandBase
         if (vtType != null)
         {
             foreach (MethodDesc m in vtType.GetMethods())
-                if (m.Name == "RegularGetValueTypeHashCode" && m.Signature.Length == 3)
+                if (m.Name.StringEquals("RegularGetValueTypeHashCode") && m.Signature.Length == 3)
                     Add(m, Snippet("ValueTypeRegularHashCode"));
         }
 
@@ -1025,7 +1100,7 @@ internal class BuildCommand : CommandBase
         if (lbType != null)
         {
             foreach (MethodDesc m in lbType.GetMethods())
-                if (m.Name == "CreateLengthBucketsArrayIfAppropriate")
+                if (m.Name.StringEquals("CreateLengthBucketsArrayIfAppropriate"))
                     Add(m, Snippet("LengthBucketsNone"));
         }
 
@@ -1496,7 +1571,11 @@ internal class BuildCommand : CommandBase
 
         CompilationModuleGroup compilationGroup;
         List<ICompilationRootProvider> compilationRoots = new List<ICompilationRootProvider>();
+#if NET11_0_OR_GREATER
+        TypeMapManager typeMapManager = new UsageBasedTypeMapManager(TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext.GeneratedAssembly, TypeMapAssemblyTargetsMode.Traverse));
+#else
         TypeMapManager typeMapManager = new UsageBasedTypeMapManager(TypeMapMetadata.CreateFromAssembly((EcmaAssembly)compiledAssembly, typeSystemContext));
+#endif
 
         compilationRoots.Add(new UnmanagedEntryPointsRootProvider(compiledAssembly));
 
@@ -1508,7 +1587,11 @@ internal class BuildCommand : CommandBase
         }
         else
         {
+#if NET11_0_OR_GREATER
+            compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", new Internal.Text.Utf8String("RhpTrapThreads"), exportHidden: true)));
+#else
             compilationRoots.Add(new GenericRootProvider<object>(null, (_, rooter) => rooter.RootReadOnlyDataBlob(new byte[4], 4, "Trap threads", "RhpTrapThreads", exportHidden: true)));
+#endif
         }
 
         if (!nativeLib)
@@ -1679,7 +1762,12 @@ internal class BuildCommand : CommandBase
         ilProvider = new SubstitutedILProvider(ilProvider, substitutionProvider, new DevirtualizationManager());
 
         var stackTracePolicy = !disableStackTraceData ?
+#if NET11_0_OR_GREATER
+            // Line numbers are a .NET 11 addition; keep the .NET 10 output shape.
+            (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy(includeLineNumbers: false) : new NoStackTraceEmissionPolicy();
+#else
             (StackTraceEmissionPolicy)new EcmaMethodStackTraceEmissionPolicy() : new NoStackTraceEmissionPolicy();
+#endif
 
         MetadataBlockingPolicy mdBlockingPolicy;
         ManifestResourceBlockingPolicy resBlockingPolicy;
@@ -1855,9 +1943,13 @@ internal class BuildCommand : CommandBase
 
             builder.UseTypeMapManager(scanResults.GetTypeMapManager());
 
+#if !NET11_0_OR_GREATER
+            // .NET 11 dropped ILScanResults.GetBodyAndFieldSubstitutions; the
+            // pre-scan substitutionProvider is reused as-is (same as upstream ilc).
             substitutions.AppendFrom(scanResults.GetBodyAndFieldSubstitutions());
 
             substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
+#endif
 
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
 
@@ -1993,7 +2085,11 @@ internal class BuildCommand : CommandBase
             foreach (var compilationRoot in compilationRoots)
             {
                 if (compilationRoot is UnmanagedEntryPointsRootProvider provider && !provider.Hidden)
+#if NET11_0_OR_GREATER
+                    defFileWriter.AddExportedMethods(provider.ExportedMethods, compilationResults);
+#else
                     defFileWriter.AddExportedMethods(provider.ExportedMethods);
+#endif
             }
 
             defFileWriter.EmitExportedMethods();
@@ -2507,7 +2603,7 @@ internal class BuildCommand : CommandBase
         if (typical.OwningType is not MetadataType mt)
             return false;
         foreach (var (ns, name, m) in s_knownDeadFloatMethods)
-            if (typical.Name == m && mt.Name == name && mt.Namespace == ns)
+            if (typical.Name.StringEquals(m) && mt.Name.StringEquals(name) && mt.Namespace.StringEquals(ns))
                 return true;
         return false;
     }
