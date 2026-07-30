@@ -1,7 +1,9 @@
 FROM ubuntu:26.04
 
-# SDK 11 carries the runtimes needed by both net10.0 and net11.0 builds of
-# bflat. DOTNET_VERSION selects which build gets packaged (COPY below).
+# An SDK carries only its own major's runtime, so SDK_VERSION must match the
+# major of the packaged bflat build (a net10.0 bflat aborts with "framework
+# '10.0.0' not found" on an 11-only image). DOTNET_VERSION selects which build
+# gets packaged (COPY below); the CI matrix passes both args in lockstep.
 ARG SDK_VERSION=11.0.100-preview.6.26359.118
 ARG DOTNET_VERSION=11
 
