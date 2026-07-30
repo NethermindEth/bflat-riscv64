@@ -132,73 +132,236 @@ sealed class UnifierResizeILProvider : ILProvider
             return body;
         }
 
-        byte[] il = (byte[])body.GetILBytes().Clone();
-        // ldloc.0; conv.r8; ldarg.0; ldfld _entries; ldlen; conv.i4; conv.r8;
-        // div; ldc.r8 0.75; bge.un.s  ->  06 6C 02 7B ?? ?? ?? ?? 8E 69 6C 5B 23 <0.75> 34
-        byte[] pat = { 0x06, 0x6C, 0x02, 0x7B, 0, 0, 0, 0, 0x8E, 0x69, 0x6C, 0x5B,
-                       0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x3F, 0x34 };
-        bool[] mask = new bool[pat.Length];
-        for (int i = 0; i < mask.Length; i++) mask[i] = !(i >= 4 && i <= 7);
-        int at = ILRewrite.FindPattern(il, pat, mask);
-        if (at < 0)
+        // The FP growth check is the instruction run
+        //   ldloc.0; conv.r8; ldarg.0; ldfld _entries; ldlen; conv.i4; conv.r8;
+        //   div; ldc.r8 0.75; bge.un.s   (live/len < 0.75 grows the table)
+        // Rewrite the compare into the tick-exact integer predicate live*4 < len*3
+        // (== live/len < 0.75) and flip the branch to its non-.un form. Same total
+        // length and same branch target, so the shared-generic dictionary deps the
+        // scanner computed from the original body are untouched.
+        var ed = new ILEditor(body);
+        ILOpcode[] ratio =
+        {
+            ILOpcode.ldloc_0, ILOpcode.conv_r8, ILOpcode.ldarg_0, ILOpcode.ldfld,
+            ILOpcode.ldlen, ILOpcode.conv_i4, ILOpcode.conv_r8, ILOpcode.div,
+            ILOpcode.ldc_r8, ILOpcode.bge_un_s,
+        };
+        if (!ed.FindSequence(ratio, out int[] at, out _))
             return body;
 
-        byte t0 = il[at + 4], t1 = il[at + 5], t2 = il[at + 6], t3 = il[at + 7];
-        int p = at;
-        il[p++] = 0x06;                                    // ldloc.0
-        il[p++] = 0x6A;                                    // conv.i8
-        il[p++] = 0x1A;                                    // ldc.i4.4
-        il[p++] = 0x6A;                                    // conv.i8
-        il[p++] = 0x5A;                                    // mul   -> live*4
-        il[p++] = 0x02;                                    // ldarg.0
-        il[p++] = 0x7B; il[p++] = t0; il[p++] = t1; il[p++] = t2; il[p++] = t3; // ldfld _entries
-        il[p++] = 0x8E;                                    // ldlen
-        il[p++] = 0x69;                                    // conv.i4
-        il[p++] = 0x6A;                                    // conv.i8
-        il[p++] = 0x19;                                    // ldc.i4.3
-        il[p++] = 0x6A;                                    // conv.i8
-        il[p++] = 0x5A;                                    // mul   -> len*3
-        for (int i = 0; i < 4; i++)
-            il[p++] = 0x00;                                // nop
-        il[p] = 0x2F;                                      // bge.s (same operand/target)
+        int start = at[0];                  // ldloc.0
+        int entriesTok = ed.TokenAt(at[3]); // ldfld _entries
+        int bge = at[9];                    // bge.un.s opcode byte
+
+        byte[] repl = new ILSnippet()
+            .Op(ILOpcode.ldloc_0).Op(ILOpcode.conv_i8).LdcI4(4).Op(ILOpcode.conv_i8).Op(ILOpcode.mul)   // live*4
+            .Op(ILOpcode.ldarg_0).Token(ILOpcode.ldfld, entriesTok).Op(ILOpcode.ldlen).Op(ILOpcode.conv_i4)
+            .Op(ILOpcode.conv_i8).LdcI4(3).Op(ILOpcode.conv_i8).Op(ILOpcode.mul)                         // len*3
+            .ToArray();
+        // Replace the double ratio compare [start, bge) with the integer form
+        // (Replace nop-pads the slack) and flip bge.un.s -> bge.s in place.
+        if (!ed.Replace(start, bge, repl) || !ed.SetOpcode(bge, ILOpcode.bge_s))
+            return body;
+
         // Integer form holds live*4 while computing len*3: one slot deeper than
         // the original double ratio peak.
-        return new RewrittenMethodIL(body, il, extraMaxStack: 1);
+        return ed.ToIL(extraMaxStack: 1);
     }
 }
 
-static class ILRewrite
+/// <summary>
+/// Instruction-boundary-aware editor over a method body's IL. The surgical zkVM
+/// rewrites below express their edits in terms of DECODED instructions - find by
+/// opcode/operand, nop or overwrite whole instructions - instead of raw byte
+/// pattern matches and byte pokes. Decoding guarantees a constant that happens to
+/// share an opcode's byte value (e.g. a 0x80 inside a ldc.r8 operand) is never
+/// mistaken for that opcode, and that an edit never splits an instruction - the
+/// class of bug a byte scan invites. Every edit preserves total length, so branch
+/// offsets and exception regions in the untouched remainder stay valid with no
+/// re-emit needed.
+/// </summary>
+sealed class ILEditor
 {
-    /// <summary>
-    /// Finds the single occurrence of <paramref name="pattern"/> in
-    /// <paramref name="haystack"/>; positions where <paramref name="mask"/> is
-    /// false match any byte. Returns -1 when absent or ambiguous (more than one
-    /// match is treated as not found - safer to leave the IL alone than to
-    /// rewrite the wrong site).
-    /// </summary>
-    public static int FindPattern(byte[] haystack, byte[] pattern, bool[] mask)
+    private readonly MethodIL _body;
+    private readonly byte[] _il;
+    private readonly List<int> _offsets = new List<int>();     // instruction starts, ascending
+    private readonly List<ILOpcode> _opcodes = new List<ILOpcode>();
+
+    public ILEditor(MethodIL body)
     {
-        int found = -1;
-        for (int i = 0; i + pattern.Length <= haystack.Length; i++)
+        _body = body;
+        _il = (byte[])body.GetILBytes().Clone();
+        for (int p = 0; p < _il.Length; )
+        {
+            ILOpcode op = OpcodeAt(p);
+            _offsets.Add(p);
+            _opcodes.Add(op);
+            p += SizeAt(p, op);
+        }
+    }
+
+    public int Count => _offsets.Count;
+    public int OffsetOf(int index) => _offsets[index];
+    public ILOpcode OpcodeOf(int index) => _opcodes[index];
+
+    private ILOpcode OpcodeAt(int p)
+        => (_il[p] == 0xFE && p + 1 < _il.Length) ? (ILOpcode)(0xFE00 + _il[p + 1]) : (ILOpcode)_il[p];
+
+    // switch is variable-length; every other normal opcode is sized by ILC's
+    // ILOpcode.GetSize(). GetSize() is only called behind IsValid() because it
+    // indexes an internal table and faults on the prefix opcodes - which IsValid()
+    // rejects - so those (volatile./readonly./tail./constrained./unaligned./no.)
+    // are sized here from their ECMA operand instead. Sizing every opcode (rather
+    // than stopping at the first prefix) keeps the whole method decoded.
+    private int SizeAt(int p, ILOpcode op)
+    {
+        if (op == ILOpcode.switch_)
+        {
+            if (p + 5 > _il.Length) return _il.Length - p;
+            long n = (uint)(_il[p + 1] | (_il[p + 2] << 8) | (_il[p + 3] << 16) | (_il[p + 4] << 24));
+            long sz = 5 + n * 4;
+            return sz > _il.Length - p ? _il.Length - p : (int)sz;
+        }
+        if (op.IsValid())
+            return op.GetSize();
+        switch (op)
+        {
+            case ILOpcode.constrained: return 6; // prefix + 4-byte type token
+            case ILOpcode.unaligned: return 3;   // prefix + 1-byte alignment
+            default:
+                // no. (0xFE19) also carries a 1-byte flag; the rest are bare prefixes.
+                if (_il[p] == 0xFE && p + 1 < _il.Length && _il[p + 1] == 0x19) return 3;
+                return _il[p] == 0xFE ? 2 : 1;
+        }
+    }
+
+    private int OperandOffset(int insnOffset) => _il[insnOffset] == 0xFE ? insnOffset + 2 : insnOffset + 1;
+
+    /// <summary>4-byte metadata-token operand of the instruction at the given start offset.</summary>
+    public int TokenAt(int insnOffset)
+    {
+        int o = OperandOffset(insnOffset);
+        return _il[o] | (_il[o + 1] << 8) | (_il[o + 2] << 16) | (_il[o + 3] << 24);
+    }
+
+    /// <summary>double operand of a ldc.r8 at the given start offset.</summary>
+    public double ReadR8At(int insnOffset) => BitConverter.ToDouble(_il, OperandOffset(insnOffset));
+
+    /// <summary>Resolves a token that came from a real instruction operand (never null-throws).</summary>
+    public object Resolve(int token) => _body.GetObject(token, NotFoundBehavior.ReturnNull);
+
+    /// <summary>
+    /// Finds the unique run of decoded instructions whose opcodes equal <paramref name="seq"/>.
+    /// Returns the run's instruction start offsets (one per opcode) and the byte offset
+    /// just past the last one, or false if the run is absent or occurs more than once
+    /// (ambiguity is refused - safer than rewriting the wrong site).
+    /// </summary>
+    public bool FindSequence(ILOpcode[] seq, out int[] offsets, out int end)
+    {
+        offsets = null; end = -1;
+        int foundIdx = -1;
+        for (int i = 0; i + seq.Length <= _opcodes.Count; i++)
         {
             bool ok = true;
-            for (int j = 0; j < pattern.Length; j++)
-            {
-                if ((mask == null || mask[j]) && haystack[i + j] != pattern[j])
-                {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok)
-            {
-                if (found >= 0)
-                    return -1;
-                found = i;
-            }
+            for (int j = 0; j < seq.Length; j++)
+                if (_opcodes[i + j] != seq[j]) { ok = false; break; }
+            if (!ok) continue;
+            if (foundIdx >= 0) return false; // ambiguous
+            foundIdx = i;
         }
-        return found;
+        if (foundIdx < 0) return false;
+        offsets = new int[seq.Length];
+        for (int j = 0; j < seq.Length; j++) offsets[j] = _offsets[foundIdx + j];
+        int lastIdx = foundIdx + seq.Length;
+        end = lastIdx < _offsets.Count ? _offsets[lastIdx] : _il.Length;
+        return true;
     }
+
+    private bool IsBoundary(int offset) => offset == _il.Length || _offsets.BinarySearch(offset) >= 0;
+
+    /// <summary>Nops out whole instructions in [from, to). Both must be instruction boundaries.</summary>
+    public bool NopRange(int from, int to)
+    {
+        if (from > to || !IsBoundary(from) || !IsBoundary(to)) return false;
+        for (int p = from; p < to; p++) _il[p] = (byte)ILOpcode.nop; // 0x00
+        return true;
+    }
+
+    /// <summary>
+    /// Replaces the whole instructions in [from, to) with <paramref name="snippet"/>,
+    /// padding any leftover bytes up to <paramref name="to"/> with nops. Both ends
+    /// must be instruction boundaries and the snippet must fit.
+    /// </summary>
+    public bool Replace(int from, int to, byte[] snippet)
+    {
+        if (!IsBoundary(from) || !IsBoundary(to) || snippet.Length > to - from) return false;
+        Array.Copy(snippet, 0, _il, from, snippet.Length);
+        for (int p = from + snippet.Length; p < to; p++) _il[p] = (byte)ILOpcode.nop;
+        return true;
+    }
+
+    /// <summary>Replaces one instruction's opcode with a same-size single-byte opcode.</summary>
+    public bool SetOpcode(int insnOffset, ILOpcode op)
+    {
+        if (!IsBoundary(insnOffset) || (int)op > 0xFF) return false;
+        _il[insnOffset] = (byte)op;
+        return true;
+    }
+
+    public RewrittenMethodIL ToIL(Dictionary<int, object> extraTokens = null, int extraMaxStack = 0)
+        => new RewrittenMethodIL(_body, _il, extraTokens, extraMaxStack);
+}
+
+/// <summary>
+/// Builds a short, branch-free run of IL as a byte array from named opcodes and
+/// typed operands - so the zkVM rewrites express their integer replacement bodies
+/// as readable instructions instead of hand-written opcode bytes. Only the
+/// single-byte opcodes and the LdcI4/LdcI8/token operands the rewrites need are
+/// supported.
+/// </summary>
+sealed class ILSnippet
+{
+    private readonly List<byte> _b = new List<byte>();
+
+    public ILSnippet Op(ILOpcode op)
+    {
+        if ((int)op > 0xFF) throw new NotSupportedException("ILSnippet emits single-byte opcodes only");
+        _b.Add((byte)op);
+        return this;
+    }
+
+    public ILSnippet LdcI4(int v)
+    {
+        switch (v)
+        {
+            case -1: return Op(ILOpcode.ldc_i4_m1);
+            case 0: return Op(ILOpcode.ldc_i4_0);
+            case 1: return Op(ILOpcode.ldc_i4_1);
+            case 2: return Op(ILOpcode.ldc_i4_2);
+            case 3: return Op(ILOpcode.ldc_i4_3);
+            case 4: return Op(ILOpcode.ldc_i4_4);
+            case 5: return Op(ILOpcode.ldc_i4_5);
+            case 6: return Op(ILOpcode.ldc_i4_6);
+            case 7: return Op(ILOpcode.ldc_i4_7);
+            case 8: return Op(ILOpcode.ldc_i4_8);
+        }
+        if (v >= sbyte.MinValue && v <= sbyte.MaxValue) { Op(ILOpcode.ldc_i4_s); _b.Add((byte)(sbyte)v); return this; }
+        Op(ILOpcode.ldc_i4); AddInt32(v); return this;
+    }
+
+    public ILSnippet LdcI8(long v)
+    {
+        Op(ILOpcode.ldc_i8);
+        for (int i = 0; i < 8; i++) _b.Add((byte)(v >> (8 * i)));
+        return this;
+    }
+
+    /// <summary>Emits a token-carrying opcode (call/newobj/ldfld/...) with its 4-byte token.</summary>
+    public ILSnippet Token(ILOpcode op, int token) { Op(op); AddInt32(token); return this; }
+
+    private void AddInt32(int v) { for (int i = 0; i < 4; i++) _b.Add((byte)(v >> (8 * i))); }
+
+    public byte[] ToArray() => _b.ToArray();
 }
 
 /// <summary>
@@ -283,12 +446,13 @@ class CustomILProvider : ILProvider
             method.Name.StringEquals(".cctor"))
         {
             MethodIL body = inner.GetMethodIL(method);
-            byte[] il = (byte[])body.GetILBytes().Clone();
-            // Anchor: ldc.r8 2.0 (23 00 00 00 00 00 00 00 40) preceded by
-            // ldsflda (7F + token) and followed by call (28 + token).
-            byte[] anchor = { 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40 };
-            int at = ILRewrite.FindPattern(il, anchor, null);
-            if (at >= 5 && il[at - 5] == 0x7F && il[at + 9] == 0x28)
+            var ed = new ILEditor(body);
+            // The FP subexpression is the run  ldsflda MinValue; ldc.r8 2.0;
+            // call AddMilliseconds  - unique in the cctor. Verify the constant is
+            // exactly 2.0 before touching it.
+            if (ed.FindSequence(new[] { ILOpcode.ldsflda, ILOpcode.ldc_r8, ILOpcode.call },
+                                out int[] at, out int end)
+                && ed.ReadR8At(at[1]) == 2.0)
             {
                 var int64Type = TypeContext.GetWellKnownType(WellKnownType.Int64);
                 MethodDesc dateTimeTicksCtor = null;
@@ -304,21 +468,16 @@ class CustomILProvider : ILProvider
 
                 if (dateTimeTicksCtor != null)
                 {
+                    // Placeholder token for the injected newobj, resolved back to
+                    // the DateTime(int64) ctor by RewrittenMethodIL.GetObject.
                     const int injectedToken = 0x0A7FFFF0;
-                    int p = at - 5;
-                    il[p++] = 0x21; // ldc.i8
-                    long ticks = 2 * 10_000; // 2 ms in ticks
-                    for (int i = 0; i < 8; i++)
-                        il[p++] = (byte)(ticks >> (8 * i));
-                    il[p++] = 0x73; // newobj
-                    il[p++] = unchecked((byte)injectedToken);
-                    il[p++] = unchecked((byte)(injectedToken >> 8));
-                    il[p++] = unchecked((byte)(injectedToken >> 16));
-                    il[p++] = unchecked((byte)(injectedToken >> 24));
-                    for (int i = 0; i < 5; i++)
-                        il[p++] = 0x00; // nop
-                    return new RewrittenMethodIL(body, il,
-                        new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
+                    byte[] repl = new ILSnippet()
+                        .LdcI8(2 * 10_000)                      // 2 ms in ticks
+                        .Token(ILOpcode.newobj, injectedToken)   // newobj DateTime(int64)
+                        .ToArray();
+                    // Replace ldsflda;ldc.r8;call with it (Replace nop-pads the slack).
+                    if (ed.Replace(at[0], end, repl))
+                        return ed.ToIL(new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
                 }
             }
             return body;
@@ -343,59 +502,33 @@ class CustomILProvider : ILProvider
             method.Name.StringEquals(".cctor"))
         {
             MethodIL body = inner.GetMethodIL(method);
-            byte[] il = (byte[])body.GetILBytes().Clone();
+            var ed = new ILEditor(body);
 
-            // Locate `stsfld s_sqrtTable` and the last preceding
-            // `newarr SqrtCoefficients` by DECODING opcodes, not by scanning for
-            // raw 0x80/0x8D bytes: those bytes also occur inside the operands of
-            // the 768 ldc.r4/ldc.r8 constants that fill the table, and calling
-            // EcmaMethodIL.GetObject on such an operand tail resolves a malformed
-            // EntityHandle -> EcmaModule.GetObject throws BadImageFormatException
-            // (NotFoundBehavior.ReturnNull only suppresses "not found", never a
-            // malformed handle). That exception escapes GetMethodIL and makes ILC
-            // stub the entire cctor (System.Number then throws at first static
-            // access, i.e. any int.ToString()). Instruction-stepping guarantees
-            // GetObject only ever sees a real stsfld/newarr token.
-            int stPos = -1, naPos = -1;
-            for (int p = 0; p < il.Length; )
+            // Find `stsfld s_sqrtTable` and the end of the last preceding
+            // `newarr SqrtCoefficients`, then nop the constant-filling
+            // instructions between them. ILEditor decodes, so GetObject only
+            // ever sees a real stsfld/newarr operand - never a 0x80/0x8D byte
+            // that merely happens to sit inside a ldc.r4/ldc.r8 constant (which
+            // would resolve a malformed handle and throw BadImageFormat). The
+            // array stays on the stack across the nops, so the store balances.
+            int stPos = -1, naEnd = -1;
+            for (int i = 0; i < ed.Count; i++)
             {
-                ILOpcode op = (il[p] == 0xFE && p + 1 < il.Length)
-                    ? (ILOpcode)(0xFE00 + il[p + 1]) : (ILOpcode)il[p];
-
-                if (op == ILOpcode.stsfld && p + 5 <= il.Length)
+                int off = ed.OffsetOf(i);
+                ILOpcode op = ed.OpcodeOf(i);
+                if (op == ILOpcode.stsfld
+                    && ed.Resolve(ed.TokenAt(off)) is FieldDesc fd && fd.Name.StringEquals("s_sqrtTable"))
                 {
-                    int tok = il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24);
-                    if (body.GetObject(tok, NotFoundBehavior.ReturnNull) is FieldDesc fd &&
-                        fd.Name.StringEquals("s_sqrtTable"))
-                    {
-                        stPos = p;
-                        break; // naPos already holds the last preceding SqrtCoefficients newarr
-                    }
+                    stPos = off;
+                    break; // naEnd already holds the end of the last preceding SqrtCoefficients newarr
                 }
-                else if (op == ILOpcode.newarr && p + 5 <= il.Length)
-                {
-                    int tok = il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24);
-                    if (body.GetObject(tok, NotFoundBehavior.ReturnNull) is MetadataType mt &&
-                        mt.Name.StringEquals("SqrtCoefficients"))
-                        naPos = p;
-                }
-
-                if (op == ILOpcode.switch_)
-                {
-                    if (p + 5 > il.Length) break;
-                    uint n = (uint)(il[p + 1] | (il[p + 2] << 8) | (il[p + 3] << 16) | (il[p + 4] << 24));
-                    p += 5 + (int)n * 4;
-                }
-                else if (op.IsValid()) p += op.GetSize();
-                else break; // unknown opcode - stop rather than misparse operands
+                if (op == ILOpcode.newarr && i + 1 < ed.Count
+                    && ed.Resolve(ed.TokenAt(off)) is MetadataType mt && mt.Name.StringEquals("SqrtCoefficients"))
+                    naEnd = ed.OffsetOf(i + 1); // first instruction of the fill
             }
 
-            if (stPos >= 0 && naPos >= 0 && naPos + 5 <= stPos)
-            {
-                for (int p = naPos + 5; p < stPos; p++)
-                    il[p] = 0x00; // nop out the 768-constant SqrtCoefficients fill
-                return new RewrittenMethodIL(body, il);
-            }
+            if (stPos >= 0 && naEnd >= 0 && naEnd <= stPos && ed.NopRange(naEnd, stPos))
+                return ed.ToIL();
             return body;
         }
 
