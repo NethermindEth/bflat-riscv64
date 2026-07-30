@@ -204,8 +204,13 @@ sealed class ILEditor
     public int OffsetOf(int index) => _offsets[index];
     public ILOpcode OpcodeOf(int index) => _opcodes[index];
 
+    // 0xFE - the escape byte that introduces a two-byte opcode.
+    private const byte TwoByteEscape = (byte)ILOpcode.prefix1;
+
     private ILOpcode OpcodeAt(int p)
-        => (_il[p] == 0xFE && p + 1 < _il.Length) ? (ILOpcode)(0xFE00 + _il[p + 1]) : (ILOpcode)_il[p];
+        => (_il[p] == TwoByteEscape && p + 1 < _il.Length)
+            ? (ILOpcode)(((int)ILOpcode.prefix1 << 8) | _il[p + 1])
+            : (ILOpcode)_il[p];
 
     // switch is variable-length; every other normal opcode is sized by ILC's
     // ILOpcode.GetSize(). GetSize() is only called behind IsValid() because it
@@ -224,18 +229,19 @@ sealed class ILEditor
         }
         if (op.IsValid())
             return op.GetSize();
+        // IsValid() rejects the prefix opcodes; size them = two opcode bytes plus
+        // their own operand.
+        const int prefixOpcodeBytes = 2;
         switch (op)
         {
-            case ILOpcode.constrained: return 6; // prefix + 4-byte type token
-            case ILOpcode.unaligned: return 3;   // prefix + 1-byte alignment
-            default:
-                // no. (0xFE19) also carries a 1-byte flag; the rest are bare prefixes.
-                if (_il[p] == 0xFE && p + 1 < _il.Length && _il[p + 1] == 0x19) return 3;
-                return _il[p] == 0xFE ? 2 : 1;
+            case ILOpcode.constrained: return prefixOpcodeBytes + 4; // + type token
+            case ILOpcode.unaligned: return prefixOpcodeBytes + 1;   // + alignment byte
+            case ILOpcode.no: return prefixOpcodeBytes + 1;          // + check-skip flags
+            default: return _il[p] == TwoByteEscape ? prefixOpcodeBytes : 1; // volatile./readonly./tail.
         }
     }
 
-    private int OperandOffset(int insnOffset) => _il[insnOffset] == 0xFE ? insnOffset + 2 : insnOffset + 1;
+    private int OperandOffset(int insnOffset) => _il[insnOffset] == TwoByteEscape ? insnOffset + 2 : insnOffset + 1;
 
     /// <summary>4-byte metadata-token operand of the instruction at the given start offset.</summary>
     public int TokenAt(int insnOffset)
