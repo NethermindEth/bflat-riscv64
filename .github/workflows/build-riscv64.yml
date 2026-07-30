@@ -22,11 +22,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # perf blobs are not published for .NET 11 yet (see ValidateVariant in
+          # bflat.csproj), so the perf leg stays on .NET 10; .NET 11 ships as
+          # the separate -11-min image.
           - variant: perf
+            dotnet: "10"
             image: nethermindeth/bflat-riscv64
           - variant: min
+            dotnet: "10"
             image: nethermindeth/bflat-riscv64-min
-    name: Build RISC-V64 (${{ matrix.variant }}) on Ubuntu 26.04
+          - variant: min
+            dotnet: "11"
+            image: nethermindeth/bflat-riscv64-11-min
+    name: Build RISC-V64 (${{ matrix.variant }}, net${{ matrix.dotnet }}) on Ubuntu 26.04
     steps:
       - name: Install dependencies
         run: |
@@ -54,11 +62,14 @@ jobs:
           # crt1.o, so we need an empty gnu/stubs-lp64.h marker.
           touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
 
-      - name: Install .NET 10
+      - name: Install .NET SDK (10 GA + 11 preview)
         run: |
           wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
           chmod +x dotnet-install.sh
+          # SDK 10: targets net10.0 (perf leg). SDK 11 preview: targets net11.0
+          # (min leg); pinned to the version the toolchain images ship.
           ./dotnet-install.sh --channel 10.0 --install-dir /usr/share/dotnet
+          ./dotnet-install.sh --version 11.0.100-preview.6.26359.118 --install-dir /usr/share/dotnet
           ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
           echo "DOTNET_ROOT=/usr/share/dotnet" >> $GITHUB_ENV
           echo "/usr/share/dotnet" >> $GITHUB_PATH
@@ -69,8 +80,8 @@ jobs:
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
 
-      - name: Build bflat (riscv64, ${{ matrix.variant }})
-        run: ./build.sh bflat riscv64 ${{ matrix.variant }}
+      - name: Build bflat (riscv64, ${{ matrix.variant }}, net${{ matrix.dotnet }})
+        run: ./build.sh bflat riscv64 ${{ matrix.variant }} ${{ matrix.dotnet }}
 
       - name: Build Docker image
         run: |
@@ -79,6 +90,7 @@ jobs:
             EXTRA_TAGS="-t ${{ matrix.image }}:latest -t ${{ matrix.image }}:$GITHUB_SHA"
           fi
           docker build --platform linux/amd64 \
+            --build-arg DOTNET_VERSION=${{ matrix.dotnet }} \
             -t ${{ matrix.image }}:test \
             $EXTRA_TAGS \
             .
