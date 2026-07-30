@@ -1,10 +1,15 @@
 FROM ubuntu:26.04
 
+# SDK 11 carries the runtimes needed by both net10.0 and net11.0 builds of
+# bflat. DOTNET_VERSION selects which build gets packaged (COPY below).
+ARG SDK_VERSION=11.0.100-preview.6.26359.118
+ARG DOTNET_VERSION=11
+
 RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm clang lld xxd file python3 python3-pip libarchive-tools
 
 ENV BFLAT_LD=/usr/bin/lld
 
-RUN wget https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-linux-x64.tar.gz
+RUN wget https://builds.dotnet.microsoft.com/dotnet/Sdk/${SDK_VERSION}/dotnet-sdk-${SDK_VERSION}-linux-x64.tar.gz
 
 RUN pip3 install lief pyelftools --break-system-packages
 
@@ -17,11 +22,11 @@ ENV HOME=/root
 # bsdtar instead of GNU tar: the glibc 2.43 rebuild of ubuntu:26.04 makes GNU
 # tar issue syscalls Rosetta doesn't translate (ENOSYS on nested mkdir) when
 # building linux/amd64 images on Apple Silicon.
-RUN mkdir -p $HOME/dotnet && bsdtar -xzf dotnet-sdk-10.0.100-linux-x64.tar.gz -C $HOME/dotnet
+RUN mkdir -p $HOME/dotnet && bsdtar -xzf dotnet-sdk-${SDK_VERSION}-linux-x64.tar.gz -C $HOME/dotnet
 ENV DOTNET_ROOT=$HOME/dotnet
 ENV PATH=$PATH:$HOME/dotnet
 ENV PATH="$PATH:/share/bflat"
 
 # The packaged variant (perf/min) is whichever was built last:
-# ./build.sh all riscv64 <variant>
-COPY src/bflat/bin/Debug/net10.0 /share/bflat
+# ./build.sh all riscv64 <variant> <dotnet_version>
+COPY src/bflat/bin/Debug/net${DOTNET_VERSION}.0 /share/bflat

@@ -23,16 +23,32 @@ function on_fail()
 what="$1"
 flavor="$2"
 variant="$3"
+dotnet_version="$4"
 
 if [ "$flavor" == "" ] ; then
 	flavor="generic"
 fi
 
+# Target .NET version: which TFM bflat is built for and which runtime blob
+# release line gets bundled.
+if [ "$dotnet_version" == "" ] ; then
+	dotnet_version="11"
+fi
+case $dotnet_version in
+	10|11) ;;
+	*) fail Unsupported dotnet version: "$dotnet_version" ;;
+esac
+
 # Compiler variant: which runtime blob release gets bundled.
-#   perf -> .b23 (performance-oriented runtime)
-#   min  -> .x2  (minimal runtime)
+#   perf -> performance-oriented runtime
+#   min  -> minimal runtime
+# Default: perf, except .NET 11 where only min blobs are published so far.
 if [ "$variant" == "" ] ; then
-	variant="perf"
+	if [ "$dotnet_version" == "11" ] ; then
+		variant="min"
+	else
+		variant="perf"
+	fi
 fi
 case $variant in
 	perf|min) ;;
@@ -158,12 +174,12 @@ function build_modules()
 case $flavor in
 	generic)
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Variant=${variant}
-			on_fail $? "Failed to build bflat (generic, ${variant})"
+			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -p:DotnetVersion=${dotnet_version}
+			on_fail $? "Failed to build bflat (generic, ${variant}, net${dotnet_version}.0)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (generic, ${variant})"
+			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -p:DotnetVersion=${dotnet_version} -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (generic, ${variant}, net${dotnet_version}.0)"
 		fi
 		;;
 	riscv64)
@@ -172,12 +188,12 @@ case $flavor in
 			on_fail $? "Failed to build modules"
 		fi
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant}
-			on_fail $? "Failed to build bflat (riscv64, ${variant})"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -p:DotnetVersion=${dotnet_version}
+			on_fail $? "Failed to build bflat (riscv64, ${variant}, net${dotnet_version}.0)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (riscv64, ${variant})"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -p:DotnetVersion=${dotnet_version} -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (riscv64, ${variant}, net${dotnet_version}.0)"
 		fi
 		;;
 	*)

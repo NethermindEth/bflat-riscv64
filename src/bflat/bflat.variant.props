@@ -1,18 +1,23 @@
 <Project>
-  <!-- Compiler build variants: which runtime/blob release gets bundled.
-       Select with -p:Variant=perf|min (default: perf). -->
+  <!-- Inference -->
   <PropertyGroup>
+    <!-- Infer DotNet version. Select with -p:DotnetVersion=10|11 (default: 11). -->
+    <DotnetVersion Condition="'$(DotnetVersion)' == ''">11</DotnetVersion>
+  </PropertyGroup>
+
+  <!-- Compiler build variants: which runtime/blob release gets bundled.
+       Select with -p:Variant=perf|min. Default: perf, except .NET 11 where
+       only min blobs are published so far. -->
+  <PropertyGroup>
+    <Variant Condition="'$(Variant)' == '' and '$(DotnetVersion)' == '11'">min</Variant>
     <Variant Condition="'$(Variant)' == ''">perf</Variant>
   </PropertyGroup>
 
-  <!-- Inference -->
   <PropertyGroup>
-    <!-- Infer DotNet version -->
-    <DotnetVersion>10</DotnetVersion>
 
     <!-- Infer blob source -->
     <BlobSource>bflattened</BlobSource>
-    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10'">nethermind</BlobSource>
+    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10' or '$(DotnetVersion)' == '11'">nethermind</BlobSource>
   </PropertyGroup>
 
   <!-- Infer blob sources -->
@@ -25,14 +30,25 @@
 
   <!-- Infer dotnet/blob/codeanalysis version -->
   <PropertyGroup>
+    <!-- NuGet version of the bflat.compiler package shipped inside each
+         release. The .NET 11 releases still ship the package versioned
+         10.0.0 (bflat.compiler.10.0.0.nupkg), so this does not follow
+         DotnetVersion. -->
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
+    <RuntimeVersion Condition="'$(DotnetVersion)' == '11'">10.0.0</RuntimeVersion>
+
+    <!-- Base of the release tag (v$(RuntimeReleaseVersion)$(postfix)). -->
+    <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeReleaseVersion>
+    <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '11'">11.0.0</RuntimeReleaseVersion>
+
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p1</RuntimeVersionPostfix>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x7</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">.x2</RuntimeVersionPostfix>
 
     <!-- Full runtime release tag. RuntimeVersion stays the plain NuGet
-         version: both variants ship bflat.compiler.$(RuntimeVersion).nupkg,
-         so anything cached per-variant must be keyed by BlobsVersion. -->
-    <BlobsVersion>$(RuntimeVersion)$(RuntimeVersionPostfix)</BlobsVersion>
+         version: every release ships bflat.compiler.$(RuntimeVersion).nupkg,
+         so anything cached per-release must be keyed by BlobsVersion. -->
+    <BlobsVersion>$(RuntimeReleaseVersion)$(RuntimeVersionPostfix)</BlobsVersion>
     <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
   </PropertyGroup>
 
