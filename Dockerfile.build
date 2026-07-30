@@ -1,8 +1,13 @@
 FROM ubuntu:26.04
 
+# SDK 11 targets both net10.0 and net11.0 (downlevel targeting); SDK 10 can
+# only build net10.0. Override with --build-arg SDK_VERSION=10.0.100 for a
+# pure-.NET-10 build environment.
+ARG SDK_VERSION=11.0.100-preview.6.26359.118
+
 RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu g++-riscv64-linux-gnu llvm clang lld xxd python3 python3-pip yq git curl libarchive-tools
 
-RUN wget https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-linux-x64.tar.gz
+RUN wget https://builds.dotnet.microsoft.com/dotnet/Sdk/${SDK_VERSION}/dotnet-sdk-${SDK_VERSION}-linux-x64.tar.gz
 
 RUN pip3 install lief pyelftools --break-system-packages
 
@@ -15,6 +20,6 @@ ENV HOME=/root
 # bsdtar instead of GNU tar: the glibc 2.43 rebuild of ubuntu:26.04 makes GNU
 # tar issue syscalls Rosetta doesn't translate (ENOSYS on nested mkdir) when
 # building linux/amd64 images on Apple Silicon.
-RUN mkdir -p $HOME/dotnet && bsdtar -xzf dotnet-sdk-10.0.100-linux-x64.tar.gz -C $HOME/dotnet
+RUN mkdir -p $HOME/dotnet && bsdtar -xzf dotnet-sdk-${SDK_VERSION}-linux-x64.tar.gz -C $HOME/dotnet
 ENV DOTNET_ROOT=$HOME/dotnet
 ENV PATH=$PATH:$HOME/dotnet

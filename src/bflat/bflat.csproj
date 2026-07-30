@@ -206,6 +206,10 @@
           BeforeTargets="Restore;CollectPackageReferences;DownloadCompilerNupkg;Build">
     <Error Condition="'$(Variant)' != 'perf' and '$(Variant)' != 'min'"
            Text="Unknown Variant '$(Variant)'. Supported variants: perf (.b23), min (.x2)." />
+    <Error Condition="'$(DotnetVersion)' != '10' and '$(DotnetVersion)' != '11'"
+           Text="Unknown DotnetVersion '$(DotnetVersion)'. Supported versions: 10, 11." />
+    <Error Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'"
+           Text="Variant 'perf' is not published for .NET 11 yet. Use -p:Variant=min or -p:DotnetVersion=10." />
   </Target>
 
   <!-- Variants share bin/ and obj/, so extract semaphores from a previous
@@ -235,7 +239,7 @@
           Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
           Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
-    <DownloadFile SourceUrl="$(RuntimeUri)v$(RuntimeVersion)$(RuntimeVersionPostfix)/%(RuntimeArtifact.Identity).zip"
+    <DownloadFile SourceUrl="$(RuntimeUri)v$(BlobsVersion)/%(RuntimeArtifact.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
