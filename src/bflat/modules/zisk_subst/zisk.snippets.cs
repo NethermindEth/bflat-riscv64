@@ -183,5 +183,50 @@ namespace __ZiskSnippets
         // the parameter layout matches exactly.
         public static int[] LengthBucketsNone(string[] keys, global::System.Collections.Generic.IEqualityComparer<string> comparer, int minLength, int maxLength)
             => null;
+
+        // ---- System.TimeZoneInfo..cctor -------------------------------------
+        // The stock cctor computes s_daylightRuleMarker via
+        // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
+        // its only FPU code. This donor reproduces the WHOLE cctor (five field
+        // initializations - the rest of the type's statics are consts) with the
+        // marker built tick-exactly in integers: 2 ms = 20_000 ticks. Applied only
+        // after BuildZiskBodySubstitutions verifies the original cctor still
+        // stores exactly these five fields, so a CoreLib change is refused loudly
+        // instead of silently dropping a new initializer.
+
+        // The donor is not the field-owning cctor, so C# refuses direct stores to
+        // the `static readonly` fields (CS0198) and cannot name the unspeakable
+        // `<Invariant>k__BackingField` at all. UnsafeAccessor (implemented by
+        // ILC) reaches each by its metadata name with a writable ref.
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_utcTimeZone")]
+        private static extern ref corelib::System.TimeZoneInfo TzUtcTimeZoneField(corelib::System.TimeZoneInfo _);
+
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "<Invariant>k__BackingField")]
+        private static extern ref bool TzInvariantField(corelib::System.TimeZoneInfo _);
+
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_daylightRuleMarker")]
+        private static extern ref corelib::System.TimeZoneInfo.TransitionTime TzDaylightRuleMarkerField(corelib::System.TimeZoneInfo _);
+
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_ZonesThatUseLocationName")]
+        private static extern ref string[] TzZonesThatUseLocationNameField(corelib::System.TimeZoneInfo _);
+
+        public static void TimeZoneInfoCctor()
+        {
+            TzUtcTimeZoneField(null) = corelib::System.TimeZoneInfo.CreateUtcTimeZone();
+            corelib::System.TimeZoneInfo.s_cachedData = new corelib::System.TimeZoneInfo.CachedData();
+            TzInvariantField(null) = corelib::System.AppContextConfigHelper.GetBooleanConfig(
+                "System.TimeZoneInfo.Invariant", "DOTNET_SYSTEM_TIMEZONE_INVARIANT", false);
+            TzDaylightRuleMarkerField(null) =
+                corelib::System.TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+                    new global::System.DateTime(2 * global::System.TimeSpan.TicksPerMillisecond), 1, 1);
+            TzZonesThatUseLocationNameField(null) = new[]
+            {
+                "Europe/Minsk", "Europe/Moscow", "Europe/Simferopol", "Pacific/Apia", "Pacific/Pitcairn",
+            };
+        }
     }
 }

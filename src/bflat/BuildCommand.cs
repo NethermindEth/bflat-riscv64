@@ -426,68 +426,16 @@ class CustomILProvider : ILProvider
         // elimination is done by whole-body C# snippets (see the zisk.snippets.cs
         // resource, compiled by TryCompileZiskSnippets and applied through
         // BodySubstitutions above): Hashtable ctors/rehash, ValueType hashing,
-        // Random sampling and LengthBuckets all live there now. What remains here
-        // are the two cases a whole-body snippet is the wrong tool for:
-        //   * TimeZoneInfo..cctor - the FP is a single subexpression inside an
-        //     auto-generated static ctor; reproducing every static-field
-        //     initializer in a snippet would be fragile across CoreLib rebuilds,
-        //     so a surgical byte rewrite of just that subexpression is safer.
+        // Random sampling, LengthBuckets and the whole TimeZoneInfo..cctor (a
+        // drift-guarded donor - see BuildZiskBodySubstitutions) all live there
+        // now. What remains here are the two cases a snippet cannot express:
+        //   * Number..cctor - a DELETION (drop the dead float-table fill), with
+        //     no replacement logic to write in C#;
         //   * ConcurrentUnifierW`2.Container.Resize - a SHARED GENERIC body the
         //     scanner must see in its ORIGINAL form to compute correct generic-
-        //     dictionary dependencies, so it is rewritten codegen-only by
-        //     UnifierResizeILProvider (snippets apply in BOTH phases).
-
-        // TimeZoneInfo..cctor initializes s_daylightRuleMarker via
-        // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
-        // the only FPU code in the body. Rewrite the 19-byte sequence
-        //   ldsflda MinValue; ldc.r8 2.0; call AddMilliseconds
-        // into the tick-exact integer construction
-        //   ldc.i8 20000; newobj DateTime(int64); nop x5
-        // (2 ms = 20_000 ticks). Same stack effect, same length, so branch
-        // offsets and the trailing CreateFixedDateRule call are untouched.
-        if (zkvmTarget &&
-            method.OwningType is MetadataType tzType &&
-            tzType.Namespace.StringEquals("System") &&
-            tzType.Name.StringEquals("TimeZoneInfo") &&
-            method.Name.StringEquals(".cctor"))
-        {
-            MethodIL body = inner.GetMethodIL(method);
-            var ed = new ILEditor(body);
-            // The FP subexpression is the run  ldsflda MinValue; ldc.r8 2.0;
-            // call AddMilliseconds  - unique in the cctor. Verify the constant is
-            // exactly 2.0 before touching it.
-            if (ed.FindSequence(new[] { ILOpcode.ldsflda, ILOpcode.ldc_r8, ILOpcode.call },
-                                out int[] at, out int end)
-                && ed.ReadR8At(at[1]) == 2.0)
-            {
-                var int64Type = TypeContext.GetWellKnownType(WellKnownType.Int64);
-                MethodDesc dateTimeTicksCtor = null;
-                foreach (MethodDesc ctor in ((MetadataType)TypeContext.GetWellKnownType(WellKnownType.Object))
-                             .Module.GetType("System", "DateTime").GetMethods())
-                {
-                    if (ctor.Name.StringEquals(".ctor") && ctor.Signature.Length == 1 && ctor.Signature[0] == int64Type)
-                    {
-                        dateTimeTicksCtor = ctor;
-                        break;
-                    }
-                }
-
-                if (dateTimeTicksCtor != null)
-                {
-                    // Placeholder token for the injected newobj, resolved back to
-                    // the DateTime(int64) ctor by RewrittenMethodIL.GetObject.
-                    const int injectedToken = 0x0A7FFFF0;
-                    byte[] repl = new ILSnippet()
-                        .LdcI8(2 * 10_000)                      // 2 ms in ticks
-                        .Token(ILOpcode.newobj, injectedToken)   // newobj DateTime(int64)
-                        .ToArray();
-                    // Replace ldsflda;ldc.r8;call with it (Replace nop-pads the slack).
-                    if (ed.Replace(at[0], end, repl))
-                        return ed.ToIL(new Dictionary<int, object> { [injectedToken] = dateTimeTicksCtor });
-                }
-            }
-            return body;
-        }
+        //     dictionary dependencies, so it is rewritten codegen-only (and
+        //     token-free) by UnifierResizeILProvider (snippets apply in BOTH
+        //     phases and would introduce a call token the scanner never saw).
 
         // System.Number..cctor (.NET 11) builds s_sqrtTable = new SqrtCoefficients[256],
         // where SqrtCoefficients is a {single, single, double} struct; the 256 elements
@@ -1241,6 +1189,39 @@ internal class BuildCommand : CommandBase
             foreach (MethodDesc m in lbType.GetMethods())
                 if (m.Name.StringEquals("CreateLengthBucketsArrayIfAppropriate"))
                     Add(m, Snippet("LengthBucketsNone"));
+        }
+
+        // System.TimeZoneInfo..cctor: the donor rebuilds the whole cctor with the
+        // s_daylightRuleMarker DateTime constructed tick-exactly in integers (the
+        // stock body's DateTime.MinValue.AddMilliseconds(2) is its only FP).
+        // Drift guard: substitute only while the original cctor still stores
+        // exactly the five fields the donor initializes - a CoreLib that adds,
+        // renames or removes an initializer is refused loudly here, leaving the
+        // original (FP-carrying) body for --error-on-float / the emulator to
+        // reject, instead of silently dropping the new initializer.
+        var tzType = Type(ctx.SystemModule, "System", "TimeZoneInfo");
+        MethodDesc tzCctor = tzType?.GetStaticConstructor();
+        if (tzCctor != null)
+        {
+            string[] expected =
+            {
+                "s_utcTimeZone", "s_cachedData", "<Invariant>k__BackingField",
+                "s_daylightRuleMarker", "s_ZonesThatUseLocationName",
+            };
+            var stored = new HashSet<string>();
+            var ed = new ILEditor(EcmaMethodIL.Create((EcmaMethod)tzCctor));
+            for (int i = 0; i < ed.Count; i++)
+                if (ed.OpcodeOf(i) == ILOpcode.stsfld &&
+                    ed.Resolve(ed.TokenAt(ed.OffsetOf(i))) is FieldDesc fd)
+                    stored.Add(fd.Name.ToString());
+
+            if (stored.SetEquals(expected))
+                Add(tzCctor, Snippet("TimeZoneInfoCctor"));
+            else
+                Console.Error.WriteLine(
+                    "warning: TimeZoneInfo..cctor field set changed " +
+                    $"([{string.Join(", ", stored)}]); donor cctor snippet NOT applied - " +
+                    "update TimeZoneInfoCctor in zisk.snippets.cs");
         }
 
         return map;
