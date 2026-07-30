@@ -93,6 +93,15 @@ SECTIONS
 
   .data ALIGN(64) : {
     __data_start = .;
+    /* .NET 11 GC (gcenv.unix.cpp static init) registers destructors via
+     * __cxa_atexit(fn, arg, &__dso_handle). Nothing defines __dso_handle in
+     * this fully custom link (no crtbegin.o), so lld synthesizes it at the
+     * image base (VA 0) - out of PCREL_HI20 range (>2GiB) from code at
+     * 0x8xxxxxxx. It is only an opaque DSO token, never dereferenced by
+     * musl's __cxa_atexit, so any in-range address works; give it 8 bytes
+     * of real storage here. */
+    PROVIDE_HIDDEN(__dso_handle = .);
+    . += 8;
     *(.data .data.* .sdata .sdata.*)
     _data_end = .;
   } >ram AT>ram :data
