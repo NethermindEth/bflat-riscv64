@@ -3,105 +3,195 @@
 [![Build RISC-V64](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml/badge.svg)](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
 [![ZK Tests](https://zk-testing.nethermind.dev/api/v2/projects/1/badge)](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1)
 
-Nethermind's Bflat is a fork of C# NativeAOT compiler originally developed by [MichalStrehovsky](https://github.com/MichalStrehovsky).
+Nethermind's Bflat turns C# into fully static RISC-V64 binaries that run
+inside zkVMs. It is a fork of [bflat](https://github.com/bflattened/bflat) by
+[MichalStrehovsky](https://github.com/MichalStrehovsky), and it is used to
+build [StatelessExecutor](https://github.com/NethermindEth/nethermind) for
+RISC-V64.
 
-The main feature of Nethermind's Bflat is that it addssupport for RISC-V64 fully static binaries. It is used for building [StatelessExecutor](https://github.com/NethermindEth/nethermind) on RISC-V64.
+Bflat is a **compiler driver**, not a compiler: it contains no code generator
+of its own. What it does is drive Microsoft's toolchain end to end and adapt
+the result to a target that toolchain does not know about:
 
+| Stage | Who does the work | What Bflat adds |
+|-------|-------------------|-----------------|
+| C# → IL | Roslyn (`Microsoft.CodeAnalysis.CSharp`) | in-process invocation, no project system |
+| IL → native | Microsoft's ILCompiler (NativeAOT) | zkVM substitutions and C# snippets, target/ABI selection |
+| link | lld | module injection, `--wrap` redirection, linker scripts |
+| post-link | — | ELF postprocessing for the zkVM loader |
+
+## Design principle: stock .NET, no patches
+
+**The main aim is to keep .NET free of patches.** Every adaptation that a
+zkVM target needs is applied *around* the runtime rather than inside it, so
+the toolchain tracks upstream .NET instead of forking it. Concretely, an
+adaptation belongs to the earliest of these layers that can express it:
+
+1. **ILC stage — substitutions and snippets.** Managed method bodies are
+   replaced through an ILLink substitutions file
+   (`modules/zisk_subst/zisk.substitutions.xml`) and whole-body C# snippets
+   (`zisk.snippets.cs`) compiled against the guest's own reference set. This
+   is how floating point is eliminated from CoreLib paths that would
+   otherwise emit F/D instructions on an FPU-less target.
+2. **Link stage — modules and `--wrap`.** Native objects are injected into
+   the link and existing symbols are redirected to them (see
+   [Modules](#modules)). Nothing in the runtime source changes; the linker
+   simply resolves a call somewhere else.
+3. **Post-link — ELF postprocessing.** Exception-handling data is stripped
+   and section attributes are fixed up for the Zisk loader.
+
+What remains inside .NET is deliberately small and tracked. The
+[runtime repository](https://github.com/NethermindEth/dotnet-riscv) is moving
+from an open-ended patch queue to a per-version *fixup* set organised in
+profiles: `minimal` carries only correctness fixes for riscv64 code
+generation — the kind that belongs upstream — and an optional `perf` profile
+adds riscv64 code-quality fixups on top. The minimal profile is currently
+four fixups for .NET 10 and five for .NET 11. Anything that can move out of
+that set into one of the three layers above should.
 
 ## Motivation
 
-[Original bflat](https://github.com/bflattened/bflat) builds only dynamically linked binaries. In our fork, we aim to build fully native, fully static binaries for RISC-V64 without a single dependency, even on operating system. But it is still possible to run compiled binaries in user-mode QEMU or in the native RISC-V64 Linux.
-
-However, the main mode is running compiled binaries inside zkVMs.
+[Original bflat](https://github.com/bflattened/bflat) builds only dynamically
+linked binaries. This fork produces fully static ones with no dependency on a
+host operating system at all — which is what a zkVM guest has to be. The same
+binaries also run under user-mode QEMU or on native RISC-V64 Linux, which is
+what makes them debuggable.
 
 ## Supported zkVMs
 
-Currently, we support two main flavours. 
+Two flavours, selected by `--libc`:
 
- - **riscv64** + [zisk](https://github.com/0xPolygonHermez/zisk). These binaries can be run natively inside Zisk. For that, please invoke bflat with `--os linux`, `--libc zisk`.
- - **riscv64** + **zisk_sim**. These binaries can be run in user-mode QEMU or in the native RISC-V64 Linux, however, they carry almost all modules and workaround used for Zisk except, of course, support for **precompiles**. Please invoke bflat with `--os linux`, `--libc zisk_sim`.
+- **riscv64 + [zisk](https://github.com/0xPolygonHermez/zisk)** — runs natively
+  inside Zisk. Invoke with `--os linux --arch riscv64 --libc zisk`.
+- **riscv64 + zisk_sim** — runs under user-mode QEMU or native RISC-V64 Linux.
+  Carries almost every module and adaptation Zisk needs, except support for
+  **precompiles**. Invoke with `--os linux --arch riscv64 --libc zisk_sim`.
+
+Bflat itself builds against .NET 10 or .NET 11; see
+[BUILDING.md](BUILDING.md) for the version and variant matrix.
 
 ## Design choices
 
-### NB
+### Target ISA
 
-zkVMs offer a limited subset of instructions. They typically don't even provide full riscv64 computing environment, so often they cannot run Linux (although, some may support it). Still, the agreed target doesn't include compressed instruction and floating point support. This is a significant limitation that drives our design choices.
+zkVMs offer a limited subset of instructions. They typically do not provide a
+full riscv64 computing environment, so most cannot run Linux. The agreed
+target excludes compressed instructions and floating point — a limitation
+that drives everything below.
 
-### Compiler and ABI
+### Toolchain and ABI
 
-Typical Linux riscv64 toolchain based on GCC with ABI limitation is used. Note that we use lp64d ABI. This is not typical as zkVMs don't support floating point computations, however, this enhances compatibility with existing toolchains and libraries.
+A typical GCC-based Linux riscv64 cross toolchain is used, with the lp64d
+ABI. That choice is deliberate and may look surprising: zkVMs cannot execute
+floating point, yet lp64d maximises compatibility with existing toolchains
+and prebuilt libraries. Floating point is removed by construction (see the
+`nofp` module and the ILC substitutions) rather than by ABI.
 
 ### Runtime
 
-bflat uses a [custom runtime](https://github.com/NethermindEth/dotnet-riscv) based on musl. There are [many patches](https://github.com/NethermindEth/dotnet-riscv/tree/main/patches/bflat-runtime) that help get rid of instructions and dependencies that are not supported in zkVMs. Please refer to instructions in the runtime repository for more information how to build it.
-
-The built runtime is put as a release there and downloaded automatically by the bflat build process.
+Bflat uses a [custom runtime build](https://github.com/NethermindEth/dotnet-riscv)
+based on musl, produced from the upstream .NET VMR with the small fixup set
+described above. The build is published as a release and downloaded
+automatically by the Bflat build; see the runtime repository for how to
+produce one.
 
 ### Operating system
 
-We use Linux as the target operating system. The main reason is that Linux has the vast number of libraries, and skipping all of them, or even just framing them as alien libraries, is quite meaningless. Instead, we rely on the standard Linux toolchain and libraries, yet we base out code on [musl](https://git.musl-libc.org/cgit/musl) instead of glibc and we phase out significant number of libraries through introduction of main function wrappers.
+Linux is the target operating system. The reason is pragmatic: Linux has an
+enormous library ecosystem, and treating all of it as alien would throw away
+more than it buys. So the standard Linux toolchain and libraries are used,
+based on [musl](https://git.musl-libc.org/cgit/musl) instead of glibc, with a
+significant number of libraries phased out through entry-point wrappers.
 
-The distribution of our choice is Alpine Linux. Please refer to our [Alpine Linux repository](https://github.com/NethermindEth/riscv-alpine-build) for more information on how to build and use it.
+The distribution of choice is Alpine Linux; see the
+[Alpine Linux repository](https://github.com/NethermindEth/riscv-alpine-build)
+for how to build and use it.
 
-### Patches
+### Modules
 
-We decided not to replace individual modules altogether, but rather patch them at link-time. This allows us to keep the original source code intact and only modify the build process, resulting in a smaller and more efficient build process.
-
-#### Modules
-We provide the following modules:
+A module is a native object (plus optional linker script and parameters)
+injected into the guest link, with existing symbols redirected to it via
+`--wrap`. Modules are selected automatically from the target `libc`, `arch`
+and `os`.
 
 | Module | Description |
 |--------|-------------|
-| gs_cookie | Pin the stack-cookie symbol to a constant (no entropy/page protection in a zkVM) |
-| nofp   | Remove floating point functions if they exist |
-| pal    | Replace operating system calls with no-op stubs |
-| rhp    | Patch internal dotnet functions for more compatibility |
-| rhp_native | Several assembly-based patches to riscv64 functions |
-| rng_stupid | Simple implementation of random number generator |
+| gs_cookie | Pins the stack-cookie symbol to a constant (a zkVM has no entropy and no page protection) |
+| nofp | Traps soft-float builtins and the libm surface, so stray floating point fails loudly instead of returning garbage |
+| pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and an FP-free `vfprintf` |
+| rhp | Link-time replacements for internal .NET runtime functions (write barriers, fail-fast, FP-carrying collection helpers) |
+| rhp_native | Assembly replacements for riscv64 runtime helpers (GC reference-assignment barriers) |
+| rng_stupid | Deterministic pseudo-random generator — a zkVM guest must be reproducible |
 | rust_sys | Trivial Rust compatibility layer |
-| security-stub | Stubs for security-related functions in .NET runtime |
+| security-stub | Stubs for the GSSAPI surface of the .NET runtime |
 | stdcppshim | Replacements for C++ allocators |
-| tls | Simple TLS implementation not relying on ELF binary format |
+| tls | Simple TLS implementation that does not rely on the ELF format |
 | ubootstrap | Bootstrap re-implementation for riscv64 |
-| ugc-zero | Module acting as a wrapper for Garbage Collection |
-| zkvm_zisk | Entrypoint and linker scripts for Zisk |
-| zkvm_zisk_sim | Entrypoint and linker scripts for Zisk simulator |
+| ugc-zero | Wrapper module for garbage collection |
+| zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
+| zkvm_zisk | Entry point, snapshot-restore trampoline and linker script for Zisk |
+| zkvm_zisk_sim | Entry point and linker script for the Zisk simulator |
 
-These modules are loaded automatically based on target `libc`, `arch` and `os`.
+Every function in the C modules carries a Frama-C (ACSL) contract, and the
+C, C++ and assembly modules are covered by unit tests that execute on the
+real ISA under qemu. The allocator is additionally fuzzed, and its bounds
+properties are machine-checked with CBMC. See [BUILDING.md](BUILDING.md).
+(`ugc-zero` is prebuilt elsewhere and is tested in its own repository.)
 
 ### Postprocessing
 
-Zisk linking includes additional postprocessing steps to prepare the final binary — for example, removing EH (exception-handling) information and fixing up section attributes for the Zisk loader.
+Zisk linking includes additional postprocessing to prepare the final binary —
+for example removing exception-handling information and fixing up section
+attributes for the Zisk loader.
 
- ### External libraries
- 
- Bflat is able to link against NuGet packages, for example, [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos). This is quite useful for integrating bflat with existing .NET projects.
- 
- These packages have to be reflected in the bflat command line using `--extlib <path>:<version>` parameter, where `<path>` can be either a link to GitHub releases (in that case, bflat will look for the `nupkg` file among attachments), link to nupkg itself, or a local path to the nupkg file.
- 
- All NuGet packages have to have `*.bflat.manifest` files in their zip root:
- 
- ```json
- {
-   "name": "libziskos",
-   "package_version": "1.0.0",
-   "builds": [
-     {
-       "arch": "riscv64",
-       "os": "linux",
-       "libc": "zisk",
-       "static_lib": "runtimes/linux-riscv64/native/libziskos.a",
-       "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",
-       "dotnet_assemblyname": "Nethermind.ZiskBindings"
-     }
-   ]
- }
- ```
- The matching is done by the content of `builds` array (`arch`, `os`, `libc` must match target platform in bflat). If the match is found, the `static_lib` is linked to the target binary, and the `dotnet_lib` is compiled and added to the target binary. Their paths are relative to bflat manifest path.
- 
+### External libraries
+
+Bflat can link against NuGet packages, for example
+[bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos). This is
+how existing .NET projects integrate with Bflat.
+
+Packages are named on the command line with
+`--extlib <path>:<version>`, where `<path>` is a link to a GitHub release (in
+which case Bflat looks for the `nupkg` among the attachments), a link to the
+nupkg itself, or a local path to it.
+
+Every such package must carry a `*.bflat.manifest` file in its zip root:
+
+```json
+{
+  "name": "libziskos",
+  "package_version": "1.0.0",
+  "builds": [
+    {
+      "arch": "riscv64",
+      "os": "linux",
+      "libc": "zisk",
+      "static_lib": "runtimes/linux-riscv64/native/libziskos.a",
+      "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",
+      "dotnet_assemblyname": "Nethermind.ZiskBindings"
+    }
+  ]
+}
+```
+
+Matching is driven by the `builds` array: `arch`, `os` and `libc` must match
+the target platform. On a match, `static_lib` is linked into the binary and
+`dotnet_lib` is compiled into it. Both paths are relative to the manifest.
+
+## Building
+
+See [BUILDING.md](BUILDING.md) for the build, the .NET version and variant
+matrix, and the test, fuzzing and verification workflows.
+
+Note that `compiler` appears in the names of published artifacts
+(`bflat.compiler.*.nupkg`, `bflat-compiler-native-*.zip`) and in the MSBuild
+targets that fetch them. Those are historical artifact names on the release
+side, not a claim about what this repository builds.
+
 ## License
 
-Nethermind bflat follows original GNU Affero GPL v3 license that was used for the original bflat.
+Nethermind Bflat follows the original GNU Affero GPL v3 license used by the
+original bflat.
 
 ## Contributing
 
