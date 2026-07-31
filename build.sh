@@ -94,7 +94,10 @@ function build_modules()
 					fi
 					if [ -f module.S ] ; then
 						# Compile module as assembly (no LTO — bitcode doesn't apply)
-						riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 module.S -o module.o
+						# --defsym BFLAT_DOTNET: some .S bodies are contract-versioned
+						# against the target .NET runtime (e.g. the ref-assign write
+						# barrier's t3 post-increment, dropped in .NET 11).
+						riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 --defsym BFLAT_DOTNET=${dotnet_version} module.S -o module.o
 						on_fail $? "Failed to compile module $mod (Assembly)"
 					fi
 					if [ -f module.cpp ] ; then

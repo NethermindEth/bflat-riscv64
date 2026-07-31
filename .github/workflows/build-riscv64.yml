@@ -180,8 +180,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Build modules (riscv64)
-        run: ./build.sh modules riscv64
+      - name: Build modules (riscv64, net${{ matrix.dotnet }})
+        # dotnet version matters: some native modules are contract-versioned
+        # against the runtime (e.g. the ref-assign write barrier).
+        run: ./build.sh modules riscv64 ${{ matrix.variant }} ${{ matrix.dotnet }}
 
       - name: Build bflat (riscv64, ${{ matrix.variant }}, net${{ matrix.dotnet }})
         run: ./build.sh bflat riscv64 ${{ matrix.variant }} ${{ matrix.dotnet }}
