@@ -21,3 +21,12 @@ _site
 src/bflat/modules/tests/out/
 src/bflat/modules/tests/fuzz/out/
 crash-*
+
+# libFuzzer slow-unit reports
+slow-unit-*
+timeout-*
+leak-*
+oom-*
+
+/src/bflat/modules/tests/out
+
