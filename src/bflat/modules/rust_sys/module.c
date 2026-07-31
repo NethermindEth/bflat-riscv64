@@ -10,6 +10,23 @@
 
 void *__libc_malloc_impl(unsigned long n);
 
+/*@ // Rust's GlobalAlloc contract: align is a power of two. The heap
+    // footprint (bump pointer + size header) belongs to pal's allocator and
+    // is not re-declared here, hence no assigns clause.
+    requires bytes >= 0;
+    requires align <= 8 || (align & (align - 1)) == 0;
+
+    behavior small_align:
+      assumes align <= 8;
+      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+
+    behavior big_align:
+      assumes align > 8;
+      ensures \result == \null || (uintptr_t)\result % align == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void *__wrap_sys_alloc_aligned(int bytes, int align) {
     unsigned long n = (unsigned long)bytes;
     unsigned long a = (unsigned long)align;

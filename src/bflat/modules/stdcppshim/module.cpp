@@ -12,6 +12,13 @@
  * throw"), but the zkVM build has no exceptions. Returning malloc's null on
  * OOM would defer the failure to a confusing null-deref inside a constructor;
  * fail loudly instead, consistent with the other allocators. */
+/* ACSL++ contracts (Frama-Clang dialect; plain Frama-C does not parse C++).
+ * The C++ "non-null or throw" guarantee is met by never returning at all on
+ * OOM, so a successful return implies a usable pointer. */
+
+/*@ ensures \result != \null;
+    exits \exit_status == 255;
+*/
 void* operator new(size_t n)
 {
     void *p = malloc(n);
@@ -20,6 +27,9 @@ void* operator new(size_t n)
     return p;
 }
 
+/*@ ensures \result != \null;
+    exits \exit_status == 255;
+*/
 void* operator new[](size_t n)
 {
     void *p = malloc(n);

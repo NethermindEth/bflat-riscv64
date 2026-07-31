@@ -43,6 +43,22 @@ extern int __set_thread_area(void *tp);
  * Can be called multiple times safely.
  * This function is designed to be safe to call from any context.
  */
+/*@ // Idempotent lazy init of the single static TLS block. The lengths of
+    // .tdata/.tbss arrive as link-time symbol ADDRESSES (__tdata_len,
+    // __tbss_len), so their numeric values cannot be constrained here; the
+    // linker script guarantees tdata+tbss fits HEAP_SIZE - PTHREAD_SIZE.
+    assigns tls_initialized, tp, tls_base,
+            tls_storage_static[0 .. (100 * 1024) - 1];
+    ensures tls_initialized == 1;
+    ensures tp == &tls_storage_static[0];
+    ensures tls_base == &tls_storage_static[200];
+
+    behavior already_initialized:
+      assumes tls_initialized != 0;
+      assigns \nothing;
+
+    complete behaviors;
+*/
 extern
 void
 ensure_tls_initialized(void)
@@ -78,6 +94,13 @@ ensure_tls_initialized(void)
     tls_initialized = 1;
 }
 
+/*@ // Installs p + PTHREAD_SIZE as the thread pointer (musl keeps pthread
+    // data below tp). __set_thread_area only writes the tp register, which
+    // has no ACSL-visible footprint.
+    requires p != \null;
+    assigns \nothing;
+    ensures \result == 0;
+*/
 uint8_t
 __wrap___init_tp(void *p)
 {
@@ -85,6 +108,13 @@ __wrap___init_tp(void *p)
     return 0;
 }
 
+/*@ // There is exactly one thread, so "copying" TLS just hands out the
+    // shared static block; mem is ignored.
+    assigns tls_initialized, tp, tls_base,
+            tls_storage_static[0 .. (100 * 1024) - 1];
+    ensures tls_initialized == 1;
+    ensures \result == tp == &tls_storage_static[0];
+*/
 uint8_t *
 __wrap___copy_tls(uint8_t *mem)
 {
@@ -93,6 +123,12 @@ __wrap___copy_tls(uint8_t *mem)
     return tp;
 }
 
+/*@ // Full startup path: initialise the block and install the thread
+    // pointer; the auxv argument is unused.
+    assigns tls_initialized, tp, tls_base,
+            tls_storage_static[0 .. (100 * 1024) - 1];
+    ensures tls_initialized == 1;
+*/
 void
 __wrap___init_tls(size_t *aux)
 {
@@ -100,6 +136,25 @@ __wrap___init_tls(size_t *aux)
     __wrap___init_tp(__wrap___copy_tls(tp));
 }
 
+/*@ // v = {module id, offset}; with one module and one thread the module
+    // id is irrelevant and the answer is always tls_base + offset. A null
+    // v yields the TLS base itself (non-standard convenience used by the
+    // runtime's early probes).
+    requires v == \null || \valid_read(v + (0 .. 1));
+    assigns tls_initialized, tp, tls_base,
+            tls_storage_static[0 .. (100 * 1024) - 1];
+
+    behavior indexed:
+      assumes v != \null;
+      ensures \result == (void *)(tls_base + v[1]);
+
+    behavior base:
+      assumes v == \null;
+      ensures \result == (void *)tls_base;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void *
 __wrap___tls_get_addr(size_t *v)
 {
