@@ -539,7 +539,7 @@ class CustomILProvider : ILProvider
                     (byte)ILOpcode.ret
                 },
                 Array.Empty<LocalVariableDefinition>(),
-                new object[] { }
+                Array.Empty<object>()
             );
         }
 
@@ -807,10 +807,10 @@ internal class BuildCommand : CommandBase
         foreach (string rawLine in File.ReadAllLines(paramsPath))
         {
             string line = rawLine.Trim();
-            if (line.Length == 0 || line.StartsWith("#"))
+            if (line.Length == 0 || line.StartsWith('#'))
                 continue;
 
-            if (line.StartsWith("-"))
+            if (line.StartsWith('-'))
             {
                 Flush();
                 if (currentSection != section)
@@ -959,8 +959,11 @@ internal class BuildCommand : CommandBase
             if (size > 0x34)
             {
                 byte[] ident = new byte[4];
-                fs.Read(ident, 0, 4);
-                if (ident[0] == 0x7f && ident[1] == (byte)'E' && ident[2] == (byte)'L' && ident[3] == (byte)'F')
+                // A short read would leave `ident` holding stale bytes and the
+                // magic test could then misfire on a truncated member; treat
+                // "fewer than 4 bytes available" as "not an ELF member".
+                if (fs.ReadAtLeast(ident, 4, throwOnEndOfStream: false) == 4 &&
+                    ident[0] == 0x7f && ident[1] == (byte)'E' && ident[2] == (byte)'L' && ident[3] == (byte)'F')
                 {
                     fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
                     int b = fs.ReadByte();
@@ -1860,21 +1863,26 @@ internal class BuildCommand : CommandBase
         foreach (string substitutionFile in moduleSubstitutionFiles)
         {
             using FileStream mfs = File.OpenRead(substitutionFile);
+            using XmlReader mreader = XmlReader.Create(mfs);
             substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
-                logger, typeSystemContext, XmlReader.Create(mfs),
+                logger, typeSystemContext, mreader,
                 substitutionFile, featureSwitches));
         }
         foreach (string substitutionFilePath in result.GetValueForOption(SubstitutionFilePathsOption) ?? Array.Empty<string>())
         {
             using FileStream fs = File.OpenRead(substitutionFilePath);
-            substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
-                logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+            using (XmlReader bodyReader = XmlReader.Create(fs))
+            {
+                substitutions.AppendFrom(BodySubstitutionsParser.GetSubstitutions(
+                    logger, typeSystemContext, bodyReader, substitutionFilePath, featureSwitches));
+            }
 
             fs.Seek(0, SeekOrigin.Begin);
 
+            using XmlReader resourceReader = XmlReader.Create(fs);
             resourceBlocks = ManifestResourceBlockingPolicy.UnionBlockings(resourceBlocks,
                 ManifestResourceBlockingPolicy.SubstitutionsReader.GetSubstitutions(
-                    logger, typeSystemContext, XmlReader.Create(fs), substitutionFilePath, featureSwitches));
+                    logger, typeSystemContext, resourceReader, substitutionFilePath, featureSwitches));
         }
 
         SubstitutionProvider substitutionProvider = new SubstitutionProvider(logger, featureSwitches, substitutions);
@@ -2692,9 +2700,9 @@ internal class BuildCommand : CommandBase
             PerfWatch objCopyWatch = new PerfWatch("Objcopy");
             exitCode = RunCommand(objcopy, $"--only-keep-debug \"{outputFilePath}\" \"{outputFilePath}.dwo\"", printCommands);
             if (exitCode != 0) return exitCode;
-            RunCommand(objcopy, $"--strip-debug --strip-unneeded \"{outputFilePath}\"", printCommands);
+            exitCode = RunCommand(objcopy, $"--strip-debug --strip-unneeded \"{outputFilePath}\"", printCommands);
             if (exitCode != 0) return exitCode;
-            RunCommand(objcopy, $"--add-gnu-debuglink=\"{outputFilePath}.dwo\" \"{outputFilePath}\"", printCommands);
+            exitCode = RunCommand(objcopy, $"--add-gnu-debuglink=\"{outputFilePath}.dwo\" \"{outputFilePath}\"", printCommands);
             if (exitCode != 0) return exitCode;
             objCopyWatch.Complete();
         }
