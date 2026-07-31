@@ -15,6 +15,13 @@
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
 
+/*@ // Only three globalization/buffer-pool switches exist in the guest's
+    // environment; everything else reads as unset. The returned "1" is a
+    // string literal, valid forever.
+    requires valid_read_string(var);
+    assigns \nothing;
+    ensures \result == \null || valid_read_string(\result);
+*/
 extern char *
 __wrap_getenv(char *var)
 {
@@ -28,6 +35,13 @@ __wrap_getenv(char *var)
     return 0;
 }
 
+/*@ // The guest's cwd is always "/". __size is trusted to hold it.
+    requires __size >= 2;
+    requires \valid(__buf + (0 .. 1));
+    assigns __buf[0 .. 1];
+    ensures \result == __buf;
+    ensures __buf[0] == '/' && __buf[1] == '\0';
+*/
 char *
 __wrap_getcwd(char *__buf, int __size)
 {
@@ -35,24 +49,42 @@ __wrap_getcwd(char *__buf, int __size)
     return __buf;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 1;
+*/
 int
 __wrap_getpid()
 {
     return 1;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 1;
+*/
 int
 __wrap_getegid()
 {
     return 1;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 1;
+*/
 int
 __wrap_geteuid()
 {
     return 1;
 }
 
+/*@ // Single-CPU guest: only bit 0 (CPU 0) of the affinity mask is set.
+    requires cpusetsize >= 0;
+    requires \valid((unsigned char *)mask + (0 .. cpusetsize - 1));
+    assigns ((unsigned char *)mask)[0 .. cpusetsize - 1];
+    ensures \result == 0;
+    ensures cpusetsize > 0 ==> ((unsigned char *)mask)[0] == 0x01;
+    ensures \forall integer i; 1 <= i < cpusetsize ==>
+        ((unsigned char *)mask)[i] == 0;
+*/
 int
 __wrap_sched_getaffinity(int pid, int cpusetsize, void *mask)
 {
@@ -66,12 +98,19 @@ __wrap_sched_getaffinity(int pid, int cpusetsize, void *mask)
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_sched_getcpu(void)
 {
     return 0;
 }
 
+/*@ // No file system in the guest: every open fails.
+    assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap_open(const char *path, int flags, int mode)
 {
@@ -87,6 +126,10 @@ __wrap_open(const char *path, int flags, int mode)
 extern uint8_t *g_zk_bump_ptr;
 #define mem g_zk_bump_ptr
 
+/*@ assigns \nothing;
+    ensures \result % 8 == 0;
+    ensures \result <= x < \result + 8;
+*/
 static inline uintptr_t
 align_down_8_uintptr(uintptr_t x)
 {
@@ -99,12 +142,28 @@ align_down_8_uintptr(uintptr_t x)
  * loading and dispatch-cell resolution have happened. Caller is responsible
  * for ensuring no live reference points into the released region.
  */
+/*@ assigns \nothing;
+    ensures \result == (void *)g_zk_bump_ptr;
+*/
 void *
 zk_heap_mark(void)
 {
     return (void *)mem;
 }
 
+/*@ assigns g_zk_bump_ptr;
+
+    behavior restore:
+      assumes m != \null;
+      ensures g_zk_bump_ptr == (uint8_t *)m;
+
+    behavior noop:
+      assumes m == \null;
+      ensures g_zk_bump_ptr == \old(g_zk_bump_ptr);
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void
 zk_heap_reset(void *m)
 {
@@ -112,6 +171,25 @@ zk_heap_reset(void *m)
         mem = (uint8_t *)m;
 }
 
+/*@ // Downward bump allocation. On success the returned block is 8-byte
+    // aligned, lies inside [_kernel_heap_bottom, _kernel_heap_top) and is
+    // preceded by an 8-byte size header; the bump pointer moves down past
+    // header + payload and never back up. On exhaustion the result is NULL
+    // and the bump pointer keeps its (possibly lazily initialised) value.
+    // The header store is the only memory write besides the bump pointer;
+    // it always lands inside the heap window.
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures \result == \null ||
+        ((uintptr_t)\result % 8 == 0 &&
+         (uint8_t *)\result >= (uint8_t *)_kernel_heap_bottom + 8 &&
+         (uint8_t *)\result + n <= (uint8_t *)\old(
+             g_zk_bump_ptr == \null ? (uint8_t *)_kernel_heap_top
+                                    : g_zk_bump_ptr));
+    ensures \result != \null ==>
+        g_zk_bump_ptr == (uint8_t *)\result - 8;
+*/
 void *
 __wrap___libc_malloc_impl(unsigned long n)
 {
@@ -141,12 +219,39 @@ __wrap___libc_malloc_impl(unsigned long n)
  * slow path ultimately lands in this file's wrapped malloc, so all managed
  * memory still comes from the same downward bump heap. */
 
+/*@ // The bump heap never reuses memory: free is a no-op by design.
+    assigns \nothing;
+*/
 void
 __wrap___libc_free(void *p)
 {
     (void)p;
 }
 
+/*@ // Grow-only realloc over the bump heap. A non-null p must have been
+    // produced by __wrap___libc_malloc_impl, so its 8-byte size header at
+    // p-8 is readable. Shrinking or fitting requests return p unchanged;
+    // growth allocates a fresh block and copies the old payload.
+    requires p == \null || \valid_read((uint64_t *)((uint8_t *)p - 8));
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+
+    behavior fresh:
+      assumes p == \null;
+      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+
+    behavior fits:
+      assumes p != \null && *((uint64_t *)((uint8_t *)p - 8)) >= n;
+      ensures \result == p;
+
+    behavior grow:
+      assumes p != \null && *((uint64_t *)((uint8_t *)p - 8)) < n;
+      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void *
 __wrap___libc_realloc(void *p, unsigned long n)
 {
@@ -179,6 +284,23 @@ __wrap___libc_realloc(void *p, unsigned long n)
 /*
  * Optimized calloc
  */
+/*@ // Zeroing is free: zkVM RAM is zero at boot and the heap never reuses
+    // memory, so every block from the bump allocator is already all-zero.
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+
+    behavior overflow:
+      assumes nmemb != 0 && nmemb * size > 0xFFFFFFFFFFFFFFFF;
+      ensures \result == \null;
+
+    behavior ok:
+      assumes nmemb == 0 || nmemb * size <= 0xFFFFFFFFFFFFFFFF;
+      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void *
 __wrap_calloc(unsigned long nmemb, unsigned long size)
 {
@@ -191,12 +313,20 @@ __wrap_calloc(unsigned long nmemb, unsigned long size)
     return __wrap___libc_malloc_impl((unsigned long)total);
 }
 
+/*@ // Single-threaded guest: thread creation "succeeds" without creating
+    // anything. Callers only check the status.
+    assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_pthread_create(void *, void *, void *, void *)
 {
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_pthread_sigmask(int how, void *set, void *oldset)
 {
@@ -211,6 +341,15 @@ __wrap_pthread_sigmask(int how, void *set, void *oldset)
  * for anything meaningful in Zisk-targeted binaries, so report a synthetic
  * 8 MiB window anchored at the current frame.
  */
+/*@ // Synthetic 8 MiB stack window anchored at the caller's frame: base is
+    // the frame address rounded up to a page, limit is 8 MiB below it.
+    requires \valid(stack_base) && \valid(stack_limit);
+    assigns *stack_base, *stack_limit;
+    ensures \result == 1;
+    ensures (uintptr_t)*stack_base % 4096 == 0;
+    ensures (uintptr_t)*stack_limit ==
+        (uintptr_t)*stack_base - 8 * 1024 * 1024;
+*/
 int
 __wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **stack_base, void **stack_limit)
 {
@@ -221,24 +360,43 @@ __wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **stack_base, void **stack_limit)
     return 1;
 }
 
+/*@ // No clock in the deterministic guest; callers see a failed read and
+    // fall back to their zero-time paths.
+    assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap___clock_gettime(int clk, void *ts)
 {
     return -1;
 }
 
+/*@ assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap_clock_gettime(int clk, void *ts)
 {
     return -1;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap___malloc_allzerop(void *)
 {
     return 0;
 }
 
+/*@ // Anonymous mappings degrade to bump allocations; every other mmap
+    // caller is stubbed out elsewhere. Hint address, protection and flags
+    // are ignored.
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures \result == \null || (uintptr_t)\result % 8 == 0;
+*/
 void *
 __wrap_mmap(void *addr, int length, int prot, int flags,
             int fd, int offset)
@@ -246,6 +404,9 @@ __wrap_mmap(void *addr, int length, int prot, int flags,
     return __wrap___libc_malloc_impl(length);
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_munmap(void *addr, int length)
 {
@@ -253,42 +414,67 @@ __wrap_munmap(void *addr, int length)
 }
 
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_mlock(const void *addr, int len)
 {
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_munlock(const void *addr, int len)
 {
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_mlockall(int flags)
 {
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_munlockall(void)
 {
     return 0;
 }
 
+/*@ // Nothing to yield to on a single-threaded guest.
+    assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_sched_yield(void)
 {
     return 0;
 }
 
+/*@ // No signals are ever delivered; oldact is deliberately not filled in
+    // (no caller in the runtime reads it back).
+    assigns \nothing;
+    ensures \result == 0;
+*/
 int
 __wrap_sigaction(int signum, void *act, void *oldact)
 {
     return 0;
 };
 
+/*@ // SIG_DFL (null) is reported as the previous handler.
+    assigns \nothing;
+    ensures \result == \null;
+*/
 void *
 __wrap_signal(int signum, void *handler)
 {
@@ -313,6 +499,13 @@ __wrap_signal(int signum, void *handler)
  */
 extern int fputc(int c, FILE *stream);
 
+/*@ // Byte-exact emission via fputc. The stream footprint cannot be named
+    // here (FILE is opaque in musl's public headers), so no assigns clause
+    // is stated; the function writes nothing except through fputc.
+    requires n >= 0;
+    requires \valid_read(s + (0 .. n - 1));
+    ensures \result == n;
+*/
 static int
 zkvm_emit(FILE *f, const char *s, int n)
 {
@@ -322,6 +515,15 @@ zkvm_emit(FILE *f, const char *s, int n)
     return n;
 }
 
+/*@ // Shallow contract: full printf semantics is out of scope for ACSL
+    // (variadic arguments and the opaque FILE stream). The properties that
+    // matter to callers: the format string is only read, the character
+    // count is non-negative, and no floating-point value is ever touched
+    // (float conversions consume an integer register slot and emit
+    // "<float>").
+    requires valid_read_string(fmt);
+    ensures \result >= 0;
+*/
 int
 __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 {
@@ -430,6 +632,13 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 
 extern long __real_syscall(long number, ...);
 
+/*@ // riscv_flush_icache (0x11b / 283) is a no-op on the zkVM (no icache);
+    // everything else forwards to musl's real syscall with six argument
+    // slots. The forwarded effects cannot be specified here.
+    behavior flush_icache:
+      assumes number == 0x11b;
+      ensures \result == 0;
+*/
 long
 __wrap_syscall(long number, ...)
 {
@@ -460,6 +669,13 @@ __wrap_syscall(long number, ...)
  * exit()/_Exit() issue exit_group (94) instead, which ZisK does NOT recognise,
  * so the emulation stops "not completed". Override musl's terminators (via
  * --wrap=exit/_Exit/abort) to emit the real ZisK exit ecall. */
+/*@ // Terminates the guest with the ZisK exit ecall (a7 == 93). The ecall
+    // ends the program at the emulator level - invisible to ACSL, hence
+    // ensures \false rather than an exits clause: this function never
+    // returns and never reaches C's exit().
+    assigns \nothing;
+    ensures \false;
+*/
 __attribute__((noreturn))
 static void
 zkvm_raw_exit(long code)
@@ -470,6 +686,9 @@ zkvm_raw_exit(long code)
     for (;;) { } /* ecall ends the program; loop is just in case */
 }
 
+/*@ assigns \nothing;
+    ensures \false;
+*/
 __attribute__((noreturn))
 void
 __wrap_exit(int code)
@@ -477,6 +696,9 @@ __wrap_exit(int code)
     zkvm_raw_exit(code);
 }
 
+/*@ assigns \nothing;
+    ensures \false;
+*/
 __attribute__((noreturn))
 void
 __wrap__Exit(int code)
@@ -484,6 +706,9 @@ __wrap__Exit(int code)
     zkvm_raw_exit(code);
 }
 
+/*@ assigns \nothing;
+    ensures \false;
+*/
 __attribute__((noreturn))
 void
 __wrap_abort(void)
@@ -491,17 +716,51 @@ __wrap_abort(void)
     zkvm_raw_exit(134); /* 128 + SIGABRT, conventional abort exit code */
 }
 
+/*@ // uGC has no bridge; the runtime's bridge paths stay dormant.
+    assigns \nothing;
+    ensures \result == 0;
+*/
 int RhIsGCBridgeActive(void)
 {
     return 0;
 }
 
+/*@ assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap___stdio_write(int fd, const void *buf, int count)
 {
     return -1;
 }
 
+/*@ assigns \nothing;
+
+    behavior child_max:
+      assumes n == 1;
+      ensures \result == 100;
+    behavior clk_tck:
+      assumes n == 2;
+      ensures \result == 100;
+    behavior pagesize:
+      assumes n == 30;
+      ensures \result == 4096;
+    behavior nprocessors_conf:
+      assumes n == 83;
+      ensures \result == 1;
+    behavior nprocessors_onln:
+      assumes n == 84;
+      ensures \result == 1;
+    behavior phys_pages:
+      assumes n == 85;
+      ensures \result == 65536;
+    behavior other:
+      assumes n != 1 && n != 2 && n != 30 && n != 83 && n != 84 && n != 85;
+      ensures \result == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 int
 __wrap_sysconf(int n)
 {
@@ -534,6 +793,27 @@ __wrap_sysconf(int n)
  * and round the block's low address up so at least `size` bytes remain above
  * the returned pointer. free() is a no-op, so the lost prefix never matters.
  */
+/*@ // Alignments above 8 are honored by over-allocating `align` extra bytes
+    // and rounding the block start up, so at least `size` bytes remain above
+    // the returned pointer; free() is a no-op, so the lost prefix leaks by
+    // design. Callers pass power-of-two alignments (C11 aligned_alloc
+    // contract); the rounding mask is only meaningful for those.
+    requires align <= 8 || (align & (align - 1)) == 0;
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+
+    behavior small_align:
+      assumes align <= 8;
+      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+
+    behavior big_align:
+      assumes align > 8;
+      ensures \result == \null || (uintptr_t)\result % align == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 void *
 __wrap_aligned_alloc(unsigned long align, unsigned long size)
 {
@@ -551,6 +831,15 @@ __wrap_aligned_alloc(unsigned long align, unsigned long size)
     return (void *)a;
 }
 
+/*@ requires \valid(out);
+    requires align <= 8 || (align & (align - 1)) == 0;
+    assigns *out, g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures \result == 0 || \result == 12;
+    ensures \result == 0 ==> *out != \null;
+    ensures \result == 12 ==> *out == \old(*out);
+*/
 int
 __wrap_posix_memalign(void **out, unsigned long align, unsigned long size)
 {
@@ -562,12 +851,26 @@ __wrap_posix_memalign(void **out, unsigned long align, unsigned long size)
     return 0;
 }
 
+/*@ requires align <= 8 || (align & (align - 1)) == 0;
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures \result == \null ||
+        (uintptr_t)\result % (align <= 8 ? 8 : align) == 0;
+*/
 void *
 __wrap_memalign(unsigned long align, unsigned long size)
 {
     return __wrap_aligned_alloc(align, size);
 }
 
+/*@ requires align <= 8 || (align & (align - 1)) == 0;
+    assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures \result == \null ||
+        (uintptr_t)\result % (align <= 8 ? 8 : align) == 0;
+*/
 void *
 __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
 {
@@ -585,6 +888,10 @@ __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
  * (InitializeCGroup and friends), which on zisk can never open their
  * /proc//sys inputs anyway - EOF ("matched nothing") is the honest answer.
  */
+/*@ // EOF, no conversions performed, nothing consumed or written.
+    assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap_vfscanf(void *stream, const char *fmt, void *ap)
 {
@@ -594,6 +901,9 @@ __wrap_vfscanf(void *stream, const char *fmt, void *ap)
     return -1; /* EOF: no conversions performed */
 }
 
+/*@ assigns \nothing;
+    ensures \result == -1;
+*/
 int
 __wrap___isoc99_vfscanf(void *stream, const char *fmt, void *ap)
 {
@@ -602,6 +912,11 @@ __wrap___isoc99_vfscanf(void *stream, const char *fmt, void *ap)
 
 /* strtod-family backend; only linked via wrappers that never run on zisk.
  * Returns 0 ("no number parsed"); soft-float long double, no F/D regs. */
+/*@ // "No number parsed". The zero is a soft-float long double built in
+    // integer registers - no F/D instructions are emitted for it.
+    assigns \nothing;
+    ensures \result == 0;
+*/
 long double
 __wrap___floatscan(void *f, int prec, int pok)
 {

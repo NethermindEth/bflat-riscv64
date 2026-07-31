@@ -25,6 +25,13 @@
  */
 extern void exit(int status) __attribute__((noreturn));
 
+/*@ // Single abort policy for every FP stub: terminate with status 255,
+    // never return. exit() resolves to the PAL's __wrap_exit (ZisK exit
+    // ecall) in the zkVM link.
+    assigns \nothing;
+    ensures \false;
+    exits \exit_status == 255;
+*/
 __attribute__((noreturn, noinline, cold))
 static void
 nofp_trap(void)
@@ -37,7 +44,15 @@ nofp_trap(void)
  * prototype, exactly as before, and routed to nofp_trap(). The argument and
  * return registers are irrelevant: the function never returns.
  */
-#define NOFP_STUB(name) void name(void) { nofp_trap(); }
+/*
+ * The ACSL contract is embedded in the macro so every expansion carries it.
+ * NOTE: to make Frama-C see annotations inside macro bodies, preprocess with
+ * comments preserved through expansion (GCC/Clang: -CC), e.g.
+ *   frama-c -cpp-extra-args="-CC" module.c
+ */
+#define NOFP_STUB(name) \
+    /*@ assigns \nothing; ensures \false; exits \exit_status == 255; */ \
+    void name(void) { nofp_trap(); }
 
 NOFP_STUB(__extenddftf2)
 NOFP_STUB(__addtf3)
@@ -103,7 +118,10 @@ NOFP_STUB(__lesf2)
  * to a trap stub here, so the musl archive member is never extracted and a
  * stray runtime call fails loudly instead of computing garbage.
  */
-#define NOFP_WRAP_STUB(name) void __wrap_##name(void) { nofp_trap(); }
+/* Same contract-in-macro arrangement as NOFP_STUB above (needs -CC). */
+#define NOFP_WRAP_STUB(name) \
+    /*@ assigns \nothing; ensures \false; exits \exit_status == 255; */ \
+    void __wrap_##name(void) { nofp_trap(); }
 
 NOFP_WRAP_STUB(acos)
 NOFP_WRAP_STUB(acosf)
@@ -170,6 +188,11 @@ NOFP_WRAP_STUB(scalbn)
  * Diverting it keeps musl's vasprintf/fmt_fp/scalbn (hard-float F/D code)
  * out of the link entirely.
  */
+/*@ // Deliberately NOT a trap: -1 is the documented asprintf failure and
+    // the (dead) cgroup callers degrade to "no limit detected".
+    assigns \nothing;
+    ensures \result == -1;
+*/
 int __wrap_asprintf(void)
 {
     return -1;

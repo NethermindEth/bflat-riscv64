@@ -114,6 +114,15 @@ extern "C" void InitializeModules(void* osModule, void ** modules, int count,
 #define NATIVEAOT_ENTRYPOINT __managed__Main
 extern "C" int __managed__Main(int argc, char* argv[]);
 
+/* ACSL++ contract (Frama-Clang dialect; plain Frama-C does not parse C++). */
+/*@ // Registers the module and its classlib table with the NativeAOT
+    // runtime. The failure branches first store to addresses 1/2 - a
+    // deliberate fault whose address marks WHICH init step died in the
+    // zkVM trace - so -1 is only reachable if those traps somehow resume.
+    // Effects of RhInitialize/RhRegisterOSModule/InitializeModules are
+    // runtime-internal and not specifiable here.
+    ensures \result == 0 || \result == -1;
+*/
 extern "C" int
 uBootstrap_InitializeRuntime()
 {
@@ -149,6 +158,13 @@ uBootstrap_InitializeRuntime()
 }
 
 
+/*@ // Host argc/argv are ignored: the managed Main always receives the
+    // fake g_bootstrap_argc/argv ("app", single argument). Returns -1 when
+    // runtime init fails (if its fault markers resume at all); otherwise
+    // the status of __managed__Main, which cannot be constrained here.
+    requires g_bootstrap_argc == 1;
+    ensures \true;
+*/
 extern "C" int
 uBootstrap_main(int argc, char* argv[])
 {
