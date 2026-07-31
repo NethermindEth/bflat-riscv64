@@ -39,6 +39,10 @@ void *__wrap_sys_alloc_aligned(int bytes, int align) {
     if (a <= 8u)
         return __libc_malloc_impl(n);
 
+    /* n + a must not wrap (mirrors pal's aligned_alloc). */
+    if (n + a < n)
+        return 0;
+
     uintptr_t raw = (uintptr_t)__libc_malloc_impl(n + a);
     if (raw == 0)
         return 0;

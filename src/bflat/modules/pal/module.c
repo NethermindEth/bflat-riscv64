@@ -200,13 +200,21 @@ __wrap___libc_malloc_impl(unsigned long n)
         mem = (uint8_t *)_kernel_heap_top;
 
     size_t req_aligned = ((size_t)n + 7u) & ~(size_t)7u;
-    uintptr_t new_tmp = align_down_8_uintptr((uintptr_t)mem - req_aligned);
-    uintptr_t new_len = new_tmp - 8u;
 
     /* Bounds check: return NULL instead of writing below the heap and
-     * silently corrupting the caller's stack (the historic pc=0 crash). */
-    if (new_len < (uintptr_t)_kernel_heap_bottom)
+     * silently corrupting the caller's stack (the historic pc=0 crash).
+     * Compared against the remaining space, NOT via the subtracted
+     * pointer: for n larger than mem's distance to zero the subtraction
+     * would wrap past the top of the address space, sail over the old
+     * `new_len < bottom` check and put the size header on a wild address. */
+    uintptr_t avail = (uintptr_t)mem - (uintptr_t)_kernel_heap_bottom;
+    if (req_aligned < (size_t)n ||      /* n + 7 wrapped */
+        req_aligned + 8u < req_aligned || /* + header wrapped */
+        req_aligned + 8u > avail)
         return NULL;
+
+    uintptr_t new_tmp = align_down_8_uintptr((uintptr_t)mem - req_aligned);
+    uintptr_t new_len = new_tmp - 8u;
 
     mem = (uint8_t *)new_len;
     *(uint64_t *)new_len = (uint64_t)req_aligned;
@@ -822,6 +830,11 @@ __wrap_aligned_alloc(unsigned long align, unsigned long size)
 
     if (align <= 8u)
         return __wrap___libc_malloc_impl(size);
+
+    /* size + align must not wrap: a wrapped total would allocate a tiny
+     * block and hand back a pointer with fewer than `size` bytes above it. */
+    if (size + align < size)
+        return NULL;
 
     p = __wrap___libc_malloc_impl(size + align);
     if (!p)
