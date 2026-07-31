@@ -91,6 +91,26 @@ checker passes `-cpp-extra-args=-CC` for that. C++ modules (stdcppshim,
 ubootstrap) carry ACSL++ annotations as documentation - plain Frama-C does
 not parse C++ - and assembly modules are out of scope.
 
+## Module unit tests
+
+`src/bflat/modules/tests/run_tests.sh` unit-tests every function of the
+C/C++ modules. The suites are cross-compiled for riscv64 (glibc, static)
+and executed under qemu-user, so the module code runs on the real guest
+ISA - including the raw ZisK exit ecall, which qemu maps to Linux
+`__NR_exit` (both are 93 on riscv64). CI runs this as the "Module unit
+tests" job; locally you need `gcc-riscv64-linux-gnu`,
+`g++-riscv64-linux-gnu` and `qemu-user-static` (`qemu-user-hwe` on Ubuntu
+26.04):
+
+```bash
+$ ./src/bflat/modules/tests/run_tests.sh
+```
+
+On Apple silicon (Docker + Rosetta) set `TEST_SKIP_FAULTS=1`: qemu-user
+under nested emulation hangs on the designed-fault (SIGSEGV) tests instead
+of delivering the signal. nofp's stub list is generated from the module
+source at test-build time, so new stubs cannot silently miss coverage.
+
 ## Build variants
 
 The compiler can be built in two variants that differ in which runtime/blob
