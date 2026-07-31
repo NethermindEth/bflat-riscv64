@@ -9,23 +9,29 @@
  */
 /*
  * uGC has no card table and never collects, so every GC write barrier is
- * dead. These reference-assignment helpers are reduced to the bare store
- * (plus the pointer post-increment the RISC-V runtime convention expects),
+ * dead. These reference-assignment helpers are reduced to the bare store,
  * dropping the heap-bounds check and card-mark of the originals.
  * Convention: t3 = destination, t4 = value, t5 = source (byref copy).
+ *
+ * t3 IS NOT incremented for the single-assign helpers. .NET 10's riscv64
+ * WriteBarriers.S documented "On exit: t3 incremented by 8" and the JIT
+ * consumed that; .NET 11 (preview7) changed the contract to "t3 preserved"
+ * and the JIT now REUSES t3 after the call. A stale +8 here makes the very
+ * next reuse land 8 bytes high - e.g. Dictionary`2<__Canon,TValue>.TryInsert
+ * stores the key via this helper then writes `entry.value` at 0x10(t3): with
+ * the increment the value lands in the next entry's slot and the dictionary
+ * silently loses every value. Keep in sync with the runtime's contract.
  */
 .globl __wrap_RhpAssignRefRiscV64
 .type  __wrap_RhpAssignRefRiscV64, @function
 __wrap_RhpAssignRefRiscV64:
     sd   t4, 0(t3)
-    addi t3, t3, 8
     ret
 
 .globl __wrap_RhpCheckedAssignRef
 .type  __wrap_RhpCheckedAssignRef, @function
 __wrap_RhpCheckedAssignRef:
     sd   t4, 0(t3)
-    addi t3, t3, 8
     ret
 
 .globl __wrap_RhpByRefAssignRef

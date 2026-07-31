@@ -35,6 +35,55 @@ jobs:
       - name: Check ACSL contracts on native modules
         run: python3 src/bflat/scripts/check_acsl.py
 
+  fuzz_smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    name: Fuzz smoke (vfprintf + allocator)
+    steps:
+      - name: Install clang
+        run: |
+          apt-get update
+          apt-get install -y clang
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Host-compiled with ASan+UBSan (pal's riscv asm is behind an
+      # #if defined(__riscv) guard). 60s per target on PRs; the committed
+      # corpus carries the interesting inputs found so far.
+      - name: Run libFuzzer targets
+        run: FUZZ_TIME=60 ./src/bflat/modules/tests/fuzz/run_fuzz.sh
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: crash-*
+          if-no-files-found: ignore
+
+  cbmc_proof:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    name: CBMC allocator proof
+    steps:
+      - name: Install CBMC
+        run: |
+          apt-get update
+          apt-get install -y cbmc gcc libc6-dev
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Proves, for ALL 64-bit sizes and ALL reachable allocator states,
+      # that malloc/aligned_alloc either fail cleanly or return an
+      # in-window, aligned block - the property the historic pointer
+      # underflow violated.
+      - name: Prove bump-allocator bounds
+        run: ./src/bflat/modules/tests/verify/run_verify.sh
+
   module_unit_tests:
     runs-on: ubuntu-latest
     container:

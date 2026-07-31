@@ -15,3 +15,8 @@ msbuild.binlog
 /src/packages
 _site
 *.stamp
+
+# module test/fuzz build outputs (corpora ARE tracked)
+src/bflat/modules/tests/out/
+src/bflat/modules/tests/fuzz/out/
+crash-*
