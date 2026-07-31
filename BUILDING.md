@@ -72,6 +72,25 @@ environment. To *run* the dotnet-hosted `net10.0` build where only the .NET
 11 runtime is installed (e.g. the default Docker image), set
 `DOTNET_ROLL_FORWARD=LatestMajor`.
 
+## ACSL contracts on native modules
+
+Every function in the C modules under `src/bflat/modules/` carries a
+Frama-C (ACSL) contract. CI enforces this with the "ACSL contract gate"
+job, which fails when a module stops parsing under Frama-C or a defined
+function has no contract. To run the same check locally (needs docker):
+
+```bash
+$ docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w debian:bookworm \
+    bash -c "apt-get update -qq && apt-get install -y -qq frama-c-base gcc \
+             python3 >/dev/null && python3 src/bflat/scripts/check_acsl.py"
+```
+
+Annotations inside macro bodies (nofp's stub generators) are only visible
+to Frama-C when the preprocessor keeps comments through expansion; the
+checker passes `-cpp-extra-args=-CC` for that. C++ modules (stdcppshim,
+ubootstrap) carry ACSL++ annotations as documentation - plain Frama-C does
+not parse C++ - and assembly modules are out of scope.
+
 ## Build variants
 
 The compiler can be built in two variants that differ in which runtime/blob
