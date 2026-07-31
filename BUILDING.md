@@ -111,6 +111,46 @@ under nested emulation hangs on the designed-fault (SIGSEGV) tests instead
 of delivering the signal. nofp's stub list is generated from the module
 source at test-build time, so new stubs cannot silently miss coverage.
 
+## Fuzzing and proofs
+
+Two input-driven parts of the modules get more than example-based tests:
+pal's hand-written `vfprintf` parser and the bump-allocator family. Both
+are covered by libFuzzer targets built for the HOST with ASan+UBSan (the
+only riscv assembly in pal sits behind an `#if defined(__riscv)` guard):
+
+```bash
+$ FUZZ_TIME=60 ./src/bflat/modules/tests/fuzz/run_fuzz.sh   # needs clang
+```
+
+The allocator target drives random operation sequences (malloc / realloc
+/ calloc / aligned_alloc / mark / reset) with unconstrained 64-bit sizes
+and asserts the allocator invariants after each step. CI runs a
+60-second smoke per target on every PR and uploads `crash-*` artifacts on
+failure.
+
+Only the hand-written seeds in `tests/fuzz/seeds/<target>/` are tracked;
+they are passed to libFuzzer as a read-only input directory. The corpus
+libFuzzer grows lands in the gitignored `tests/fuzz/out/corpus-<target>/`
+- its *first* corpus argument is also its output, so pointing it at a
+tracked directory turns a single local run into thousands of new files
+(a 60-second run here produced ~10 MB). If a run uncovers something worth
+keeping, copy that one unit into `seeds/` by hand.
+
+On top of that, `tests/verify/` proves the allocator's bounds properties
+with CBMC for *all* sizes and reachable states rather than sampled ones:
+
+```bash
+$ ./src/bflat/modules/tests/verify/run_verify.sh            # needs cbmc
+```
+
+The harness `#include`s the real `pal/module.c` with the heap-window
+symbols re-pointed at a local array (the `ZK_HEAP_SYMBOLS_DEFINED` hook).
+Unsigned-overflow checks are deliberately off: the allocator detects
+oversized requests *by* wrapping (`req + 8 < req`), which is defined C.
+The proof is mutation-tested - restoring the pre-fix pointer-subtraction
+bounds check makes CBMC report the wild header write, so a passing run is
+not vacuous.
+
 ## Build variants
 
 The compiler can be built in two variants that differ in which runtime/blob
