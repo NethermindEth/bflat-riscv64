@@ -16,7 +16,8 @@ msbuild.binlog
 _site
 *.stamp
 
-# module test/fuzz build outputs (corpora ARE tracked)
+# module test/fuzz build outputs, incl. the corpus libFuzzer grows.
+# Only the hand-written tests/fuzz/seeds/ are tracked.
 src/bflat/modules/tests/out/
 src/bflat/modules/tests/fuzz/out/
 crash-*

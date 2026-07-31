@@ -12,8 +12,12 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Verification harnesses (tests/verify) re-point the heap window at a
+ * local array by defining these as macros before #include-ing this file. */
+#ifndef ZK_HEAP_SYMBOLS_DEFINED
 extern const char _kernel_heap_bottom[];
 extern const char _kernel_heap_top[];
+#endif
 
 /*@ // Only three globalization/buffer-pool switches exist in the guest's
     // environment; everything else reads as unset. The returned "1" is a
@@ -688,10 +692,17 @@ __attribute__((noreturn))
 static void
 zkvm_raw_exit(long code)
 {
+#if defined(__riscv)
     register long a0 __asm__("a0") = code;
     register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
     __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
     for (;;) { } /* ecall ends the program; loop is just in case */
+#else
+    /* Host builds (fuzz harnesses) have no ZisK ecall; _Exit keeps the
+     * same no-atexit, no-flush termination contract. */
+    extern void _Exit(int) __attribute__((noreturn));
+    _Exit((int)code);
+#endif
 }
 
 /*@ assigns \nothing;
