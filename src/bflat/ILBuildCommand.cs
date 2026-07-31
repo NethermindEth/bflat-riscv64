@@ -202,7 +202,12 @@ internal class ILBuildCommand : CommandBase
         var trees = new List<SyntaxTree>();
         foreach (var sourceFile in inputFiles)
         {
-            var st = SourceText.From(File.OpenRead(sourceFile));
+            // The stream must be closed here: SourceText.From reads it eagerly,
+            // so leaving it to the finalizer holds one file descriptor per
+            // source file for the lifetime of the compilation.
+            SourceText st;
+            using (FileStream sourceStream = File.OpenRead(sourceFile))
+                st = SourceText.From(sourceStream);
             CSharpParseOptions parseOptions = new CSharpParseOptions(
                 languageVersion: langVer,
                 documentationMode: DocumentationMode.None,

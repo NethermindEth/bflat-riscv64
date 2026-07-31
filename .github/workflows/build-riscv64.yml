@@ -35,6 +35,44 @@ jobs:
       - name: Check ACSL contracts on native modules
         run: python3 src/bflat/scripts/check_acsl.py
 
+  csharp_analyzers:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dotnet: "10"
+            sdk_args: --channel 10.0
+          - dotnet: "11"
+            sdk_args: --version 11.0.100-preview.6.26359.118
+    name: C# analyzers (net${{ matrix.dotnet }})
+    steps:
+      - name: Install .NET SDK
+        run: |
+          apt-get update
+          apt-get install -y wget libicu-dev ca-certificates
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh ${{ matrix.sdk_args }} --install-dir /usr/share/dotnet
+          ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+          echo "DOTNET_ROOT=/usr/share/dotnet" >> $GITHUB_ENV
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # AnalysisMode=All is set in bflat.csproj; .editorconfig decides which
+      # rules are errors. Warnings are also failed here (-warnaserror) so the
+      # set stays at zero instead of drifting upwards - a rule worth keeping
+      # on is worth keeping clean, and anything not worth fixing is turned
+      # off explicitly, with a reason, in .editorconfig.
+      - name: Build with analyzers
+        run: |
+          dotnet build src/bflat/bflat.csproj -t:Rebuild \
+            -p:DotnetVersion=${{ matrix.dotnet }} \
+            -warnaserror
+
   fuzz_smoke:
     runs-on: ubuntu-latest
     container:

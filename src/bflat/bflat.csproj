@@ -7,6 +7,11 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net$(DotnetVersion).0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Every .NET analyzer is on; .editorconfig decides which ones are
+         errors, which stay warnings and which are off (with reasons). -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisMode>All</AnalysisMode>
+    <AnalysisLevel>latest</AnalysisLevel>
     <Version Condition="'$(Version)' == ''">42.42.42.42</Version>
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
   </PropertyGroup>

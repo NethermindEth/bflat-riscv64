@@ -1,0 +1,128 @@
+# Analyzer policy for the bflat driver sources.
+#
+# AnalysisMode=All (see bflat.csproj) turns on every .NET analyzer. At that
+# setting the codebase reports ~1100 diagnostics, of which the overwhelming
+# majority are style preferences on code inherited from upstream bflat and
+# ILCompiler. Enabling all of them as errors would mean either a thousand
+# mechanical edits to inherited code or a thousand suppressions - neither
+# finds a single bug.
+#
+# So the rules are tiered:
+#   error   - defect classes: things that are wrong regardless of taste
+#             (ignored results, dead conditions, leaked handles, silent
+#             short reads). These fail the build; CI enforces them.
+#   warning - useful signal, left visible but not blocking.
+#   none    - pure formatting/idiom preference, or advice that does not
+#             apply to a short-lived CLI process. Each is justified below.
+#
+# Escalating a rule to error is cheap; do it once the code is clean for it.
+
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+charset = utf-8
+
+# ---------------------------------------------------------------------------
+# error - defect classes
+# ---------------------------------------------------------------------------
+
+# Dead conditional code. Caught a real one: the separate-symbols path checked
+# a stale exitCode, so objcopy failures were silently ignored.
+dotnet_diagnostic.CA1508.severity = error
+# Disposable created and dropped (file descriptors, XmlReaders).
+dotnet_diagnostic.CA2000.severity = error
+# Stream.Read may return fewer bytes than asked; using the buffer regardless
+# reads stale data.
+dotnet_diagnostic.CA2022.severity = error
+# Return value ignored where the call has no other effect.
+dotnet_diagnostic.CA1806.severity = error
+# Disposable fields never disposed / broken Dispose implementations.
+dotnet_diagnostic.CA2213.severity = error
+dotnet_diagnostic.CA1063.severity = error
+dotnet_diagnostic.CA1816.severity = error
+# Self-assignment, self-comparison, misused equality.
+dotnet_diagnostic.CA2245.severity = error
+dotnet_diagnostic.CA2246.severity = error
+dotnet_diagnostic.CA2248.severity = error
+dotnet_diagnostic.CA2252.severity = error
+# String/collection APIs used in a way that silently does the wrong thing.
+dotnet_diagnostic.CA2249.severity = error
+dotnet_diagnostic.CA1854.severity = error
+dotnet_diagnostic.CA1853.severity = error
+# CancellationToken parameters dropped on the floor.
+dotnet_diagnostic.CA2016.severity = error
+# Format-string arity mistakes.
+dotnet_diagnostic.CA2241.severity = error
+
+# ---------------------------------------------------------------------------
+# none - not applicable or pure preference
+# ---------------------------------------------------------------------------
+
+# ConfigureAwait: bflat is a console process with no synchronization context.
+dotnet_diagnostic.CA2007.severity = none
+# Culture-sensitive string APIs. Everything here is machine-facing text -
+# paths, symbol names, command lines - where the current culture is exactly
+# the wrong thing to apply, but the calls are already ordinal in effect.
+# Kept off rather than annotating ~150 call sites in inherited code.
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1307.severity = none
+dotnet_diagnostic.CA1308.severity = none
+dotnet_diagnostic.CA1310.severity = none
+dotnet_diagnostic.CA1311.severity = none
+# "Do not throw/catch general exception types": the driver deliberately
+# funnels tool failures into a single top-level handler that prints and exits.
+dotnet_diagnostic.CA1031.severity = none
+dotnet_diagnostic.CA2201.severity = none
+# Micro-optimisation and API-shape advice for a process that runs once.
+dotnet_diagnostic.CA1852.severity = none
+dotnet_diagnostic.CA1822.severity = none
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA1859.severity = none
+dotnet_diagnostic.CA1860.severity = none
+dotnet_diagnostic.CA1862.severity = none
+dotnet_diagnostic.CA2234.severity = none
+# Naming/design rules that would rename inherited public surface.
+dotnet_diagnostic.CA1002.severity = none
+dotnet_diagnostic.CA1034.severity = none
+dotnet_diagnostic.CA1051.severity = none
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1710.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1715.severity = none
+dotnet_diagnostic.CA1720.severity = none
+dotnet_diagnostic.CA1724.severity = none
+dotnet_diagnostic.CA1812.severity = none
+dotnet_diagnostic.CA1815.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA1820.severity = none
+
+# Localization advice: bflat is a developer tool with English-only
+# diagnostics; there is no resource table and there will not be one.
+dotnet_diagnostic.CA1303.severity = none
+# Type-shape advice on inherited public surface (namespaces, accessibility,
+# enum zero members). Changing it churns upstream-derived code for no gain.
+dotnet_diagnostic.CA1050.severity = none
+dotnet_diagnostic.CA1515.severity = none
+dotnet_diagnostic.CA1008.severity = none
+
+# IDE style rules: formatting, var-vs-explicit, expression bodies, collection
+# expressions, brace policy. ~800 hits, zero defects. Formatting is checked
+# separately by `dotnet format` when someone wants it, not by the build.
+dotnet_analyzer_diagnostic.category-Style.severity = none
+
+# ---------------------------------------------------------------------------
+# Targeted exemptions
+# ---------------------------------------------------------------------------
+
+# These are Debug.Assert statements mirrored from upstream ILCompiler that
+# pin an invariant of the InstructionSet enum: the x86 and x64 members for
+# the same ISA extension share a value. CA1508 is right that each comparison
+# is constant - that is the point of the assertion, and it is what would
+# start failing if upstream renumbered the enum. Keeping the rule as an error
+# everywhere else is worth more than deleting six assertions here.
+[src/bflat/InstructionSetHelpers.cs]
+dotnet_diagnostic.CA1508.severity = none
