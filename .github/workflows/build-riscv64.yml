@@ -13,6 +13,28 @@ on:
         required: false
 
 jobs:
+  acsl_check:
+    runs-on: ubuntu-latest
+    # debian:bookworm, not ubuntu: frama-c was dropped from Ubuntu's recent
+    # archives; bookworm ships it as frama-c-base (25.0, CLI-only).
+    container:
+      image: debian:bookworm
+    name: ACSL contract gate (Frama-C)
+    steps:
+      - name: Install Frama-C
+        run: |
+          apt-get update
+          apt-get install -y frama-c-base gcc python3
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Every function defined in src/bflat/modules/*/module.c must parse
+      # under Frama-C (including annotations inside macro bodies, hence the
+      # comment-preserving -CC preprocessing) and carry an ACSL contract.
+      - name: Check ACSL contracts on native modules
+        run: python3 src/bflat/scripts/check_acsl.py
+
   build_riscv64:
     runs-on: ubuntu-latest
     container:
