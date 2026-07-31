@@ -35,6 +35,33 @@ jobs:
       - name: Check ACSL contracts on native modules
         run: python3 src/bflat/scripts/check_acsl.py
 
+  module_unit_tests:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04
+    name: Module unit tests (riscv64 under qemu)
+    steps:
+      - name: Install toolchain and qemu
+        run: |
+          apt-get update
+          # qemu-user-hwe: ubuntu 26.04's name for the qemu-user-static
+          # binary set (plain qemu-user-static has no candidate there).
+          apt-get install -y \
+            gcc-riscv64-linux-gnu \
+            g++-riscv64-linux-gnu \
+            qemu-user-hwe
+          # Same soft-float stubs marker the module build needs.
+          touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Cross-compiled for riscv64 and executed under qemu-user: the tests
+      # run every module function on the real guest ISA, including the raw
+      # ZisK exit ecall and the designed fault paths (SIGSEGV markers).
+      - name: Run module unit tests
+        run: ./src/bflat/modules/tests/run_tests.sh
+
   build_riscv64:
     runs-on: ubuntu-latest
     container:
