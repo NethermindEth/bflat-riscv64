@@ -73,7 +73,15 @@ MANAGED_RUNTIME_EXPORT(GetRuntimeException)
 MANAGED_RUNTIME_EXPORT(RuntimeFailFast)
 MANAGED_RUNTIME_EXPORT(ThreadEntryPoint)
 MANAGED_RUNTIME_EXPORT(AppendExceptionStackFrame)
+/* ResolveDispatch (classlib slot 4) is a bflat-fork managed export that only
+ * exists in the .NET 11 runtime blobs; the .NET 10 fork leaves slot 4 unused
+ * (ICodeManager.h: "unused = 4"), so referencing it there is an undefined
+ * symbol at link time. Gate the declaration/reference on the version; only an
+ * explicit .NET 10 build drops it (undefined BFLAT_DOTNET defaults to the
+ * current net11 layout, keeping bare/test compiles unchanged). */
+#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
 MANAGED_RUNTIME_EXPORT(ResolveDispatch)
+#endif
 MANAGED_RUNTIME_EXPORT(GetSystemArrayEEType)
 MANAGED_RUNTIME_EXPORT(OnFirstChanceException)
 MANAGED_RUNTIME_EXPORT(OnUnhandledException)
@@ -98,7 +106,11 @@ static const pfn c_classlibFunctions[] = {
     &MANAGED_RUNTIME_EXPORT_NAME(RuntimeFailFast),
     &MANAGED_RUNTIME_EXPORT_NAME(ThreadEntryPoint),
     &MANAGED_RUNTIME_EXPORT_NAME(AppendExceptionStackFrame),
-    &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),
+#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+    &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),  // slot 4: net11 dispatch resolver
+#else
+    nullptr,                                        // slot 4: unused on net10 (stock)
+#endif
     &MANAGED_RUNTIME_EXPORT_NAME(GetSystemArrayEEType),
     &MANAGED_RUNTIME_EXPORT_NAME(OnFirstChanceException),
     &MANAGED_RUNTIME_EXPORT_NAME(OnUnhandledException),

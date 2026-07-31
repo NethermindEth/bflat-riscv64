@@ -89,7 +89,10 @@ function build_modules()
 				pushd $mod
 					if [ -f module.c ] ; then
 						# Compile module as C (clang + LTO so lld can do cross-module opt)
-						clang ${cflags_common} -c module.c -o module.o
+						# -DBFLAT_DOTNET: some module bodies are contract-versioned
+						# against the target runtime (the C/C++ analog of the .S
+						# --defsym below, e.g. ubootstrap's classlib table slot 4).
+						clang ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} -c module.c -o module.o
 						on_fail $? "Failed to compile module $mod (C)"
 					fi
 					if [ -f module.S ] ; then
@@ -102,7 +105,7 @@ function build_modules()
 					fi
 					if [ -f module.cpp ] ; then
 						# Compile module as C++ (clang + LTO)
-						clang++ ${cflags_common} -c module.cpp -o module.o
+						clang++ ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} -c module.cpp -o module.o
 						on_fail $? "Failed to compile module $mod (C++)"
 					fi
 					if [ -f module.o ] ; then
