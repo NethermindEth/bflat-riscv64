@@ -111,6 +111,29 @@ under nested emulation hangs on the designed-fault (SIGSEGV) tests instead
 of delivering the signal. nofp's stub list is generated from the module
 source at test-build time, so new stubs cannot silently miss coverage.
 
+The assembly modules are covered too, since running on the real ISA is
+what makes that possible:
+
+- `rhp_native` (GC write barriers) — a small shim (`asm_shim.S`) marshals
+  the t3/t4/t5 register convention the C ABI cannot express, and the
+  suite is built twice, once per `BFLAT_DOTNET` contract, pinning the
+  version-dependent t3 post-increment from both sides.
+- `zkvm_zisk` / `zkvm_zisk_sim` `_start` — checks the handoff to
+  `__libc_start_main`: managed entry point, `argc == 1`, `argv[0] ==
+  "app"`, NULL terminator, sp inside the guest stack.
+- `_zkvm_restore` (snapshot trampoline) — both paths for real: an
+  unpatched or wrong-magic blob cold-boots, a baked one restores x1..x31
+  and resumes at the captured PC. The blob lives in `.rodata`, so the test
+  `mprotect`s it writable and fills it the way `bflat rebake` would; an
+  assembly landing pad records the register file it was resumed with.
+
+Two link-level details make this work, both handled by `run_tests.sh`:
+the version symbol reaches the assembler via `-Wa,--defsym` and never as
+a `-D` (gcc runs `.S` through cpp, which would rewrite the `.ifndef`
+directive itself), and the modules' `_start` / `__libc_start_main` are
+`objcopy --redefine-sym`'d in a private copy of the object so they do not
+collide with crt1.o and libc in a hosted test binary.
+
 ## Fuzzing and proofs
 
 Two input-driven parts of the modules get more than example-based tests:
