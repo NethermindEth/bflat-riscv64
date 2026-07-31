@@ -1116,16 +1116,37 @@ internal class BuildCommand : CommandBase
         var int32 = ctx.GetWellKnownType(WellKnownType.Int32);
         var single = ctx.GetWellKnownType(WellKnownType.Single);
 
+        // Every mismatch found is collected and reported together: a CoreLib
+        // bump that moves three methods should show all three, not the first.
+        var drift = new List<string>();
+
         MethodDesc Snippet(string name)
         {
             foreach (MethodDesc m in snippetType.GetMethods())
                 if (m.Name.StringEquals(name)) return m;
+            drift.Add($"snippet '{name}' is missing from zisk.snippets.cs");
             return null;
         }
-        void Add(MethodDesc target, MethodDesc snippet)
+
+        // A substitution whose target no longer resolves is a SILENT hole: the
+        // FP-carrying original body stays in the image and only surfaces much
+        // later (--error-on-float, or the emulator rejecting an F/D opcode).
+        // That already happened once - Number.FormatFloat's signature changed
+        // in .NET 11, the entry stopped matching, and floating point came back
+        // (see the note in zisk.substitutions.xml). So a missing target is
+        // fatal, and the few genuinely conditional ones must say so.
+        void Add(MethodDesc target, MethodDesc snippet, string what)
         {
-            if (target != null && snippet != null) map[target] = snippet;
+            if (target == null)
+            {
+                drift.Add($"{what}: target not found in this CoreLib");
+                return;
+            }
+            if (snippet == null)
+                return; // Snippet() already recorded the reason
+            map[target] = snippet;
         }
+
         // Finds the single method of `type` named `name` whose parameter types
         // (excluding `this`) match `sig` exactly; null if the type/method is absent.
         MethodDesc Method(MetadataType type, string name, params TypeDesc[] sig)
@@ -1155,43 +1176,66 @@ internal class BuildCommand : CommandBase
         var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
         var seedImpl = random.GetNestedType("CompatSeedImpl");
         var derivedImpl = random.GetNestedType("CompatDerivedImpl");
-        Add(Method(seedImpl, "Next", int32), Snippet("RandomSeedNext1"));
-        Add(Method(seedImpl, "Next", int32, int32), Snippet("RandomSeedNext2"));
-        Add(Method(derivedImpl, "Next", int32), Snippet("RandomDerivedNext1"));
-        Add(Method(derivedImpl, "Next", int32, int32), Snippet("RandomDerivedNext2"));
+        Add(Method(seedImpl, "Next", int32), Snippet("RandomSeedNext1"),
+            "Random.CompatSeedImpl.Next(int)");
+        Add(Method(seedImpl, "Next", int32, int32), Snippet("RandomSeedNext2"),
+            "Random.CompatSeedImpl.Next(int,int)");
+        Add(Method(derivedImpl, "Next", int32), Snippet("RandomDerivedNext1"),
+            "Random.CompatDerivedImpl.Next(int)");
+        Add(Method(derivedImpl, "Next", int32, int32), Snippet("RandomDerivedNext2"),
+            "Random.CompatDerivedImpl.Next(int,int)");
 
         // System.Collections.Hashtable ctor/rehash family (float _loadFactor).
         var htType = Type(ctx.SystemModule, "System.Collections", "Hashtable");
         var ieqCmp = Type(ctx.SystemModule, "System.Collections", "IEqualityComparer");
-        if (htType != null)
+        if (htType == null)
         {
-            Add(Method(htType, ".ctor"), Snippet("HashtableCtor0"));
-            Add(Method(htType, ".ctor", int32), Snippet("HashtableCtorCap"));
-            Add(Method(htType, ".ctor", int32, single), Snippet("HashtableCtorCapLf"));
-            Add(Method(htType, ".ctor", int32, single, ieqCmp), Snippet("HashtableCtorCapLfCmp"));
-            Add(Method(htType, ".ctor", ieqCmp), Snippet("HashtableCtorCmp"));
-            Add(Method(htType, ".ctor", int32, ieqCmp), Snippet("HashtableCtorCapCmp"));
-            Add(Method(htType, "rehash", int32), Snippet("HashtableRehash"));
+            drift.Add("System.Collections.Hashtable: type not found in CoreLib");
+        }
+        else
+        {
+            Add(Method(htType, ".ctor"), Snippet("HashtableCtor0"),
+                "Hashtable..ctor()");
+            Add(Method(htType, ".ctor", int32), Snippet("HashtableCtorCap"),
+                "Hashtable..ctor(int)");
+            Add(Method(htType, ".ctor", int32, single), Snippet("HashtableCtorCapLf"),
+                "Hashtable..ctor(int,float)");
+            Add(Method(htType, ".ctor", int32, single, ieqCmp), Snippet("HashtableCtorCapLfCmp"),
+                "Hashtable..ctor(int,float,IEqualityComparer)");
+            Add(Method(htType, ".ctor", ieqCmp), Snippet("HashtableCtorCmp"),
+                "Hashtable..ctor(IEqualityComparer)");
+            Add(Method(htType, ".ctor", int32, ieqCmp), Snippet("HashtableCtorCapCmp"),
+                "Hashtable..ctor(int,IEqualityComparer)");
+            Add(Method(htType, "rehash", int32), Snippet("HashtableRehash"),
+                "Hashtable.rehash(int)");
         }
 
         // System.ValueType.GetHashCode helper (Single/Double struct fields).
         // RegularGetValueTypeHashCode has ref/byref params not conveniently
         // nameable as TypeDesc[] here; match by name + parameter count (3) instead.
         var vtType = Type(ctx.SystemModule, "System", "ValueType");
+        MethodDesc vtHash = null;
         if (vtType != null)
         {
             foreach (MethodDesc m in vtType.GetMethods())
                 if (m.Name.StringEquals("RegularGetValueTypeHashCode") && m.Signature.Length == 3)
-                    Add(m, Snippet("ValueTypeRegularHashCode"));
+                    vtHash = m;
         }
+        Add(vtHash, Snippet("ValueTypeRegularHashCode"),
+            "ValueType.RegularGetValueTypeHashCode(3 params)");
 
-        // System.Collections.Frozen.LengthBuckets (only if Immutable is present).
+        // System.Collections.Frozen.LengthBuckets. The whole assembly is absent
+        // unless the guest references Immutable, so the TYPE may legitimately
+        // not resolve - but once it does, the method must.
         var lbType = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "LengthBuckets");
         if (lbType != null)
         {
+            MethodDesc lbMethod = null;
             foreach (MethodDesc m in lbType.GetMethods())
                 if (m.Name.StringEquals("CreateLengthBucketsArrayIfAppropriate"))
-                    Add(m, Snippet("LengthBucketsNone"));
+                    lbMethod = m;
+            Add(lbMethod, Snippet("LengthBucketsNone"),
+                "LengthBuckets.CreateLengthBucketsArrayIfAppropriate");
         }
 
         // System.TimeZoneInfo..cctor: the donor rebuilds the whole cctor with the
@@ -1204,7 +1248,11 @@ internal class BuildCommand : CommandBase
         // reject, instead of silently dropping the new initializer.
         var tzType = Type(ctx.SystemModule, "System", "TimeZoneInfo");
         MethodDesc tzCctor = tzType?.GetStaticConstructor();
-        if (tzCctor != null)
+        if (tzCctor == null)
+        {
+            drift.Add("TimeZoneInfo..cctor: not found in this CoreLib");
+        }
+        else
         {
             string[] expected =
             {
@@ -1219,12 +1267,33 @@ internal class BuildCommand : CommandBase
                     stored.Add(fd.Name.ToString());
 
             if (stored.SetEquals(expected))
-                Add(tzCctor, Snippet("TimeZoneInfoCctor"));
+            {
+                Add(tzCctor, Snippet("TimeZoneInfoCctor"), "TimeZoneInfo..cctor");
+            }
             else
-                Console.Error.WriteLine(
-                    "warning: TimeZoneInfo..cctor field set changed " +
-                    $"([{string.Join(", ", stored)}]); donor cctor snippet NOT applied - " +
-                    "update TimeZoneInfoCctor in zisk.snippets.cs");
+            {
+                drift.Add(
+                    "TimeZoneInfo..cctor field set changed (stores [" +
+                    string.Join(", ", stored) + "], donor initializes [" +
+                    string.Join(", ", expected) + "]) - update TimeZoneInfoCctor " +
+                    "in zisk.snippets.cs");
+            }
+        }
+
+        if (drift.Count != 0)
+        {
+            // Hard failure by design. Each of these substitutions exists to keep
+            // floating point out of an FPU-less image; a skipped one leaves the
+            // original body in place, and the failure then shows up as an F/D
+            // opcode the emulator rejects - far from here, in a guest that looked
+            // like it built fine. Refusing to produce that binary is the point.
+            throw new InvalidOperationException(
+                "zisk body substitutions no longer match this CoreLib:" +
+                Environment.NewLine + "  " +
+                string.Join(Environment.NewLine + "  ", drift) + Environment.NewLine +
+                "Each entry means the FP-carrying original body would have been " +
+                "kept. Update zisk.snippets.cs / BuildZiskBodySubstitutions for " +
+                "this runtime version.");
         }
 
         return map;
@@ -1633,16 +1702,15 @@ internal class BuildCommand : CommandBase
 
         if (snippetsModulePath != null)
         {
-            try
-            {
-                EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
-                customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, snippetsModule);
-                Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"warning: zisk body-substitution snippets not applied: {ex.Message}");
-            }
+            // Deliberately NOT wrapped in a catch. Every one of these
+            // substitutions removes floating point from a body that would
+            // otherwise reach an FPU-less target; "apply what we can and warn"
+            // produces a binary that looks built and dies in the emulator on
+            // an F/D opcode. If the snippet set no longer matches the CoreLib
+            // in front of us, the honest outcome is no binary at all.
+            EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
+            customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, snippetsModule);
+            Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
         }
 
         ilProvider = new HardwareIntrinsicILProvider(
