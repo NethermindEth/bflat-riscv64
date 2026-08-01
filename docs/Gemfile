@@ -7,4 +7,8 @@ gem "webrick"
 
 group :jekyll_plugins do
   gem "jekyll-seo-tag"
+  # GitHub Pages enables this by default, and the pages link to each other
+  # as `page.md`. Without it a local `jekyll build` silently produces links
+  # that 404 while production works - so keep the local build honest.
+  gem "jekyll-relative-links"
 end
