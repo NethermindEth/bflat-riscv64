@@ -68,9 +68,13 @@ jobs:
       # on is worth keeping clean, and anything not worth fixing is turned
       # off explicitly, with a reason, in .editorconfig.
       - name: Build with analyzers
+        # SkipCompilerLayout: this job runs no build.sh, so the native module.o
+        # artifacts CreateCompilerLayout copies don't exist. Analyzers only need
+        # the managed compile.
         run: |
           dotnet build src/bflat/bflat.csproj -t:Rebuild \
             -p:DotnetVersion=${{ matrix.dotnet }} \
+            -p:SkipCompilerLayout=true \
             -warnaserror
 
   fuzz_smoke:

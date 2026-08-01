@@ -480,7 +480,12 @@
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 
-  <PropertyGroup>
+  <!-- CreateCompilerLayout stages the native riscv64 modules (module.o built by
+       build.sh, script.ld, patched crt1, ...) into the compiler layout. It is
+       part of every normal build, but a pure C#-analyzer pass (dotnet build
+       -warnaserror, no build.sh) has none of those .o files and only needs the
+       managed compile - let it opt out with -p:SkipCompilerLayout=true. -->
+  <PropertyGroup Condition="'$(SkipCompilerLayout)' != 'true'">
     <BuildDependsOn>$(BuildDependsOn);CreateCompilerLayout</BuildDependsOn>
   </PropertyGroup>
 
