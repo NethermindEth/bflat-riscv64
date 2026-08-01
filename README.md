@@ -43,11 +43,12 @@ adaptation belongs to the earliest of these layers that can express it:
 What remains inside .NET is deliberately small and tracked. The
 [runtime repository](https://github.com/NethermindEth/dotnet-riscv) is moving
 from an open-ended patch queue to a per-version *fixup* set organised in
-profiles: `minimal` carries only correctness fixes for riscv64 code
-generation — the kind that belongs upstream — and an optional `perf` profile
-adds riscv64 code-quality fixups on top. The minimal profile is currently
-four fixups for .NET 10 and five for .NET 11. Anything that can move out of
-that set into one of the three layers above should.
+profiles: `minimal` carries correctness fixes for riscv64 code generation and
+nothing else, while an optional `perf` profile adds code-quality work on top.
+The minimal profile is currently four fixups for each of .NET 10 and .NET 11.
+
+Four upstreamable fixups per .NET line, carried for one reason only: the
+zkVM target. Nothing else justifies touching .NET.
 
 ## Motivation
 
@@ -81,11 +82,17 @@ that drives everything below.
 
 ### Toolchain and ABI
 
-A typical GCC-based Linux riscv64 cross toolchain is used, with the lp64d
-ABI. That choice is deliberate and may look surprising: zkVMs cannot execute
-floating point, yet lp64d maximises compatibility with existing toolchains
-and prebuilt libraries. Floating point is removed by construction (see the
-`nofp` module and the ILC substitutions) rather than by ABI.
+A typical GCC-based Linux riscv64 cross toolchain is used. The code Bflat
+compiles and links targets `rv64ima` with the soft-float `lp64` ABI — the
+modules are built `-mabi=lp64`, and floating point is removed by
+construction (see the `nofp` module and the ILC substitutions) rather than
+left to the ABI to police.
+
+Not every input agrees yet: the C runtime objects from the distribution feed
+are built for `rv64gc` and still advertise a double-float ABI, so Bflat
+normalizes the ELF ABI markers at build time to let `ld.lld` mix them. That
+is a workaround; rebuilding those artifacts for the target ISA is the real
+fix, and it is in progress.
 
 ### Runtime
 
@@ -103,9 +110,11 @@ more than it buys. So the standard Linux toolchain and libraries are used,
 based on [musl](https://git.musl-libc.org/cgit/musl) instead of glibc, with a
 significant number of libraries phased out through entry-point wrappers.
 
-The distribution of choice is Alpine Linux; see the
-[Alpine Linux repository](https://github.com/NethermindEth/riscv-alpine-build)
-for how to build and use it.
+The musl side comes from an Alpine cross rootfs built by upstream .NET's
+own `eng/common/cross/build-rootfs.sh`; there is no rebuilt distribution of
+our own. The one exception is musl itself: Alpine's feed builds it for
+`rv64gc`, so it is rebuilt from the same aport for `rv64im` and overwrites
+the stock `libc.a` and `crt` objects in the rootfs.
 
 ### Modules
 
