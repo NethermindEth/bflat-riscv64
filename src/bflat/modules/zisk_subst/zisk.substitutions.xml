@@ -133,8 +133,13 @@
       <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
       <method signature="System.Int32 CompareTo(System.Double)" body="remove" />
       <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
-      <method signature="System.Boolean Equals(System.Double)" body="remove" />
-      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+      <!-- Double.Equals is NOT removed: ValueType.Equals for a struct with a
+           double field cannot use the byte-wise fast path (it must honor
+           -0.0 == +0.0), so it dispatches field-by-field into Double.Equals.
+           That path is normal, not rare - removing it (throw) fail-fasts every
+           double-carrying struct's Equals (and hence any hash/sorted lookup
+           keyed on one). In the reachable path the comparison lowers FP-free
+           (verified: --error-on-float stays clean), so keep the real body. -->
     </type>
     <type fullname="System.Single">
       <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
@@ -146,8 +151,8 @@
       <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
       <method signature="System.Int32 CompareTo(System.Single)" body="remove" />
       <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
-      <method signature="System.Boolean Equals(System.Single)" body="remove" />
-      <method signature="System.Boolean Equals(System.Object)" body="remove" />
+      <!-- Single.Equals kept for the same reason as Double.Equals above:
+           reachable from ValueType.Equals on float-field structs, FP-free there. -->
     </type>
 
     <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
