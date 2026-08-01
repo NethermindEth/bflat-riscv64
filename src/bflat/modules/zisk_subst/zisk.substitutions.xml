@@ -139,7 +139,7 @@
            That path is normal, not rare - removing it (throw) fail-fasts every
            double-carrying struct's Equals (and hence any hash/sorted lookup
            keyed on one). In the reachable path the comparison lowers FP-free
-           (verified: --error-on-float stays clean), so keep the real body. -->
+           (verified: the error-on-float gate stays clean), so keep the body. -->
     </type>
     <type fullname="System.Single">
       <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
