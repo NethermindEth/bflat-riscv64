@@ -24,12 +24,11 @@ docs/
 ├── _includes/           header, sidebar, footer + reusable SVG diagrams
 ├── assets/css/style.scss  Theme — dark navy + Nethermind orange
 ├── index.html           Marketing landing page (uses landing layout)
-├── alpine.md            riscv-alpine-build: lp64d Alpine without FP/compressed instructions
-├── runtime.md           dotnet-riscv: the patched .NET runtime
-├── architecture.md      bflat pipeline, end to end (incl. postprocessing)
+├── runtime.md           dotnet-riscv: building .NET for the target, and the aim of not patching it
+├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
 ├── modules.md           Each link-time module explained
-├── build.md             Building bflat and using it
-└── verification.md      How every change is regression-tested
+├── build.md             Building the driver (.NET version, variant) and using it
+└── verification.md      Contracts, tests, fuzzing, proofs and the CI gates
 ```
 
 ## Editing
@@ -37,3 +36,8 @@ docs/
 Each page begins with front matter that drives the layout, eyebrow
 text, and previous/next page links. Sidebar navigation is generated
 from the `nav` list in `_config.yml`.
+
+Pages cross-link as `page.md`; `jekyll-relative-links` rewrites those to
+their permalinks. It is enabled by default on GitHub Pages and listed in
+the `Gemfile` / `_config.yml` so a local build resolves them the same way —
+without it, local previews produce links that 404 while production works.

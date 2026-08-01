@@ -21,7 +21,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
     </div>
     <div class="badges">
       <span class="badge badge--accent">RISC-V64</span>
-      <span class="badge">rv64ima · lp64d</span>
+      <span class="badge">rv64ima · soft-float</span>
       <span class="badge badge--accent2">Zisk · zisk_sim</span>
       <span class="badge">musl-based</span>
       <span class="badge">Statically linked</span>
@@ -51,8 +51,8 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 <!-- ====================================================== STAT STRIP -->
 <section class="stat-strip">
   <div class="stat">
-    <div class="stat-value">13<span class="unit">modules</span></div>
-    <p class="stat-label">Link-time patches</p>
+    <div class="stat-value">15<span class="unit">modules</span></div>
+    <p class="stat-label">Link-time adaptations</p>
   </div>
   <div class="stat">
     <div class="stat-value">2<span class="unit">targets</span></div>
@@ -75,7 +75,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
     <h2>No install. One command. Current directory mounted.</h2>
     <p class="lead">
       Drop a <code>.cs</code> file next to your shell and let the official
-      container do the rest — compiler, patched runtime, link-time modules,
+      container do the rest — driver, runtime, link-time modules,
       and postprocessor are all already inside the image.
     </p>
 
@@ -135,7 +135,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
         The original <a href="https://github.com/bflattened/bflat">bflat</a>
         compiles C# to native code via NativeAOT but produces dynamically
         linked binaries. None of those dependencies are acceptable inside a
-        zkVM. Our fork adds two new libc targets, thirteen link-time modules,
+        zkVM. Our fork adds two new libc targets, fifteen link-time modules,
         per-target linker scripts, and an ELF postprocessor — all without
         touching upstream sources.
       </p>
@@ -155,7 +155,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div class="feature-icon">
         <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
       </div>
-      <h3>Thirteen link-time modules</h3>
+      <h3>Fifteen link-time modules</h3>
       <p>Small C / C++ / asm objects plug into the linker via
       <code>--wrap=</code> overrides. No upstream code is patched in place.</p>
     </div>
@@ -201,79 +201,60 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
   <div class="section-head">
     <p class="eyebrow">Foundation</p>
     <div>
-      <h2>Two sibling projects build the base — bflat sits on top.</h2>
+      <h2>A sibling project builds the base — bflat sits on top.</h2>
       <p>
-        Before bflat compiles a single line of C#, two upstream-derived
-        projects ensure every byte of the underlying environment respects
-        the zkVM constraints — no compressed instructions, no FP, one
-        ABI across the stack. Both ship as release artifacts, downloaded
-        and unpacked at bflat build time.
+        Before a single line of C# is compiled, the runtime and its
+        cross rootfs are built so that every byte of the underlying
+        environment respects the zkVM constraints — no compressed
+        instructions, no FP, one ABI across the stack. They ship as
+        release artifacts, downloaded and unpacked at bflat build time.
       </p>
     </div>
   </div>
 
   <div class="cards">
-    <a class="card" href="{{ '/alpine/' | relative_url }}">
-      <h3>Alpine — riscv-alpine-build</h3>
-      <p>The whole Alpine distribution rebuilt from source. GCC
-      reconfigured to drop compressed and floating-point instruction
-      emission while keeping the <code>lp64d</code> ABI. ~320 lines of
-      patches do the entire system-wide rebuild.</p>
-    </a>
     <a class="card" href="{{ '/runtime/' | relative_url }}">
       <h3>.NET — dotnet-riscv</h3>
-      <p>Pulls a tagged upstream .NET VMR, applies 20 focused patches
-      (RISC-V64 ISA constraints, NativeAOT startup, determinism for
-      proofs) and packages CoreLib, runtime libraries, GC, and bflat-side
-      objects as a downloadable release.</p>
+      <p>Pulls a tagged upstream .NET VMR, builds it for the target ISA
+      with a handful of correctness fixups, and packages CoreLib, runtime
+      libraries, GC, and bflat-side objects as a downloadable release.
+      .NET 10 and .NET 11 are both supported.</p>
     </a>
   </div>
 
   <div class="divergence">
     <div class="divergence-head">
-      <h2>The .NET we ship is upstream — <em>almost untouched</em>.</h2>
+      <h2>The aim is a .NET that is <em>not patched at all</em>.</h2>
       <p>
-        A short, focused patch series sits between Microsoft's release
-        branch and the runtime artifacts bflat consumes. Bumping to a
-        new .NET version is a rebase, not a fork.
+        Everything a zkVM needs is applied around the runtime — at ILC
+        time, at link time, and after the link — so the toolchain tracks
+        upstream instead of forking it. What is left is four upstreamable
+        fixups per .NET line, carried for one reason only: the zkVM
+        target. Nothing else justifies touching .NET.
       </p>
     </div>
 
     <div class="divergence-stats">
       <div class="div-stat">
-        <div class="div-stat-num">20<span class="unit">patches</span></div>
-        <p class="div-stat-note">19 against the runtime VMR · 1 against the SDK</p>
+        <div class="div-stat-num">3<span class="unit">layers outside .NET</span></div>
+        <p class="div-stat-note">ILC substitutions · link-time modules · ELF postprocess</p>
       </div>
       <div class="div-stat">
-        <div class="div-stat-num">70<span class="unit">files touched</span></div>
-        <p class="div-stat-note">Out of <strong>56,796</strong> tracked in <code>dotnet/runtime</code><br>= <strong class="ratio-orange">0.12 %</strong> · about 1 file in 811</p>
+        <div class="div-stat-num">4<span class="unit">fixups</span></div>
+        <p class="div-stat-note">The <code>minimal</code> profile · same count on .NET 10 and 11</p>
       </div>
       <div class="div-stat">
-        <div class="div-stat-num">+493<span class="unit">net lines</span></div>
-        <p class="div-stat-note">Out of <strong>11.1 M</strong> in upstream sources<br>= <strong class="ratio-cyan">0.004 %</strong> · +1 013 / −520</p>
+        <div class="div-stat-num">0<span class="unit">features carried</span></div>
+        <p class="div-stat-note">The <code>minimal</code> profile is correctness fixes only — each one a candidate for upstreaming</p>
       </div>
       <div class="div-stat">
-        <div class="div-stat-num">5<span class="unit">categories</span></div>
-        <p class="div-stat-note">ISA · NativeAOT startup · zerolib · determinism · build infra</p>
+        <div class="div-stat-num">2<span class="unit">.NET lines</span></div>
+        <p class="div-stat-note">10 and 11, each with its own versioned profile</p>
       </div>
-    </div>
-
-    <div class="divergence-bar" aria-hidden="true">
-      <div class="divergence-bar-track">
-        <div class="divergence-bar-fill"></div>
-      </div>
-      <div class="divergence-bar-legend">
-        <span class="left">our patches · 70 files</span>
-        <span class="right">upstream <code>dotnet/runtime</code> · 56,796 files</span>
-      </div>
-      <p class="divergence-bar-note">
-        Sliver scaled for visibility — the actual share is so small it
-        wouldn't render at 1 px wide.
-      </p>
     </div>
 
     <p class="divergence-foot">
-      <a href="{{ '/runtime/' | relative_url }}">See every patch, grouped by purpose →</a>
+      <a href="{{ '/runtime/' | relative_url }}">See every fixup and why it can't move out →</a>
     </p>
   </div>
 </section>
@@ -310,7 +291,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">02</div>
       <div>
         <h3 style="margin: 0 0 4px;">ld.lld links the binary statically</h3>
-        <p style="margin: 0; color: var(--text-muted);">Thirteen module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
+        <p style="margin: 0; color: var(--text-muted);">Module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
@@ -340,13 +321,14 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
         Everything Nethermind contributes to <em>this</em> repo lives in
         one place: the compiler driver, the link-time modules, the
         linker scripts, and the postprocessor. The .NET runtime is built
-        and patched separately by
-        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a>;
-        the underlying distribution is rebuilt from source by
-        <a href="{{ '/alpine/' | relative_url }}">riscv-alpine-build</a>
-        with no compressed and no FP instructions emitted, while keeping
-        the <code>lp64d</code> ABI for toolchain compatibility. Both
-        ship as release artifacts consumed at build time.
+        separately by
+        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a>,
+        against an Alpine cross rootfs produced by upstream's own tooling
+        (with musl rebuilt for the base ISA), and ships as release
+        artifacts consumed at build time.
+        No compressed and no FP instructions are emitted anywhere in the
+        stack, and the code bflat compiles and links uses the soft-float
+        <code>lp64</code> ABI.
       </p>
     </div>
   </div>
@@ -416,13 +398,16 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
   <div class="section-head">
     <p class="eyebrow">Verification</p>
     <div>
-      <h2>Every commit walks the full pipeline.</h2>
+      <h2>Checks that fail early, not in the prover.</h2>
       <p>
-        Two CI jobs run on every push: <strong>build-riscv64</strong> rebuilds
-        the compiler and all modules from source; <strong>zk-testing</strong>
-        runs the bundled samples and the Nethermind StatelessExecutor end-to-end
-        through a zkVM prover. If any link-time wrap, postprocessing pass, or
-        runtime shim breaks, the dashboard turns red within minutes.
+        Six jobs run on every push and pull request in this repository:
+        contracts on the native modules, C# analyzers on the driver, module
+        unit tests on the real ISA under qemu, fuzzing, a CBMC proof of the
+        allocator, and a build that produces the Docker images and links a
+        guest for both zkVM targets. Running the samples and proving the
+        Nethermind StatelessExecutor happen in a separate pipeline that
+        reports to the <a href="https://zk-testing.nethermind.dev">zk-testing</a>
+        dashboard.
       </p>
     </div>
   </div>
@@ -433,16 +418,16 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 
   <div class="verify-ribbon">
     <div class="item">
-      <h4>Build CI</h4>
-      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> compiles every module and bflat itself. Artifacts are signed and reproducible.</p>
+      <h4>Repository CI</h4>
+      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> runs the contract gate, analyzers, unit tests, fuzzing and the CBMC proof, then rebuilds every module and the driver from source.</p>
     </div>
     <div class="item">
       <h4>Sample regression</h4>
-      <p>Each sample under <code>samples/</code> is built and run under <code>zisk_sim</code>.</p>
+      <p>Samples under <code>samples/</code> are built with <code>zisk_sim</code> and run under QEMU by the zk-testing pipeline, with output compared against a baseline.</p>
     </div>
     <div class="item">
       <h4>End-to-end proofs</h4>
-      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard runs the full Nethermind StatelessExecutor through a zkVM prover on every commit and surfaces proof timings as a public badge.</p>
+      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard proves the Nethermind StatelessExecutor inside a zkVM and surfaces proof timings as a public badge.</p>
     </div>
   </div>
 

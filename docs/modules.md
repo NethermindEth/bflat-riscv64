@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Modules
-eyebrow: Link-time patches
+eyebrow: Link-time adaptations
 lead: >
   Why a zkVM needs these link-time modules, what each one replaces, and the
   constraint it answers — with the per-module implementation detail at the end.
@@ -23,7 +23,7 @@ The alternative — forking the runtime and musl — means re-merging on every
 upstream release. Instead each adaptation is an isolated object file plus a
 `--wrap=` redirect, so the upstream code stays pristine and a .NET version
 bump is a rebase, not a fork. (Same philosophy as the
-[runtime patches](runtime.md).)
+[runtime fixups](runtime.md).)
 
 ## The constraints they answer
 
@@ -40,7 +40,8 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
 | [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
-| [nofp](#nofp) | Empty soft-float helpers | No floating-point hardware |
+| [nofp](#nofp) | Soft-float and libm entry points that trap loudly | No floating-point hardware |
+| [zisk_subst](#zisk-subst) | ILC-stage substitutions and C# snippets — data, not an object file | Managed code that carries FP |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
 | [security-stub](#security-stub) | Security/GSS functions return failure | Unused network paths must still link |
 | [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
@@ -50,11 +51,22 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 
 ## Results
 
-Because every adaptation is a link-time object, **no upstream source is
-modified** to make C# run in a zkVM, and this same set of modules carries
-real production C# — Nethermind's
-[StatelessExecutor](https://github.com/NethermindEth/nethermind) — end to end
-through a zkVM prover on every commit. See [Verification](verification.md).
+Because each of these is an object the linker pulls in — or, in
+`zisk_subst`'s case, data the driver applies one stage earlier — **no
+upstream source is modified** to make C# run in a zkVM. The same set
+carries real production C#, Nethermind's
+[StatelessExecutor](https://github.com/NethermindEth/nethermind), end to end
+through a zkVM prover.
+
+They are also the most heavily checked code in the repository, which is the
+other half of why patching upstream is avoidable: a replacement is only as
+good as the confidence you have in it. Every function in the C modules
+carries a Frama-C contract; every native module built in this repository —
+C, C++ and assembly alike — is unit-tested on the real ISA under qemu; the
+allocator is fuzzed and its bounds properties are machine-checked with
+CBMC. Two entries in the table above are outside that: `zisk_subst` ships
+data rather than code, and `ugc-zero` is prebuilt and tested in its own
+repository. See [Verification](verification.md).
 
 ---
 
@@ -191,7 +203,7 @@ here regardless of which object file defines the symbol.
 
 **File:** `modules/rhp/module.c`
 
-Patches that target the .NET runtime itself. Responsibilities:
+Replacements for parts of the .NET runtime itself. Responsibilities:
 
 1. **Object allocators.** `RhpNewObject`, `RhpNewArrayFast`,
    `RhpNewPtrArrayFast`, and `RhNewString` are reimplemented on top of the
@@ -280,15 +292,26 @@ buffer instead of the dynamic-loader logic in musl.
 
 **File:** `modules/nofp/module.c`
 
-A flat list of empty function bodies for every soft-float helper
-(`__addsf3`, `__divdf3`, `__floatsidf`, `__fixunsdfsi`, etc.). These
-exist because RISC-V toolchains generate calls to compiler-RT helpers
-even when the source uses `double` only by accident — for example
-through a templated method that is never reached. Linking against an
-empty `__addsf3` lets the binary build; if it ever runs at proof time
-it would silently no-op, but the AOT pass should already have proven
-the call is dead. Without this module the link fails with hundreds of
-unresolved-symbol errors.
+A definition for every soft-float compiler-RT helper (`__addsf3`,
+`__divdf3`, `__floatsidf`, `__fixunsdfsi`, …) and for the libm surface
+the runtime references (`pow`, `sqrt`, `fmod`, …). They exist because a
+RISC-V toolchain emits calls to these even when `double` appears only in
+code that is never reached; without the module the link fails with
+hundreds of unresolved symbols.
+
+Every one of them **traps**: the body calls a `noreturn` helper that
+exits with status 255. That is deliberate and it is the second version of
+this module — the first one used empty bodies, which meant a stray FP
+call returned an undefined register value and the run continued with a
+silently wrong result. For a proving system that is the worst possible
+failure mode, so the policy is now "fail loudly instead of computing
+garbage", and it lives in one function (`nofp_trap`) if it ever needs to
+change.
+
+One exception, deliberately not a trap: `__wrap_asprintf` returns `-1`.
+It is referenced only by the cgroup parsing that pal already stubs out,
+and `-1` is the documented failure result its callers handle — so if that
+path is ever reached it degrades instead of aborting.
 
 ## rng_stupid — deterministic PRNG
 {: #rng-stupid }
@@ -297,9 +320,13 @@ unresolved-symbol errors.
 
 A linear-congruential PRNG seeded with `0x34095153`. Wraps:
 
-- `minipal_get_cryptographically_secure_random_bytes`
-- `CryptoNative_GetRandomBytes`
-- `CryptoNative_EnsureOpenSslInitialized` (returns 0)
+- `minipal_get_cryptographically_secure_random_bytes` (returns 0 on success)
+- `minipal_get_non_cryptographically_secure_random_bytes` — feeds the
+  hash seeds (Marvin, `HashCode`), so it matters for determinism even
+  though nothing here is cryptographic
+- `CryptoNative_GetRandomBytes` (returns 1 on success — the opposite
+  convention from the minipal pair, matching each caller's expectation)
+- `CryptoNative_EnsureOpenSslInitialized` (returns 0; there is no OpenSSL)
 
 zkVMs cannot consult `/dev/urandom`. A truly random number would also
 make the proof non-deterministic. The PRNG produces the same bytes for
@@ -385,14 +412,34 @@ runtime's GC discovery into this shim.
 
 ---
 
+## zisk_subst — ILC-stage substitutions
+{: #zisk-subst }
+
+The odd one out: it ships no object file. `zisk_subst` carries the data
+that removes floating point from *managed* code before it is ever compiled
+to RISC-V64 —
+[`zisk.substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/zisk_subst/zisk.substitutions.xml)
+(an ILLink substitutions file) and
+[`zisk.snippets.cs`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/zisk_subst/zisk.snippets.cs)
+(whole-body C# replacements). Both are copied into the layout and consumed
+by the driver at guest-build time; the mechanism is described under
+[Stage 1.5](architecture.md#stage-15--ilc-stage-substitutions).
+
+It is grouped with the modules because it answers the same kind of
+constraint in the same spirit — replace, don't patch — but it acts one
+stage earlier, on IL rather than on symbols.
+
 ## Build flow for modules
 
 `build.sh modules riscv64` walks every directory under
 `src/bflat/modules/` and:
 
-1. Compiles `module.c` with `riscv64-linux-gnu-gcc -march=rv64imad`.
-2. Assembles `module.S` with `riscv64-linux-gnu-as --march=rv64ima --mabi=lp64`.
-3. Compiles `module.cpp` with `riscv64-linux-gnu-g++ -march=rv64imad`.
+1. Compiles `module.c` with `clang --target=riscv64-linux-gnu
+   -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -funified-lto`.
+2. Assembles `module.S` with `riscv64-linux-gnu-as --march=rv64ima --mabi=lp64`
+   — assembly is the one input that does not go through clang, since
+   bitcode does not apply to it.
+3. Compiles `module.cpp` with `clang++` and the same flags as (1).
 4. Patches the resulting object's ABI marker byte to keep the linker
    happy when mixing soft-float-marked and hard-float-marked objects.
 5. If `module_params.yml` declares a remote `repo` + `tag` + release
@@ -401,8 +448,15 @@ runtime's GC discovery into this shim.
 
 Step 4 — patching offset `0x30` of the ELF e_flags — clears the
 hard-float bit so the bflat-side modules carry the `lp64` (soft-float)
-marker in their ELF header. The whole stack uses the `lp64d` calling
-convention, but the runtime objects from dotnet-riscv ship with the
-`lp64` marker bit, so flipping the marker on our side makes `ld.lld`
-accept the link. The codegen on either side is unchanged — this is
-purely about the marker bits the linker checks for ABI consistency.
+marker in their ELF header.
+
+That patch exists because the objects being linked together do not all
+agree on their marker. The modules are compiled `-mabi=lp64` and the
+runtime's native objects are tagged soft-float, but the C runtime bits
+that come from the distribution feed are built for `rv64gc` and still
+advertise a double-float ABI. `ld.lld` refuses to mix markers, so bflat
+normalizes them. The codegen on either side is unchanged — this is purely
+about the bits the linker checks for ABI consistency, and it is a
+workaround: the proper fix is for those artifacts to be built for the
+target ISA in the first place, which is what the runtime project is
+moving to.

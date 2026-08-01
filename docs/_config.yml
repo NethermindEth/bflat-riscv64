@@ -13,6 +13,12 @@ author:
 
 permalink: /:path/
 
+plugins:
+  - jekyll-seo-tag
+  # Rewrites `page.md` cross-links to their permalinks. Enabled by default
+  # on GitHub Pages; listed so a local build behaves the same way.
+  - jekyll-relative-links
+
 markdown: kramdown
 highlighter: rouge
 kramdown:
@@ -42,8 +48,6 @@ nav:
         url: /
   - section: Foundation
     items:
-      - title: Alpine
-        url: /alpine/
       - title: dotnet-riscv
         url: /runtime/
   - section: bflat
