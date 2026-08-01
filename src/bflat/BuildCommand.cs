@@ -60,11 +60,11 @@ internal class BuildCommand : CommandBase
     private static Option<bool> NoGlobalizationOption = new Option<bool>("--no-globalization", "Disable support for globalization (use invariant mode)");
     private static Option<bool> NoExceptionMessagesOption = new Option<bool>("--no-exception-messages", "Disable exception messages");
     private static Option<bool> NoPieOption = new Option<bool>("--no-pie", "Do not generate position independent executable");
-    // Self-check used by bflat's own build (see VerifyZiskSubstitutions in
-    // bflat.csproj): resolve the zisk body substitutions against the CoreLib
+    // Self-check used by bflat's own build (see VerifyZkvmSubstitutions in
+    // bflat.csproj): resolve the zkVM body substitutions against the CoreLib
     // in the layout and stop before code generation. Same code path as a real
     // build, so it cannot drift from what a guest build would resolve.
-    private static Option<bool> VerifySubstitutionsOption = new Option<bool>("--verify-substitutions", "Resolve zisk body substitutions against the target CoreLib and exit");
+    private static Option<bool> VerifySubstitutionsOption = new Option<bool>("--verify-substitutions", "Resolve zkVM body substitutions against the target CoreLib and exit");
 
     private static Option<bool> NoLinkOption = new Option<bool>("-c", "Produce object file, but don't run linker");
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
@@ -848,7 +848,7 @@ internal class BuildCommand : CommandBase
             // private nested types (Random.CompatSeedImpl, ...) that ref
             // assemblies strip out.
             if (snippetFiles.Count > 0)
-                snippetsModulePath = ZiskSubstitutions.CompileSnippets(snippetFiles, referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
+                snippetsModulePath = ZkvmSubstitutions.CompileSnippets(snippetFiles, referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
             if (snippetsModulePath != null)
                 inputFilePaths[snippetsModuleName] = snippetsModulePath;
         }
@@ -870,13 +870,13 @@ internal class BuildCommand : CommandBase
             // an F/D opcode. If the snippet set no longer matches the CoreLib
             // in front of us, the honest outcome is no binary at all.
             EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
-            customIlProvider.BodySubstitutions = ZiskSubstitutions.BuildBodySubstitutions(typeSystemContext, snippetsModule);
-            Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
+            customIlProvider.BodySubstitutions = ZkvmSubstitutions.BuildBodySubstitutions(typeSystemContext, snippetsModule);
+            Console.WriteLine($"zkVM: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
 
             if (result.GetValueForOption(VerifySubstitutionsOption))
             {
                 Console.WriteLine(
-                    $"zisk: substitutions verified for libc={libc} against " +
+                    $"zkVM: substitutions verified for libc={libc} against " +
                     $"{typeSystemContext.SystemModule.Assembly.GetName().Name}");
                 return 0;
             }
@@ -1427,7 +1427,7 @@ internal class BuildCommand : CommandBase
                 if (reason == null)
                     continue;
 
-                if (ZiskSubstitutions.IsKnownDeadFloatMethod(emitted))
+                if (ZkvmSubstitutions.IsKnownDeadFloatMethod(emitted))
                 {
                     // The conv is real IL but sits in a block the JIT proves dead
                     // (a disabled-feature guard reached through a local, which the

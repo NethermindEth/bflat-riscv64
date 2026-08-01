@@ -208,7 +208,7 @@
   </Target>
 
   <!--
-    Resolve the zisk C#-snippet body substitutions against the CoreLib that
+    Resolve the zkVM C#-snippet body substitutions against the CoreLib that
     this build just unpacked into the layout, and fail the build if any of
     them no longer matches.
 
@@ -219,19 +219,19 @@
     so the same check runs at bflat build time against the same assemblies.
 
     Both zkVM libcs are checked: they select different module sets. Set
-    SkipZiskSubstitutionCheck=true to bypass (e.g. bisecting a blob).
+    SkipZkvmSubstitutionCheck=true to bypass (e.g. bisecting a blob).
   -->
-  <Target Name="VerifyZiskSubstitutions"
+  <Target Name="VerifyZkvmSubstitutions"
           AfterTargets="CreateCompilerLayout"
-          Condition="'$(SkipZiskSubstitutionCheck)' != 'true'">
+          Condition="'$(SkipZkvmSubstitutionCheck)' != 'true'">
     <PropertyGroup>
-      <_VerifyProbe>$(IntermediateOutputPath)zisk-subst-probe.cs</_VerifyProbe>
+      <_VerifyProbe>$(IntermediateOutputPath)zkvm-subst-probe.cs</_VerifyProbe>
     </PropertyGroup>
     <!-- The verification stops before code generation, but the pipeline up to
          it still needs an input assembly; a trivial one keeps it honest and
          fast. -->
     <WriteLinesToFile File="$(_VerifyProbe)"
-                      Lines="class ZiskSubstitutionProbe { static int Main() =&gt; 0%3B }"
+                      Lines="class ZkvmSubstitutionProbe { static int Main() =&gt; 0%3B }"
                       Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
     <!-- DOTNET_ROLL_FORWARD: the freshly built apphost targets net$(DotnetVersion).0,
@@ -240,13 +240,13 @@
          host aborts with "framework not found" (exit 150) before bflat runs,
          which looks exactly like a failed check. Same workaround BUILDING.md
          documents for running a net10.0 bflat on an 11-only image. -->
-    <Exec Command="&quot;$(RunCommand)&quot; build &quot;$(_VerifyProbe)&quot; --os linux --arch riscv64 --libc %(ZiskLibc.Identity) --verify-substitutions"
+    <Exec Command="&quot;$(RunCommand)&quot; build &quot;$(_VerifyProbe)&quot; --os linux --arch riscv64 --libc %(ZkvmLibc.Identity) --verify-substitutions"
           WorkingDirectory="$(MSBuildThisFileDirectory)"
           EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
   </Target>
   <ItemGroup>
-    <ZiskLibc Include="zisk" />
-    <ZiskLibc Include="zisk_sim" />
+    <ZkvmLibc Include="zisk" />
+    <ZkvmLibc Include="zisk_sim" />
   </ItemGroup>
 
   <Target Name="ValidateVariant"
