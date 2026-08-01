@@ -214,7 +214,31 @@ namespace __ZiskSnippets
             global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_ZonesThatUseLocationName")]
         private static extern ref string[] TzZonesThatUseLocationNameField(corelib::System.TimeZoneInfo _);
 
-        public static void TimeZoneInfoCctor()
+        // .NET 10 only: GetUtcOffsetFromUtc's whole-day range checks. .NET 11
+        // dropped both fields, so these accessors are named only by the .NET 10
+        // donor below - an accessor that is never called is never resolved, so
+        // referencing absent fields from the unused donor costs nothing.
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_maxDateOnly")]
+        private static extern ref global::System.DateTime TzMaxDateOnlyField(corelib::System.TimeZoneInfo _);
+
+        [global::System.Runtime.CompilerServices.UnsafeAccessor(
+            global::System.Runtime.CompilerServices.UnsafeAccessorKind.StaticField, Name = "s_minDateOnly")]
+        private static extern ref global::System.DateTime TzMinDateOnlyField(corelib::System.TimeZoneInfo _);
+
+        // Shared by both donors: everything the two runtimes have in common.
+        // Field values mirror the CoreLib sources exactly -
+        //   s_utcTimeZone            = CreateUtcTimeZone()
+        //   s_cachedData             = new CachedData()
+        //   Invariant                = AppContextConfigHelper.GetBooleanConfig(
+        //                                "System.TimeZoneInfo.Invariant",
+        //                                "DOTNET_SYSTEM_TIMEZONE_INVARIANT")   [default false]
+        //   s_daylightRuleMarker     = TransitionTime.CreateFixedDateRule(
+        //                                DateTime.MinValue.AddMilliseconds(2), 1, 1)
+        //   s_ZonesThatUseLocationName = { Minsk, Moscow, Simferopol, Apia, Pitcairn }
+        // - with the marker's 2 ms expressed as 20_000 ticks, which is the one
+        // and only reason this donor exists.
+        private static void TimeZoneInfoCctorCommon()
         {
             TzUtcTimeZoneField(null) = corelib::System.TimeZoneInfo.CreateUtcTimeZone();
             corelib::System.TimeZoneInfo.s_cachedData = new corelib::System.TimeZoneInfo.CachedData();
@@ -227,6 +251,24 @@ namespace __ZiskSnippets
             {
                 "Europe/Minsk", "Europe/Moscow", "Europe/Simferopol", "Pacific/Apia", "Pacific/Pitcairn",
             };
+        }
+
+        // .NET 11 field set: the five members above and nothing else.
+        public static void TimeZoneInfoCctor()
+        {
+            TimeZoneInfoCctorCommon();
+        }
+
+        // .NET 10 field set: the same five plus the whole-day range bounds.
+        // Values verbatim from TimeZoneInfo.cs - `new DateTime(9999, 12, 31)`
+        // and `new DateTime(1, 1, 2)`; both are integer date math, no FP.
+        // BuildZiskBodySubstitutions picks this variant when the original
+        // cctor is seen storing s_maxDateOnly / s_minDateOnly.
+        public static void TimeZoneInfoCctorWithDateBounds()
+        {
+            TimeZoneInfoCctorCommon();
+            TzMaxDateOnlyField(null) = new global::System.DateTime(9999, 12, 31);
+            TzMinDateOnlyField(null) = new global::System.DateTime(1, 1, 2);
         }
     }
 }

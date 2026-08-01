@@ -628,6 +628,11 @@ internal class BuildCommand : CommandBase
     private static Option<bool> NoGlobalizationOption = new Option<bool>("--no-globalization", "Disable support for globalization (use invariant mode)");
     private static Option<bool> NoExceptionMessagesOption = new Option<bool>("--no-exception-messages", "Disable exception messages");
     private static Option<bool> NoPieOption = new Option<bool>("--no-pie", "Do not generate position independent executable");
+    // Self-check used by bflat's own build (see VerifyZiskSubstitutions in
+    // bflat.csproj): resolve the zisk body substitutions against the CoreLib
+    // in the layout and stop before code generation. Same code path as a real
+    // build, so it cannot drift from what a guest build would resolve.
+    private static Option<bool> VerifySubstitutionsOption = new Option<bool>("--verify-substitutions", "Resolve zisk body substitutions against the target CoreLib and exit");
 
     private static Option<bool> NoLinkOption = new Option<bool>("-c", "Produce object file, but don't run linker");
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
@@ -712,6 +717,7 @@ internal class BuildCommand : CommandBase
             NoGlobalizationOption,
             NoExceptionMessagesOption,
             NoPieOption,
+            VerifySubstitutionsOption,
             SeparateSymbolsOption,
             CommonOptions.NoDebugInfoOption,
             MapFileOption,
@@ -1254,11 +1260,18 @@ internal class BuildCommand : CommandBase
         }
         else
         {
-            string[] expected =
+            // One donor per known CoreLib field set. .NET 11 initializes five
+            // statics; .NET 10 also stores the whole-day range bounds
+            // (s_maxDateOnly / s_minDateOnly) used by GetUtcOffsetFromUtc.
+            // Matching is on the exact SET, so a runtime that adds, renames or
+            // drops an initializer picks neither and is reported.
+            string[] common =
             {
                 "s_utcTimeZone", "s_cachedData", "<Invariant>k__BackingField",
                 "s_daylightRuleMarker", "s_ZonesThatUseLocationName",
             };
+            string[] withDateBounds =
+                common.Concat(new[] { "s_maxDateOnly", "s_minDateOnly" }).ToArray();
             var stored = new HashSet<string>();
             var ed = new ILEditor(EcmaMethodIL.Create((EcmaMethod)tzCctor));
             for (int i = 0; i < ed.Count; i++)
@@ -1266,17 +1279,31 @@ internal class BuildCommand : CommandBase
                     ed.Resolve(ed.TokenAt(ed.OffsetOf(i))) is FieldDesc fd)
                     stored.Add(fd.Name.ToString());
 
-            if (stored.SetEquals(expected))
+            if (stored.SetEquals(common))
             {
                 Add(tzCctor, Snippet("TimeZoneInfoCctor"), "TimeZoneInfo..cctor");
             }
+            else if (stored.SetEquals(withDateBounds))
+            {
+                Add(tzCctor, Snippet("TimeZoneInfoCctorWithDateBounds"),
+                    "TimeZoneInfo..cctor (with date bounds)");
+            }
             else
             {
-                drift.Add(
-                    "TimeZoneInfo..cctor field set changed (stores [" +
-                    string.Join(", ", stored) + "], donor initializes [" +
-                    string.Join(", ", expected) + "]) - update TimeZoneInfoCctor " +
-                    "in zisk.snippets.cs");
+                // An unknown field set means a runtime this donor pair has not
+                // been reviewed against. Not fatal: CustomILProvider's targeted
+                // rewrite replaces just the AddMilliseconds(2) subexpression and
+                // does not care about the surrounding initializers, so the FP
+                // still goes - and --error-on-float on the guest build is what
+                // proves it, rather than a guess here. But it does mean a donor
+                // needs writing, so say so loudly.
+                Console.Error.WriteLine(
+                    "warning: TimeZoneInfo..cctor stores an unknown field set [" +
+                    string.Join(", ", stored) + "]; expected either [" +
+                    string.Join(", ", common) + "] or [" +
+                    string.Join(", ", withDateBounds) + "]. No donor applied - " +
+                    "falling back to the targeted IL rewrite. Add a donor variant " +
+                    "for this runtime in zisk.snippets.cs.");
             }
         }
 
@@ -1711,6 +1738,23 @@ internal class BuildCommand : CommandBase
             EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
             customIlProvider.BodySubstitutions = BuildZiskBodySubstitutions(typeSystemContext, snippetsModule);
             Console.WriteLine($"zisk: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
+
+            if (result.GetValueForOption(VerifySubstitutionsOption))
+            {
+                Console.WriteLine(
+                    $"zisk: substitutions verified for libc={libc} against " +
+                    $"{typeSystemContext.SystemModule.Assembly.GetName().Name}");
+                return 0;
+            }
+        }
+        else if (result.GetValueForOption(VerifySubstitutionsOption))
+        {
+            // Refuse to report success for a target that has no substitutions
+            // to check - otherwise a typo in the verification step's arguments
+            // would look like a passing check.
+            Console.Error.WriteLine(
+                $"Error: --verify-substitutions requires --libc zisk or zisk_sim (got '{libc ?? "none"}')");
+            return 1;
         }
 
         ilProvider = new HardwareIntrinsicILProvider(
