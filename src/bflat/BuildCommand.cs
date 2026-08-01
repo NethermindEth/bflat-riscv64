@@ -71,6 +71,9 @@ internal class BuildCommand : CommandBase
     private static Option<bool> SymChartOption = new Option<bool>("--symchart", "Run readelf after linking and generate an HTML symbol-size chart");
     private static Option<bool> WrapCheckOption = new Option<bool>("--wrap-check", "Verify every --wrap= linker flag points to a real symbol; fails the build if any is missing");
     private static Option<bool> ErrorOnFloatOption = new Option<bool>("--error-on-float", "Scan the compiled (post-substitution) IL and fail the build if any method still carries floating point (float/double). Intended for no-FPU targets such as zisk.");
+    private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
+    private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
+    private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
@@ -169,6 +172,9 @@ internal class BuildCommand : CommandBase
             SymChartOption,
             WrapCheckOption,
             ErrorOnFloatOption,
+            ErrorOnFloatBinaryOption,
+            ErrorOnCompressedOption,
+            ErrorOnAtomicOption,
         };
         command.Handler = new BuildCommand();
 
@@ -1916,6 +1922,24 @@ internal class BuildCommand : CommandBase
                 patchElfArgs,
                 printCommands);
         }
+
+        // Exact whole-image ISA verification: decode the linked binary and fail
+        // the build if it carries an instruction class the target cannot run.
+        // patch_elf (zisk) does not touch .text, so outputFilePath's code is the
+        // same the guest executes.
+        if (exitCode == 0
+            && (result.GetValueForOption(ErrorOnFloatBinaryOption)
+                || result.GetValueForOption(ErrorOnCompressedOption)
+                || result.GetValueForOption(ErrorOnAtomicOption)))
+        {
+            int isaRc = IsaVerifier.Verify(outputFilePath,
+                result.GetValueForOption(ErrorOnFloatBinaryOption),
+                result.GetValueForOption(ErrorOnCompressedOption),
+                result.GetValueForOption(ErrorOnAtomicOption));
+            if (isaRc != 0)
+                exitCode = isaRc;
+        }
+
         if (!result.GetValueForOption(CommonOptions.KeepObjectOption))
         {
             try { File.Delete(objectFilePath); } catch { }
