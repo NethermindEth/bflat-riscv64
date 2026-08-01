@@ -35,6 +35,25 @@ __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer, 
     return 0;
 }
 
+/*@ // The runtime's non-cryptographic RNG XORs srand48(time(NULL)) over the
+    // secure bytes (minipal/random.c), which reintroduces wall-clock entropy
+    // even though the secure path above is deterministic. This is the source
+    // feeding Marvin.GenerateSeed (string.GetHashCode) and HashCode.s_seed, so
+    // an un-pinned value makes hash-ordered iteration (dictionary/set/frozen)
+    // non-reproducible across runs - fatal for a zkVM proof. Divert it to the
+    // same deterministic LCG. SystemNative_GetNonCryptographicallySecureRandomBytes
+    // reaches this symbol internally, so the single wrap covers both entries.
+    requires bufferLength >= 0;
+    requires \valid(buffer + (0 .. bufferLength - 1));
+    assigns buffer[0 .. bufferLength - 1], _next;
+*/
+void
+__wrap_minipal_get_non_cryptographically_secure_random_bytes(unsigned char *buffer, int bufferLength)
+{
+    for (int i = 0; i < bufferLength; i++)
+        buffer[i] = (unsigned char)(get_val() % 0x100);
+}
+
 /*@ // "OpenSSL is ready" - there is no OpenSSL; the RNG entry points above
     // and below are the only consumers.
     assigns \nothing;
