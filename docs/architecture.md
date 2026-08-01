@@ -31,11 +31,19 @@ One command — `bflat build` — does it end to end.
 
 Stock .NET NativeAOT already compiles C# to a native binary, but that
 binary assumes a kernel, dynamic linking, floating-point hardware, and
-compressed instructions — none of which a zkVM provides. Rather than fork
-the compiler, bflat-riscv64 keeps Microsoft's NativeAOT untouched and wraps
-it: a **link step** that swaps the unsupported OS and runtime calls for
-zkVM-safe ones, an **ELF postprocessor** that satisfies the prover's loader,
-and **target-specific memory layouts**. These extra stages run only for the
+compressed instructions — none of which a zkVM provides.
+
+bflat is a **compiler driver**: it contains no code generator of its own.
+Roslyn turns C# into IL, Microsoft's ILCompiler turns IL into a RISC-V64
+object, `lld` links it — all stock. What bflat adds is the adaptation
+around them: **ILC-stage substitutions** that take floating point out of
+managed bodies, a **link step** that swaps unsupported OS and runtime calls
+for zkVM-safe ones, an **ELF postprocessor** that satisfies the prover's
+loader, and **target-specific memory layouts**.
+
+That layering is a deliberate constraint rather than an accident: the aim
+is to keep .NET itself unpatched, so a version bump is a rebuild instead of
+a merge (see [Runtime](runtime.md)). These extra stages run only for the
 zkVM targets (`--libc zisk` / `--libc zisk_sim`); for every other target
 bflat behaves like upstream.
 
@@ -48,10 +56,12 @@ prover. The evidence is end-to-end rather than synthetic:
 - It drives Nethermind's
   [StatelessExecutor](https://github.com/NethermindEth/nethermind), a real
   Ethereum state-transition function in production C#, proven inside a zkVM
-  on every commit (see [Verification](verification.md)).
-- Every push rebuilds the compiler and all modules from source in CI
+  (see [Verification](verification.md)).
+- Every push rebuilds the driver and all modules from source in CI
   ([`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)),
-  then runs the bundled samples and the end-to-end proof on the public
+  alongside the contract gate, the module tests, fuzzing and the allocator
+  proof. Running the samples and proving the workload happen in a separate
+  pipeline that reports to the public
   [zk-testing dashboard](https://zk-testing.nethermind.dev).
 - **One source, three targets**: the identical `.cs` builds for the prover,
   QEMU, and native RISC-V64.
@@ -61,11 +71,15 @@ prover. The evidence is end-to-end rather than synthetic:
 | Stage | What happens | Unique to this fork? |
 |-------|--------------|----------------------|
 | **1 · Compile** | Microsoft's stock NativeAOT (ILC) compiles C# to a RISC-V64 object | No — upstream, unmodified |
+| **1.5 · Substitute** | Managed bodies that would emit floating point are replaced at ILC time | Yes |
 | **2 · Link** | `ld.lld` statically links it, swapping unsupported OS/runtime calls for the [link-time modules](modules.md) | Yes |
 | **3 · Postprocess** | A Python pass rewrites the ELF so the prover's loader accepts it (`zisk` only) | Yes |
 | **4 · Boot & run** | A tiny assembly entry point starts the runtime and calls `Main` — no kernel underneath | Yes |
 
-Everything is orchestrated by `BuildCommand.cs` in `src/bflat/`.
+The driver lives in `src/bflat/`: `BuildCommand.cs` orchestrates the
+pipeline, `ZkvmIL.cs` holds the IL-rewriting machinery, and
+`ZkvmSubstitutions.cs` holds the policy — which methods are replaced, and
+on which runtime versions.
 
 ---
 
@@ -101,13 +115,44 @@ When the target is `zisk` or `zisk_sim`, ILC is told:
 | `--no-pie` (implicit for zisk) | Position-independent code is incompatible with the fixed memory layout |
 | `--feature *` | Various opt-outs that prune reflection-heavy code paths |
 
-bflat also drops in a `CustomILProvider` that intercepts a handful of
-methods (e.g. `OutOfMemoryException.GetDefaultMessage`) and replaces
-their IL with trivial bodies — these methods would otherwise drag in
-globalization tables that we cannot honour. References are resolved
-against the runtime's `lib/<arch>/<os>/<libc>` directory, downloaded
-from the [dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv)
-release matching the bflat version.
+References are resolved against the runtime's `lib/<os>/<arch>/<libc>`
+directory, downloaded from the
+[dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv) release
+matching the bflat version and variant.
+
+## Stage 1.5 — ILC-stage substitutions
+
+The target has no FPU, and the prover rejects an F/D opcode wherever it
+appears — including in code that never executes, because the transpiler
+translates the whole `.text`. Several CoreLib methods carry floating point
+for reasons that are meaningless here: a thread-pool tuner sampling worker
+counts, `Hashtable`'s `float` load factor, a hash helper bounding a loop
+with `Math.Sqrt`. Rather than patch the runtime, those bodies are replaced
+while ILC is compiling, by three mechanisms:
+
+| Mechanism | Used for | Lives in |
+|-----------|----------|----------|
+| **ILLink substitutions** | Methods that fold to a constant or can be removed outright | `modules/zisk_subst/zisk.substitutions.xml` |
+| **C# snippets** | Whole-body replacements too complex to express as a constant — the compat PRNG, the `Hashtable` ctor family, `ValueType` hashing | `modules/zisk_subst/zisk.snippets.cs` |
+| **Targeted IL rewrites** | The handful of cases where only a subexpression is FP-carrying | `ZkvmIL.cs` |
+
+The snippets are ordinary C#, compiled at guest-build time against the
+guest's own reference set with accessibility checks disabled, so a snippet
+may name private nested types. Letting Roslyn produce the replacement body
+is far less error-prone than hand-emitting IL — and the arithmetic is
+written to be exact rather than approximate: `Hashtable`'s `0.72f` load
+factor becomes integer `× 72 / 100`, and a `TimeZoneInfo` initializer's
+`AddMilliseconds(2)` becomes the tick-exact `20_000`.
+
+**Drift is a hard error.** If a substituted method is renamed or
+re-signatured by a runtime update, the substitution silently stops applying
+and the FP-carrying original stays in the image — this happened when
+`Number.FormatFloat`'s signature changed in .NET 11. So every target must
+resolve, or the build fails with the full list of mismatches. Substitutions
+whose donor reproduces an entire method body additionally verify the
+original's shape: the `TimeZoneInfo` cctor donor is applied only while the
+original still stores exactly the fields it initializes, and there is one
+donor variant per known runtime field set.
 
 ### zkVM RyuJIT codegen knobs
 

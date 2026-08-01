@@ -3,9 +3,11 @@ layout: default
 title: Verification
 eyebrow: How we know it works
 lead: >
-  Every change goes through three independent gates: a source build, a
-  sample regression run, and an end-to-end zkVM proof. This page explains
-  what each one tests and where to read the results.
+  A zkVM guest fails late and quietly: a stray floating-point instruction
+  or a silently dropped substitution shows up as a rejected opcode in the
+  prover, far from the change that caused it. So the checks are layered to
+  fail as early as possible — from contracts on individual C functions up
+  to an end-to-end proof.
 prev: /build/
 ---
 
@@ -13,118 +15,191 @@ prev: /build/
   {% include verify-flow.html %}
 </div>
 
-## Three gates, three failure modes
+## The layers
 
-| Gate | What it catches | Where to read it |
-|------|-----------------|------------------|
-| **Source build** (`build-riscv64.yml`) | Renamed musl/runtime symbols, unresolved wraps, broken module compilation, missing toolchain. | [Actions tab](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml) |
-| **Sample regression** | Behavioural drift in the runtime shims — a soft-float helper that suddenly gets reached, an allocator that starts handing out misaligned pointers. | [zk-testing dashboard](https://zk-testing.nethermind.dev) |
-| **End-to-end proof** | Real workload regressions: a state-transition function that produces wrong output, a proof that takes 10× longer to generate, a binary that no longer loads in the prover. | [zk-testing dashboard](https://zk-testing.nethermind.dev) project 1 |
+Where each one runs matters, so the table says so explicitly. **CI** means a
+job in this repository's
+[`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml),
+which fires on every push and pull request. **Build** means it is part of
+building bflat or a guest, wherever that happens. **Pipeline** means the
+separate zk-testing pipeline, which is not driven from this repository.
 
-The README badges at the top of the repository surface the latest status
-of each gate.
+| Layer | Runs in | What it proves | What it catches |
+|-------|---------|----------------|-----------------|
+| **ACSL contracts** | CI | Every function in the C modules carries a formal contract and parses under Frama-C | A new function landing without a specification; a module that stops parsing |
+| **Module unit tests** | CI | Each module function behaves as specified, executing on the real ISA under qemu | Wrong return values, off-by-one stores, broken register contracts |
+| **Fuzzing** | CI | The two input-driven components survive arbitrary input under ASan/UBSan | Memory errors and arithmetic UB in the printf parser and the allocator |
+| **CBMC proof** | CI | The allocator's bounds properties hold for *all* 64-bit sizes | Pointer arithmetic that wraps for inputs no test would think to try |
+| **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
+| **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for both zkVM targets | Renamed musl symbols, unresolved wraps, broken postprocessing |
+| **Substitution check** | Build | Every zkVM body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
+| **`--error-on-float`** | Build, opt-in | No emitted method contains a floating-point conversion | FP creeping back in through any path at all |
+| **Sample regression** | Pipeline | The samples still produce their known-good output | Behavioural drift in the runtime shims |
+| **End-to-end proof** | Pipeline | A real workload proves correctly inside Zisk | Wrong output, load failures, proof-time regressions |
 
-## Gate 1 — `build-riscv64.yml`
+Two things that are easy to assume and are *not* true: the repository's CI
+does not execute a built guest — the smoke step links one for each zkVM
+target and checks the ELF, nothing more — and `--error-on-float` is a flag
+you pass, not something CI turns on for you.
 
-The GitHub Actions workflow does the same thing `build.sh all riscv64`
-does locally:
+## Contracts on the native modules
 
-```yaml
-- run: ./build.sh modules riscv64
-- run: ./build.sh bflat   riscv64
-- run: ./build.sh layouts riscv64
+Every function in the C modules under `src/bflat/modules/` carries a
+[Frama-C](https://frama-c.com/) (ACSL) contract stating what it may touch
+and what it guarantees. The CI gate refuses a module that stops parsing or
+a defined function without a contract:
+
+```console
+$ python3 src/bflat/scripts/check_acsl.py
+module            defined  annotated  status
+gs_cookie               0          0  ok
+nofp                  105        105  ok
+pal                    47         47  ok
+rhp                    16         16  ok
+...
 ```
 
-It runs in the project's
-[`Dockerfile.build`](https://github.com/NethermindEth/bflat-riscv64/blob/master/Dockerfile.build)
-image, which contains the full RISC-V64 cross-toolchain, the .NET SDK,
-and the Python dependencies for `patch_elf.py` (LIEF and pyelftools).
-Each module compiles with its own command line:
+One detail worth knowing when editing: annotations inside macro bodies —
+nofp generates its 100+ trap stubs from a macro — are only visible to
+Frama-C when the preprocessor keeps comments through expansion, so the
+checker passes `-cpp-extra-args=-CC`. C++ modules carry ACSL++ annotations
+as documentation (plain Frama-C does not parse C++), and assembly modules
+are out of scope.
 
-- `module.c` → `riscv64-linux-gnu-gcc -march=rv64imad`
-- `module.S` → `riscv64-linux-gnu-as --march=rv64ima --mabi=lp64`
-- `module.cpp` → `riscv64-linux-gnu-g++ -march=rv64imad`
+## Unit tests on the real ISA
 
-Failure modes this gate catches:
+The suites in `src/bflat/modules/tests/` are cross-compiled for riscv64 and
+executed under qemu-user, so module code runs on the guest ISA rather than
+a host approximation. That is what makes some of them possible at all:
 
-- A wrap target that no longer exists in upstream musl (the linker
-  produces an undefined-symbol error during the layouts build).
-- A module that fails to compile because a header changed (immediate
-  compiler error).
-- A python dependency drift in `patch_elf.py` (caught when the layouts
-  pipeline tries to invoke the postprocessor).
-- A change to `BuildCommand.cs` that breaks the cross-architecture path
-  for x86-hosted builds (the layouts target builds both Linux- and
-  Windows-hosted variants).
+- **The raw ZisK exit ecall is tested for real.** `a7 == 93` is also Linux
+  riscv64 `__NR_exit`, so `__wrap_exit(42)` genuinely terminates a forked
+  child with status 42.
+- **Assembly modules are covered.** A small shim marshals the `t3/t4/t5`
+  register convention that the C ABI cannot express, so the GC write
+  barriers are tested directly — including their version-dependent `t3`
+  post-increment, pinned from both sides.
+- **The snapshot trampoline is exercised end to end.** `_zkvm_restore`'s
+  blob lives in `.rodata`, so the test `mprotect`s it writable, fills it
+  the way `bflat rebake` would, and an assembly landing pad records the
+  register file it was resumed with.
 
-## Gate 2 — Sample regression
+```console
+$ ./src/bflat/modules/tests/run_tests.sh
+pal                137 passed, 0 failed
+nofp               105 passed, 0 failed
+rhp_native(net10)   26 passed, 0 failed
+...
+module unit tests: all suites passed
+```
 
-Every directory under [`samples/`](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples)
-is built with `--libc zisk_sim` and run under `qemu-riscv64`. Output is
+nofp's stub list is generated from the module source at test-build time, so
+a stub added to the module cannot silently miss coverage.
+
+## Fuzzing and machine-checked proofs
+
+Two components take untrusted input and deserve more than examples: pal's
+hand-written `vfprintf` and the bump allocator. Both have libFuzzer targets
+built for the host with ASan and UBSan:
+
+```console
+$ FUZZ_TIME=60 ./src/bflat/modules/tests/fuzz/run_fuzz.sh
+```
+
+The allocator target drives random operation sequences — malloc, realloc,
+calloc, aligned_alloc, mark, reset — with unconstrained 64-bit sizes, and
+asserts the allocator invariants after every step.
+
+On top of that, `tests/verify/` proves the allocator's bounds properties
+with [CBMC](https://www.cbmc.diffblue.com/) for *all* sizes and reachable
+states rather than sampled ones. The harness includes the real
+`pal/module.c` with its heap-window symbols re-pointed at a local array.
+The proof is mutation-tested: restoring a pre-fix bounds check makes CBMC
+report the wild write, so a passing run is not vacuous.
+
+## Keeping the substitutions honest
+
+The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
+are the layer most exposed to runtime drift, and the failure is silent by
+nature: if a substituted CoreLib method is renamed or re-signatured, the
+original FP-carrying body simply stays in the image. That has happened —
+`Number.FormatFloat`'s signature changed in .NET 11, the entry stopped
+matching, and floating point came back.
+
+So a substitution that no longer resolves is a hard error, not a skipped
+entry, and it is checked twice:
+
+- **When bflat is built.** The CoreLib guests will use is already unpacked
+  into the layout, so the driver resolves every substitution against it and
+  fails the build on any mismatch.
+- **On every guest build.** The same code path runs again before code
+  generation — which also covers a layout someone modified by hand.
+
+The `--error-on-float` gate is the backstop: it scans every *emitted*
+method for FP conversions. Methods that carry a conversion inside a block
+the target provably never runs are listed explicitly and reported as
+warnings rather than failures.
+
+## Analyzers on the driver
+
+The C# driver builds with every .NET analyzer enabled (`AnalysisMode=All`)
+on both .NET 10 and .NET 11, with `-warnaserror`. `.editorconfig` decides
+which rules are errors, which stay warnings, and which are off — each
+exemption with a reason next to it. The rule set is tiered rather than
+maximal on purpose: at full strictness the codebase reports ~1100
+diagnostics, the overwhelming majority formatting preferences on code
+inherited from upstream. Escalating those would mean a thousand mechanical
+edits and zero bugs found; the rules kept as errors are defect classes —
+dead conditions, leaked disposables, inexact reads, ignored results.
+
+## Samples and the end-to-end proof
+
+Both of these live in the zk-testing pipeline rather than in this
+repository's workflow — nothing in `build-riscv64.yml` runs a guest, so the
+first place a binary is actually *executed* is there.
+
+The directories under
+[`samples/`](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples)
+are built with `--libc zisk_sim` and run under `qemu-riscv64`, with output
 checked against a known-good baseline.
 
-## Gate 3 — End-to-end zkVM proofs
-
-The Nethermind
-[StatelessExecutor](https://github.com/NethermindEth/nethermind) — a
-real Ethereum state-transition function written in real production C# —
-is built with `--libc zisk` and proven inside Zisk on every commit.
-Results are pushed to the
-[zk-testing dashboard](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1).
-
-The dashboard surfaces three things:
+The real workload is Nethermind's
+[StatelessExecutor](https://github.com/NethermindEth/nethermind) — an
+Ethereum state-transition function in production C# — built with
+`--libc zisk` and proven inside Zisk. Results land on the
+[zk-testing dashboard](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1),
+which tracks:
 
 <dl class="kv">
-  <dt>Proof success</dt><dd>A green badge on the README means the latest
-    commit produced a valid proof. A red badge means the binary either
-    failed to load, crashed during execution, or produced output that
-    didn't match the canonical reference.</dd>
+  <dt>Proof success</dt><dd>Whether the latest commit produced a valid
+    proof, or the binary failed to load, crashed, or produced output that
+    didn't match the reference.</dd>
   <dt>Proof timing</dt><dd>How long Zisk takes to prove the workload. A
-    sudden regression usually means a runtime shim started doing more
-    work — for example, the bump allocator hitting a different code path
-    that triggers many more allocations.</dd>
-  <dt>Binary size</dt><dd>The size of the postprocessed ELF. Tracks the
-    cost of the workload in prover steps and is a leading indicator for
-    the previous metric.</dd>
+    sudden regression usually means a runtime shim started doing more work
+    — for example the allocator hitting a path that allocates far more.</dd>
+  <dt>Binary size</dt><dd>The size of the postprocessed ELF, which tracks
+    the cost in prover steps and leads the timing metric.</dd>
 </dl>
 
-## Manual smoke tests
+## Running the checks locally
 
-Before any release, the maintainers run a short manual checklist that
-covers cases CI can't easily exercise:
+```console
+$ ./src/bflat/modules/tests/run_tests.sh        # unit tests (qemu)
+$ FUZZ_TIME=60 ./src/bflat/modules/tests/fuzz/run_fuzz.sh
+$ ./src/bflat/modules/tests/verify/run_verify.sh   # CBMC proofs
+$ python3 src/bflat/scripts/check_acsl.py       # contract gate
+```
 
-- Build a fresh layout from a clean checkout in the Docker image.
-- Build [`bflat-libziskos`](https://github.com/NethermindEth/bflat-libziskos)
-  and link it into a sample with `--extlib`.
-- Smoke-test the resulting binary under both `zisk_sim` (QEMU) and the
-  Zisk prover.
-- Walk a `--print-fn-boundaries` report by eye looking for unexpected
-  function shapes (anything where EH and objdump disagree by more than
-  a single instruction is investigated).
-- Verify the symbol-size HTML chart (`--symchart`) for the Nethermind
-  state-transition build, watching for sudden jumps in any single
-  module's contribution.
+[BUILDING.md](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md)
+lists what each needs. Two environment quirks are worth knowing up front:
+Frama-C is packaged as `frama-c-base` on Debian bookworm and absent from
+recent Ubuntu archives, and on Apple silicon (Docker via Rosetta) the
+designed-fault tests need `TEST_SKIP_FAULTS=1` — nested emulation hangs on
+guest faults instead of delivering the signal.
 
-## Reading the regression dashboard
+## When a guest misbehaves
 
-The badge at the top of the README links to the project page on
-`zk-testing.nethermind.dev`. The page shows:
-
-- Per-commit proof status (success / failure / not yet attempted).
-- A trendline of proof generation time over the last N commits.
-- The diff between the current commit's output and the reference.
-- Build artifacts: the `.elf`, the `.symchart.html`, and the
-  `.print-fn-boundaries.txt` for inspection.
-
-If a commit regresses any gate, the bisect is usually a one-step
-operation against the diff in the dashboard. The combination of a
-loud, deterministic failure mode (gate 2) and a precise quantitative
-signal (gate 3) means even subtle behavioural drifts have a place to
-surface.
-
-## When in doubt
-
-Run the simulator path locally:
+Run the simulator path first:
 
 ```console
 $ bflat build samples/HelloWorld/hello.cs --os linux --libc zisk_sim -x
@@ -132,6 +207,6 @@ $ qemu-riscv64 ./hello
 Hello world!
 ```
 
-If `--libc zisk_sim` works and the equivalent `--libc zisk` build
-crashes inside Zisk, the difference is almost always in the
-postprocessor — `--print-fn-boundaries` is the next step.
+If `--libc zisk_sim` works and the equivalent `--libc zisk` build fails
+inside Zisk, the difference is almost always the postprocessor —
+`--print-fn-boundaries` is the next step.
