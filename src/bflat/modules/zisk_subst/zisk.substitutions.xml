@@ -131,15 +131,17 @@
       <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
       <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
       <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
-      <method signature="System.Int32 CompareTo(System.Double)" body="remove" />
-      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
-      <!-- Double.Equals is NOT removed: ValueType.Equals for a struct with a
-           double field cannot use the byte-wise fast path (it must honor
-           -0.0 == +0.0), so it dispatches field-by-field into Double.Equals.
-           That path is normal, not rare - removing it (throw) fail-fasts every
-           double-carrying struct's Equals (and hence any hash/sorted lookup
-           keyed on one). In the reachable path the comparison lowers FP-free
-           (verified: the error-on-float gate stays clean), so keep the body. -->
+      <!-- Double.Equals and Double.CompareTo are NOT removed: they are the leaf
+           IEquatable/IComparable primitives that ValueType.Equals (field-by-
+           field, since a double field forbids the byte-wise fast path: -0.0 ==
+           +0.0) and the generic collections reach for ANY struct with a double
+           field, plus Comparer&lt;double&gt;.Default / Array.Sort / SortedSet /
+           LINQ OrderBy on double keys. Those paths are normal, not rare -
+           removing a body (throw) fail-fasts every such lookup. Both lower
+           FP-free in the reachable path (verified: the error-on-float gate
+           stays clean), so keep the real bodies. General rule: never
+           body="remove" a primitive's Equals/GetHashCode/CompareTo - the trim
+           graph keeps them reachable reflectively. -->
     </type>
     <type fullname="System.Single">
       <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
@@ -149,10 +151,9 @@
       <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
       <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
       <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
-      <method signature="System.Int32 CompareTo(System.Single)" body="remove" />
-      <method signature="System.Int32 CompareTo(System.Object)" body="remove" />
-      <!-- Single.Equals kept for the same reason as Double.Equals above:
-           reachable from ValueType.Equals on float-field structs, FP-free there. -->
+      <!-- Single.Equals and Single.CompareTo kept for the same reason as the
+           Double pair above: reachable from ValueType.Equals / Comparer /
+           sorted collections on float-field or float keys, FP-free there. -->
     </type>
 
     <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
