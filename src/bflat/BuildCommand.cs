@@ -1304,6 +1304,21 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("RiscV64ElideLeafRaSave=1");
         }
 
+        // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
+        // extension, and a single-threaded guest needs no hardware atomics. Turn
+        // the JIT off both so the whole managed .text stays 32-bit and lock-free
+        // (RyuJIT otherwise emits c.add/c.mv in switch dispatch, and lr/sc + amo*
+        // for Interlocked). Only for zisk/zisk_sim - a real riscv64+musl target
+        // wants C and A. Requires the cross-JIT built with dotnet-riscv fixup
+        // 24/25 (EnableRiscV64Compressed / EnableRiscV64Atomic); an unpatched JIT
+        // ignores unknown knobs. Verified whole-image with --error-on-compressed
+        // / --error-on-atomic.
+        if (libc == "zisk" || libc == "zisk_sim")
+        {
+            backendOptions.Add("EnableRiscV64Compressed=0");
+            backendOptions.Add("EnableRiscV64Atomic=0");
+        }
+
         builder
             .UseInstructionSetSupport(instructionSetSupport)
             .UseBackendOptions(backendOptions)
