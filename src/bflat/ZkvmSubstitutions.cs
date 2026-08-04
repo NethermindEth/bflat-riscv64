@@ -266,6 +266,26 @@ class ZkvmSubstitutions
         Add(vtHash, Snippet("ValueTypeRegularHashCode"),
             "ValueType.RegularGetValueTypeHashCode(3 params)");
 
+        // System.Double / System.Single: the object overloads of Equals and
+        // CompareTo. They cannot be body="remove"d (see the note in
+        // zisk.substitutions.xml - they are what ValueType.Equals and the
+        // generic comparers reach for), and the originals compare in FP
+        // registers, so they are the one FP source that survives into an
+        // ordinary guest. The snippets redo the same IEEE comparison on the raw
+        // bit patterns. The by-value overloads are deliberately NOT listed: see
+        // the comment above the snippets.
+        var objectType = ctx.GetWellKnownType(WellKnownType.Object);
+        var doubleType = Type(ctx.SystemModule, "System", "Double");
+        var singleType = Type(ctx.SystemModule, "System", "Single");
+        Add(Method(doubleType, "Equals", objectType), Snippet("DoubleEqualsObject"),
+            "Double.Equals(object)");
+        Add(Method(doubleType, "CompareTo", objectType), Snippet("DoubleCompareToObject"),
+            "Double.CompareTo(object)");
+        Add(Method(singleType, "Equals", objectType), Snippet("SingleEqualsObject"),
+            "Single.Equals(object)");
+        Add(Method(singleType, "CompareTo", objectType), Snippet("SingleCompareToObject"),
+            "Single.CompareTo(object)");
+
         // System.Collections.Frozen.LengthBuckets. The whole assembly is absent
         // unless the guest references Immutable, so the TYPE may legitimately
         // not resolve - but once it does, the method must.

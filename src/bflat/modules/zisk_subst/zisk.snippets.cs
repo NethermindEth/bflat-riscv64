@@ -176,6 +176,138 @@ namespace __ZiskSnippets
             }
         }
 
+        // ---- System.Double / System.Single Equals+CompareTo -----------------
+        // These are the leaf IEquatable/IComparable primitives that ValueType.
+        // Equals (field-by-field, since a double field forbids the byte-wise
+        // fast path: -0.0 == +0.0), Comparer<T>.Default, Array.Sort, sorted
+        // collections and LINQ OrderBy reach for any double/float key or any
+        // struct carrying one. Those paths are normal, not rare, so the bodies
+        // cannot be body="remove"d (that fail-fasts every such lookup) - but the
+        // originals compare in FP registers (fld + feq.d/flt.d), which an FPU-
+        // less zkVM rejects at ELF->ROM conversion whether or not the code ever
+        // runs. These replacements do the identical IEEE-754 comparison on the
+        // raw bit patterns with integer instructions only.
+        //
+        // Only the object overloads are replaced: both operands then come from
+        // memory (the boxed payload and the `this` byref), so nothing ever needs
+        // an FP register. The double/float overloads take their argument by
+        // value, so eliminating FP there depends on the argument-passing ABI and
+        // is a separate question; they are not compiled by any guest so far, and
+        // the --error-on-float-binary gate is what would catch it if one were.
+
+        private static bool DoubleBitsIsNaN(long bits)
+            => (bits & 0x7FFF_FFFF_FFFF_FFFF) > 0x7FF0_0000_0000_0000;
+
+        // The IEEE total-order key: non-negative patterns are already ordered,
+        // negative ones are mirrored. long.MinValue - bits (rather than an XOR
+        // of the magnitude bits) maps -0.0 to 0, the same key as +0.0, which is
+        // what makes -0.0 compare EQUAL to +0.0 as IEEE requires.
+        private static long DoubleBitsKey(long bits)
+            => bits < 0 ? long.MinValue - bits : bits;
+
+        // Original: `m_value == obj || (IsNaN(m_value) && IsNaN(obj))`, i.e. NaN
+        // equals NaN here (unlike ==), and +0.0 equals -0.0.
+        private static bool DoubleBitsEqual(long a, long b)
+        {
+            if (DoubleBitsIsNaN(a) || DoubleBitsIsNaN(b))
+                return DoubleBitsIsNaN(a) && DoubleBitsIsNaN(b);
+            return a == b || ((a | b) << 1) == 0; // the << 1 drops the sign: ±0
+        }
+
+        // Original: <, >, == in order, then NaN handling - NaN sorts below
+        // everything and equals itself.
+        private static int DoubleBitsCompare(long a, long b)
+        {
+            if (DoubleBitsIsNaN(a))
+                return DoubleBitsIsNaN(b) ? 0 : -1;
+            if (DoubleBitsIsNaN(b))
+                return 1;
+            long ka = DoubleBitsKey(a), kb = DoubleBitsKey(b);
+            return ka < kb ? -1 : (ka > kb ? 1 : 0);
+        }
+
+        private static bool SingleBitsIsNaN(int bits)
+            => (bits & 0x7FFF_FFFF) > 0x7F80_0000;
+
+        private static int SingleBitsKey(int bits)
+            => bits < 0 ? int.MinValue - bits : bits;
+
+        private static bool SingleBitsEqual(int a, int b)
+        {
+            if (SingleBitsIsNaN(a) || SingleBitsIsNaN(b))
+                return SingleBitsIsNaN(a) && SingleBitsIsNaN(b);
+            return a == b || ((a | b) << 1) == 0;
+        }
+
+        private static int SingleBitsCompare(int a, int b)
+        {
+            if (SingleBitsIsNaN(a))
+                return SingleBitsIsNaN(b) ? 0 : -1;
+            if (SingleBitsIsNaN(b))
+                return 1;
+            int ka = SingleBitsKey(a), kb = SingleBitsKey(b);
+            return ka < kb ? -1 : (ka > kb ? 1 : 0);
+        }
+
+        // `this` on a struct instance method is a byref, so the stand-in first
+        // parameter is `ref double`. Reading it (and the boxed payload reached
+        // through Unsafe.Unbox, which yields a byref into the box rather than
+        // loading the value) through Unsafe.As gives an integer load - a plain
+        // `(double)obj` would be unbox.any and put the value in an FP register.
+        // The type test stays a bare `is`, with no pattern variable, for the
+        // same reason.
+
+        public static bool DoubleEqualsObject(ref double self, object obj)
+        {
+            if (!(obj is double))
+                return false;
+            return DoubleBitsEqual(
+                global::System.Runtime.CompilerServices.Unsafe.As<double, long>(ref self),
+                global::System.Runtime.CompilerServices.Unsafe.As<double, long>(
+                    ref global::System.Runtime.CompilerServices.Unsafe.Unbox<double>(obj)));
+        }
+
+        // The message is SR.Arg_MustBeDouble / SR.Arg_MustBeSingle spelled out.
+        // Naming SR here instead would root the whole ResourceManager reader
+        // (ResourceReader.LoadObjectV2 -> BinaryReader.ReadDouble/ReadSingle),
+        // which carries FP of its own - the resource-string folding that turns
+        // SR.get_Xxx into a literal for a CoreLib body does not reach a
+        // transplanted one. The stock body ends up emitting exactly this
+        // literal anyway.
+        public static int DoubleCompareToObject(ref double self, object value)
+        {
+            if (value == null)
+                return 1;
+            if (!(value is double))
+                throw new global::System.ArgumentException("Object must be of type Double.");
+            return DoubleBitsCompare(
+                global::System.Runtime.CompilerServices.Unsafe.As<double, long>(ref self),
+                global::System.Runtime.CompilerServices.Unsafe.As<double, long>(
+                    ref global::System.Runtime.CompilerServices.Unsafe.Unbox<double>(value)));
+        }
+
+        public static bool SingleEqualsObject(ref float self, object obj)
+        {
+            if (!(obj is float))
+                return false;
+            return SingleBitsEqual(
+                global::System.Runtime.CompilerServices.Unsafe.As<float, int>(ref self),
+                global::System.Runtime.CompilerServices.Unsafe.As<float, int>(
+                    ref global::System.Runtime.CompilerServices.Unsafe.Unbox<float>(obj)));
+        }
+
+        public static int SingleCompareToObject(ref float self, object value)
+        {
+            if (value == null)
+                return 1;
+            if (!(value is float))
+                throw new global::System.ArgumentException("Object must be of type Single.");
+            return SingleBitsCompare(
+                global::System.Runtime.CompilerServices.Unsafe.As<float, int>(ref self),
+                global::System.Runtime.CompilerServices.Unsafe.As<float, int>(
+                    ref global::System.Runtime.CompilerServices.Unsafe.Unbox<float>(value)));
+        }
+
         // ---- System.Collections.Frozen.LengthBuckets ------------------------
         // CreateLengthBucketsArrayIfAppropriate rates a by-length string-lookup
         // optimization in double ratio math. Returning null = "use the fallback

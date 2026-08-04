@@ -137,11 +137,18 @@
            +0.0) and the generic collections reach for ANY struct with a double
            field, plus Comparer&lt;double&gt;.Default / Array.Sort / SortedSet /
            LINQ OrderBy on double keys. Those paths are normal, not rare -
-           removing a body (throw) fail-fasts every such lookup. Both lower
-           FP-free in the reachable path (verified: the error-on-float gate
-           stays clean), so keep the real bodies. General rule: never
-           body="remove" a primitive's Equals/GetHashCode/CompareTo - the trim
-           graph keeps them reachable reflectively. -->
+           removing a body (throw) fail-fasts every such lookup. General rule:
+           never body="remove" a primitive's Equals/GetHashCode/CompareTo - the
+           trim graph keeps them reachable reflectively.
+           They do NOT lower FP-free, though: the object overloads compare in
+           FP registers (fld + feq.d/flt.d), which ziskemu rejects at ELF to ROM
+           conversion no matter whether the code runs. An earlier version of
+           this comment claimed otherwise on the strength of the IL-level
+           error-on-float gate, which structurally cannot see them: their IL is
+           ceq/clt over float64, with no conv.r8 or ldc.r8 for the scanner to
+           find. Only the binary gate (error-on-float-binary) catches it. Both
+           bodies are now replaced by the bit-pattern snippets in
+           zisk.snippets.cs (DoubleEqualsObject / DoubleCompareToObject). -->
     </type>
     <type fullname="System.Single">
       <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
@@ -153,7 +160,10 @@
       <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
       <!-- Single.Equals and Single.CompareTo kept for the same reason as the
            Double pair above: reachable from ValueType.Equals / Comparer /
-           sorted collections on float-field or float keys, FP-free there. -->
+           sorted collections on float-field or float keys. Their object
+           overloads carry the same flw + feq.s/flt.s and are replaced by the
+           same bit-pattern treatment (SingleEqualsObject /
+           SingleCompareToObject in zisk.snippets.cs). -->
     </type>
 
     <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
@@ -186,6 +196,28 @@
       <method signature="System.Object ParseConstantNumericValue(Internal.Metadata.NativeFormat.Handle,Internal.Metadata.NativeFormat.MetadataReader)" body="remove" />
       <method signature="System.Single[] ToArray(Internal.Metadata.NativeFormat.SingleCollection)" body="remove" />
       <method signature="System.Double[] ToArray(Internal.Metadata.NativeFormat.DoubleCollection)" body="remove" />
+    </type>
+  </assembly>
+
+  <!-- BigInteger decimal formatting. The FP is not in the digit conversion but
+       in one buffer-size estimate: the result length is guessed as
+       bits * 1.070328873472 / 32 (log10(2)-ish, in double), which lowers to
+       fcvt.d.w + fmul.d + fcvt.w.d - the last FP left in a guest once the
+       Double/Single comparison snippets are in place. Removing the body makes
+       BigInteger.ToString / TryFormat throw, matching the policy already
+       applied to FormatFloat above: numeric formatting that needs an FPU is
+       not available on this target. Verified dead for the Nethermind stateless
+       guest (the whole path was replaced with faulting stores in the linked
+       ELF and a full block execution still completed), so nothing reachable
+       loses a working ToString today - but a guest that DOES format a
+       BigInteger will fail fast here, loudly, rather than silently.
+       The assembly is absent unless the guest references System.Runtime.
+       Numerics, in which case this block is simply not applied.
+       The signature spells the method's own generic parameter by name (TChar),
+       as the FormatFloat note above explains. -->
+  <assembly fullname="System.Runtime.Numerics">
+    <type fullname="System.Number">
+      <method signature="System.String FormatBigInteger`1(System.Boolean,System.Numerics.BigInteger,System.String,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo,System.Span`1&lt;TChar&gt;,System.Int32&amp;,System.Boolean&amp;)" body="remove" />
     </type>
   </assembly>
 </linker>
