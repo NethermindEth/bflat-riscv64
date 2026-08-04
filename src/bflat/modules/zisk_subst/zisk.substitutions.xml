@@ -199,25 +199,4 @@
     </type>
   </assembly>
 
-  <!-- BigInteger decimal formatting. The FP is not in the digit conversion but
-       in one buffer-size estimate: the result length is guessed as
-       bits * 1.070328873472 / 32 (log10(2)-ish, in double), which lowers to
-       fcvt.d.w + fmul.d + fcvt.w.d - the last FP left in a guest once the
-       Double/Single comparison snippets are in place. Removing the body makes
-       BigInteger.ToString / TryFormat throw, matching the policy already
-       applied to FormatFloat above: numeric formatting that needs an FPU is
-       not available on this target. Verified dead for the Nethermind stateless
-       guest (the whole path was replaced with faulting stores in the linked
-       ELF and a full block execution still completed), so nothing reachable
-       loses a working ToString today - but a guest that DOES format a
-       BigInteger will fail fast here, loudly, rather than silently.
-       The assembly is absent unless the guest references System.Runtime.
-       Numerics, in which case this block is simply not applied.
-       The signature spells the method's own generic parameter by name (TChar),
-       as the FormatFloat note above explains. -->
-  <assembly fullname="System.Runtime.Numerics">
-    <type fullname="System.Number">
-      <method signature="System.String FormatBigInteger`1(System.Boolean,System.Numerics.BigInteger,System.String,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo,System.Span`1&lt;TChar&gt;,System.Int32&amp;,System.Boolean&amp;)" body="remove" />
-    </type>
-  </assembly>
 </linker>

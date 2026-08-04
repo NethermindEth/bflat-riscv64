@@ -491,6 +491,38 @@ class CustomILProvider : ILProvider
             return body;
         }
 
+        // System.Number.FormatBigInteger<TChar> (System.Runtime.Numerics) is the
+        // decimal formatter behind BigInteger.ToString - and, through it,
+        // Nethermind's UInt256.ToString/Int256.ToString, i.e. an ordinary leaf
+        // formatting path, not a diagnostic one. Its ONLY floating point is a
+        // buffer-size estimate:
+        //
+        //     double ratio = 1.070328873472 * <call> / 32;      // ~log10(2)/limb
+        //     int resultLength = (int)(value._bits.Length * ratio) + 1;
+        //
+        // which lowers to fcvt.d.w + fld + fmul.d + fcvt.w.d + feq.d. The estimate
+        // only has to be an UPPER bound (it sizes a rented buffer; the digits
+        // written are counted separately), so it is rewritten to fixed-point
+        // integer arithmetic with the constant rounded UP - never smaller than the
+        // double result, at most a handful of limbs larger.
+        //
+        // A whole-body snippet cannot express this: the method is ~1100 bytes of IL
+        // and generic over TChar. The rewrite is token-free (it reuses the existing
+        // call/ldfld operands and adds only ldc.i4 constants), so the scanner sees
+        // no member it did not already see and shared-generic dictionary lookups
+        // are unaffected. If the pattern stops matching the FP simply survives and
+        // the binary ISA gate fails the build, which is the intended failure mode.
+        if (zkvmTarget &&
+            method.OwningType is MetadataType bigIntNumberType &&
+            bigIntNumberType.Namespace.StringEquals("System") &&
+            bigIntNumberType.Name.StringEquals("Number") &&
+            method.Name.StringEquals("FormatBigInteger"))
+        {
+            MethodIL body = inner.GetMethodIL(method);
+            var ed = new ILEditor(body);
+            return RewriteBigIntegerLengthEstimate(ed) ? ed.ToIL() : body;
+        }
+
         // NOTE: ValueType.RegularGetValueTypeHashCode (Single/Double struct fields
         // hashed by value through FP registers), the whole System.Collections.
         // Hashtable ctor/rehash family (the `float _loadFactor` load factor) and
@@ -549,6 +581,85 @@ class CustomILProvider : ILProvider
         }
 
         return inner.GetMethodIL(method);
+    }
+
+    /// <summary>
+    /// Rewrites FormatBigInteger's double buffer-size estimate to fixed-point
+    /// integer arithmetic, in place. Returns false - leaving the body untouched,
+    /// so the FP survives for the ISA gate to reject - unless the exact known
+    /// instruction run is found and its constants are in the expected shape.
+    /// </summary>
+    private static bool RewriteBigIntegerLengthEstimate(ILEditor ed)
+    {
+        // ldc.r8 c1 ; call limbBits ; conv.r8 ; mul ; ldc.r8 c2 ; div ; stloc.2
+        //   ; ldarg.1 ; ldfld _bits ; ldlen ; conv.i4 ; conv.r8 ; ldloc.2 ; mul ; conv.i4
+        // i.e. (int)(_bits.Length * (c1 * limbBits / c2)).
+        ILOpcode[] pattern =
+        {
+            ILOpcode.ldc_r8, ILOpcode.call, ILOpcode.conv_r8, ILOpcode.mul,
+            ILOpcode.ldc_r8, ILOpcode.div, ILOpcode.stloc_2,
+            ILOpcode.ldarg_1, ILOpcode.ldfld, ILOpcode.ldlen, ILOpcode.conv_i4,
+            ILOpcode.conv_r8, ILOpcode.ldloc_2, ILOpcode.mul, ILOpcode.conv_i4,
+        };
+        if (!ed.FindSequence(pattern, out int[] at, out int end))
+            return false;
+
+        double c1 = ed.ReadR8At(at[0]);
+        double c2 = ed.ReadR8At(at[4]);
+        if (!(c1 > 0) || !(c2 > 0))
+            return false;
+
+        // Per-limb digit ratio. Anything outside (0,1) is not the shape this
+        // rewrite was reviewed against, so refuse rather than guess.
+        double ratio = c1 / c2;
+        if (!(ratio > 0) || ratio >= 1)
+            return false;
+
+        // K / 2^shift >= ratio, so the integer estimate is never BELOW the double
+        // one (a buffer that is a few limbs too large is harmless; too small is
+        // not). Largest shift whose K still fits an ldc.i4 operand.
+        int shift = 31;
+        long k;
+        while (true)
+        {
+            k = (long)Math.Ceiling(ratio * (1L << shift));
+            if (k > 0 && k <= int.MaxValue)
+                break;
+            if (--shift < 8)
+                return false;
+        }
+
+        // Reused verbatim, so no new token enters the body.
+        int limbBitsCall = ed.TokenAt(at[1]);
+        int bitsField = ed.TokenAt(at[8]);
+
+        var il = new List<byte>(32);
+        void Emit(ILOpcode op) => il.Add((byte)op);
+        void EmitToken(int token) => il.AddRange(BitConverter.GetBytes(token));
+
+        Emit(ILOpcode.call); EmitToken(limbBitsCall);   // limbBits
+        Emit(ILOpcode.conv_i8);
+        Emit(ILOpcode.ldarg_1);
+        Emit(ILOpcode.ldfld); EmitToken(bitsField);     // value._bits
+        Emit(ILOpcode.ldlen);
+        Emit(ILOpcode.conv_i4);
+        Emit(ILOpcode.conv_i8);
+        // Checked: for the real constants (limbBits = 32, K < 2^27) no int32
+        // length can overflow int64, but a CoreLib that grows limbBits could.
+        // An OverflowException is loud; a wrapped product would silently
+        // undersize the buffer, which is the one outcome that must not happen.
+        Emit(ILOpcode.mul_ovf);                         // limbBits * length
+        Emit(ILOpcode.ldc_i4); EmitToken((int)k);
+        Emit(ILOpcode.conv_i8);
+        Emit(ILOpcode.mul_ovf);                         // * K
+        Emit(ILOpcode.ldc_i4_s); il.Add((byte)shift);
+        Emit(ILOpcode.shr);                             // >> shift
+        Emit(ILOpcode.conv_i4);
+
+        // 27 bytes into the 39 the original run occupies; Replace nop-pads the
+        // rest, and the stack shape (one int32 produced) is unchanged, as is
+        // MaxStack. The double local the original stored simply goes unused.
+        return ed.Replace(at[0], end, il.ToArray());
     }
 }
 
