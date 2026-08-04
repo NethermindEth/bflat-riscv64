@@ -187,8 +187,13 @@ internal static class IsaVerifier
             ushort h = (ushort)(elf[fileBase + (long)i] | (elf[fileBase + (long)i + 1] << 8));
             if ((h & 0x3) != 0x3)
             {
-                // 16-bit -> compressed (C extension).
-                comp.Add(vaddr + i, name);
+                // 16-bit unit. 0x0000 is the defined-illegal C encoding used as
+                // inter-function alignment padding, never a real instruction -
+                // skip it so trailing/hole padding does not inflate the count.
+                // Any other 16-bit pattern is a real compressed (C) instruction
+                // (RyuJIT emits c.add/c.mv/... and the linked libc has them too).
+                if (h != 0x0000)
+                    comp.Add(vaddr + i, name);
                 i += 2;
                 continue;
             }
