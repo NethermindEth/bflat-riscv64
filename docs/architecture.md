@@ -242,6 +242,7 @@ ld.lld -static -nostdlib -m elf64lriscv \
     --wrap=GC_Initialize --wrap=GC_VersionInfo \
     <ziskLibPath>/uGC.cpp.obj <ziskLibPath>/uGCHandleManager.cpp.obj \
     <ziskLibPath>/uGCHandleStore.cpp.obj <ziskLibPath>/uGCHeap.cpp.obj \
+    <ziskLibPath>/ugc_core.c.obj <ziskLibPath>/ugc_zalloc.c.obj \
     <managedcode.o> \
     <runtime libraries from dotnet-riscv>
 ```
