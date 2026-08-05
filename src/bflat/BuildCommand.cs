@@ -1895,6 +1895,10 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHeap.cpp.obj")}\" ");
+                /* uGC v1.0.7+: the C++ wrappers delegate to the formally
+                 * verified C core shipped as separate objects. */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_core.c.obj")}\" ");
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_zalloc.c.obj")}\" ");
             }
         }
 

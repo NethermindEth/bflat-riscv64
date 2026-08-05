@@ -189,6 +189,12 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHeap.cpp.obj"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
+    <!-- uGC v1.0.7+: the C++ wrappers delegate to the formally verified
+         C core shipped as separate objects -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\ugc_core.c.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc_core.c.obj" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\ugc_zalloc.c.obj"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc_zalloc.c.obj" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc-zero.params.yml" />
 
