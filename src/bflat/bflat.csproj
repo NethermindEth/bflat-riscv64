@@ -252,7 +252,7 @@
   <Target Name="ValidateVariant"
           BeforeTargets="Restore;CollectPackageReferences;DownloadCompilerNupkg;Build">
     <Error Condition="'$(Variant)' != 'perf' and '$(Variant)' != 'min'"
-           Text="Unknown Variant '$(Variant)'. Supported variants: perf (.b23), min (.x2)." />
+           Text="Unknown Variant '$(Variant)'. Supported variants: perf, min (see bflat.variant.props for the release tag each resolves to)." />
     <Error Condition="'$(DotnetVersion)' != '10' and '$(DotnetVersion)' != '11'"
            Text="Unknown DotnetVersion '$(DotnetVersion)'. Supported versions: 10, 11." />
     <Error Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'"

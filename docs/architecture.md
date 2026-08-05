@@ -112,8 +112,13 @@ When the target is `zisk` or `zisk_sim`, ILC is told:
 | Switch | Effect |
 |--------|--------|
 | `--no-globalization` | Forces invariant culture; lets the rng/security/locale stubs answer "yes, I'm en_US" |
-| `--no-pie` (implicit for zisk) | Position-independent code is incompatible with the fixed memory layout |
 | `--feature *` | Various opt-outs that prune reflection-heavy code paths |
+
+`--no-pie` belongs here too, but it is *not* implied by `--libc zisk`: it is
+an ordinary flag you pass. Position-independent code fights the fixed memory
+layout, and the flag changes that layout, so a guest built without it can
+fail in ways one built with it does not. Every guest in this repository and
+in Nethermind's zisk build passes it explicitly.
 
 References are resolved against the runtime's `lib/<os>/<arch>/<libc>`
 directory, downloaded from the
@@ -144,23 +149,51 @@ written to be exact rather than approximate: `Hashtable`'s `0.72f` load
 factor becomes integer `× 72 / 100`, and a `TimeZoneInfo` initializer's
 `AddMilliseconds(2)` becomes the tick-exact `20_000`.
 
-**Drift is a hard error.** If a substituted method is renamed or
-re-signatured by a runtime update, the substitution silently stops applying
-and the FP-carrying original stays in the image — this happened when
-`Number.FormatFloat`'s signature changed in .NET 11. So every target must
-resolve, or the build fails with the full list of mismatches. Substitutions
-whose donor reproduces an entire method body additionally verify the
-original's shape: the `TimeZoneInfo` cctor donor is applied only while the
-original still stores exactly the fields it initializes, and there is one
-donor variant per known runtime field set.
+**Drift is the failure mode to design against.** If a substituted method is
+renamed or re-signatured by a runtime update, the substitution stops
+applying and the FP-carrying original stays in the image — this happened
+when `Number.FormatFloat`'s signature changed in .NET 11.
+
+The C#-snippet map defends against it directly: every target must resolve or
+the build fails with the full list of mismatches. Substitutions whose donor
+reproduces an entire method body additionally verify the original's shape —
+the `TimeZoneInfo` cctor donor is applied only while the original still
+stores exactly the fields it initializes, and there is one donor variant per
+known runtime field set.
+
+ILLink entries in the XML have no such guarantee: an unmatched
+`<method signature=…>` is an `IL2009` warning, not an error, and the
+signature rendering itself differs between .NET majors, so an entry can be
+correct for one and inert for the other. Treat the [ISA
+gates](verification.md) as the check that actually holds, and read the build
+output for IL2009.
 
 ### zkVM RyuJIT codegen knobs
 
-In optimized builds (`-O`, i.e. `optimizationMode != None`)
-`BuildCommand.cs` also passes a fixed set of RyuJIT tuning knobs to ILC.
+`BuildCommand.cs` passes RyuJIT knobs to ILC in two groups, and the
+distinction matters: the ISA gate below applies to **every** `zisk` /
+`zisk_sim` build, while the tuning knobs apply only to optimized ones
+(`-O`, i.e. `optimizationMode != None`).
+
 RyuJIT parses these integer values as **hexadecimal with no `0x` prefix**
 (`JitConfigProvider.getIntConfigValue` uses `NumberStyles.AllowHexSpecifier`),
 so `"2000"` means `0x2000` = 8192.
+
+**The ISA gate.** ZisK decodes the base 32-bit encoding only and the guest is
+single-hart, so two extensions must never appear in generated code:
+
+| Knob | Value | Effect |
+|------|-------|--------|
+| `EnableRiscV64Compressed` | `0` | Never emit a compressed (C) encoding. RyuJIT otherwise uses `c.add`/`c.mv` in switch dispatch |
+| `EnableRiscV64Atomic` | `0` | Lower `Interlocked` to plain load/modify/store instead of `lr`/`sc` and `amo*` |
+
+Both need a cross-JIT built with the matching runtime fixups; an unpatched
+JIT ignores knobs it does not know, which is precisely why the result is
+verified on the linked binary by `--error-on-compressed` and
+`--error-on-atomic` rather than assumed. Only the zkVM targets get them — a
+real riscv64+musl target wants C and A.
+
+**The tuning knobs**, in optimized builds:
 
 | Knob | Value | Effect |
 |------|-------|--------|

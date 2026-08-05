@@ -32,14 +32,15 @@ separate zk-testing pipeline, which is not driven from this repository.
 | **CBMC proof** | CI | The allocator's bounds properties hold for *all* 64-bit sizes | Pointer arithmetic that wraps for inputs no test would think to try |
 | **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
 | **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for both zkVM targets | Renamed musl symbols, unresolved wraps, broken postprocessing |
-| **Substitution check** | Build | Every zkVM body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
-| **`--error-on-float`** | Build, opt-in | No emitted method contains a floating-point conversion | FP creeping back in through any path at all |
+| **Substitution check** | Build | Every C#-snippet body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
+| **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
+| **ISA verification** | Build, opt-in | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |
 | **Sample regression** | Pipeline | The samples still produce their known-good output | Behavioural drift in the runtime shims |
 | **End-to-end proof** | Pipeline | A real workload proves correctly inside Zisk | Wrong output, load failures, proof-time regressions |
 
 Two things that are easy to assume and are *not* true: the repository's CI
 does not execute a built guest — the smoke step links one for each zkVM
-target and checks the ELF, nothing more — and `--error-on-float` is a flag
+target and checks the ELF, nothing more — and the FP and ISA gates are flags
 you pass, not something CI turns on for you.
 
 ## Contracts on the native modules
@@ -126,19 +127,44 @@ original FP-carrying body simply stays in the image. That has happened —
 `Number.FormatFloat`'s signature changed in .NET 11, the entry stopped
 matching, and floating point came back.
 
-So a substitution that no longer resolves is a hard error, not a skipped
-entry, and it is checked twice:
+The two halves of the substitution machinery are not equally protected, and
+the difference is worth knowing before you rely on either.
 
-- **When bflat is built.** The CoreLib guests will use is already unpacked
-  into the layout, so the driver resolves every substitution against it and
-  fails the build on any mismatch.
-- **On every guest build.** The same code path runs again before code
-  generation — which also covers a layout someone modified by hand.
+**C# snippets fail hard.** Their targets are resolved in code
+(`ZkvmSubstitutions.BuildBodySubstitutions`), and a target that no longer
+matches throws with the full list of mismatches rather than being skipped.
+This runs twice: once when bflat is built — the CoreLib guests will use is
+already unpacked into the layout — and again on every guest build, which
+also covers a layout someone modified by hand.
 
-The `--error-on-float` gate is the backstop: it scans every *emitted*
-method for FP conversions. Methods that carry a conversion inside a block
-the target provably never runs are listed explicitly and reported as
-warnings rather than failures.
+**ILLink substitution entries only warn.** A `<method signature=…>` that
+matches nothing produces `IL2009: Could not find method …` and the build
+continues, with the FP-carrying original left in place. Worse, the
+signature is rendered by ILC and the rendering differs between .NET majors:
+.NET 11 spells a method's own generic parameters by name
+(``ValueListBuilder`1<TChar>&``), earlier ILCs leave them empty. An entry
+written for one major is therefore silently inert on the other — as
+`Number.FormatFloat` is on .NET 10 today. Read the build output for IL2009,
+or rely on the gates below rather than on the entry.
+
+That is what the gates are for, and there are two of them because one is not
+enough:
+
+- **`--error-on-float`** scans every *emitted* method's IL for floating-point
+  conversions. Methods that carry a conversion inside a block the target
+  provably never runs are listed explicitly and reported as warnings rather
+  than failures.
+- **`--error-on-float-binary`, `--error-on-compressed`, `--error-on-atomic`**
+  decode the *linked binary* and fail on any F/D, compressed or atomic
+  instruction, naming the offending symbol.
+
+The binary gates are the load-bearing ones. The IL scan cannot see a
+comparison — `ceq` over two `float64`s carries no `conv.r8` — so
+`Double.CompareTo`/`Equals` kept lowering to `feq.d`/`flt.d` while the IL
+gate reported a clean image. Nor can it see native code at all: the runtime's
+own objects, the GC and llvm-libunwind among them, are compiled outside ILC.
+Both classes have shipped FP into a guest; both are caught by decoding what
+was actually linked.
 
 ## Analyzers on the driver
 
