@@ -24,7 +24,7 @@ docs/
 ├── _includes/           header, sidebar, footer + reusable SVG diagrams
 ├── assets/css/style.scss  Theme — dark navy + Nethermind orange
 ├── index.html           Marketing landing page (uses landing layout)
-├── runtime.md           dotnet-riscv: building .NET for the target, and the aim of not patching it
+├── runtime.md           dotnet-riscv: an official .NET build for the target, and the patches we aim to upstream
 ├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
 ├── modules.md           Each link-time module explained
 ├── build.md             Building the driver (.NET version, variant) and using it
