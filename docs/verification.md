@@ -80,10 +80,6 @@ a host approximation. That is what makes some of them possible at all:
   register convention that the C ABI cannot express, so the GC write
   barriers are tested directly — including their version-dependent `t3`
   post-increment, pinned from both sides.
-- **The snapshot trampoline is exercised end to end.** `_zkvm_restore`'s
-  blob lives in `.rodata`, so the test `mprotect`s it writable, fills it
-  the way `bflat rebake` would, and an assembly landing pad records the
-  register file it was resumed with.
 
 ```console
 $ ./src/bflat/modules/tests/run_tests.sh
