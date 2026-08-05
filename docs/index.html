@@ -224,13 +224,14 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 
   <div class="divergence">
     <div class="divergence-head">
-      <h2>The aim is a .NET that is <em>not patched at all</em>.</h2>
+      <h2>An <em>official .NET build</em>, not a fork.</h2>
       <p>
-        Everything a zkVM needs is applied around the runtime — at ILC
-        time, at link time, and after the link — so the toolchain tracks
-        upstream instead of forking it. What is left is four upstreamable
-        fixups per .NET line, carried for one reason only: the zkVM
-        target. Nothing else justifies touching .NET.
+        The runtime is upstream .NET: the <code>dotnet/dotnet</code> VMR at a
+        release branch, built with upstream's own build system. Everything a
+        zkVM needs is applied around it — at ILC time, at link time, and
+        after the link. What is left is a short list of riscv64 correctness
+        fixes per .NET line, each written to be sent upstream, and after
+        which this project would carry none.
       </p>
     </div>
 
@@ -240,12 +241,12 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
         <p class="div-stat-note">ILC substitutions · link-time modules · ELF postprocess</p>
       </div>
       <div class="div-stat">
-        <div class="div-stat-num">4<span class="unit">fixups</span></div>
-        <p class="div-stat-note">The <code>minimal</code> profile · same count on .NET 10 and 11</p>
+        <div class="div-stat-num">100%<span class="unit">upstream sources</span></div>
+        <p class="div-stat-note"><code>dotnet/dotnet</code> at a release branch, built with upstream's own build system</p>
       </div>
       <div class="div-stat">
         <div class="div-stat-num">0<span class="unit">features carried</span></div>
-        <p class="div-stat-note">The <code>minimal</code> profile is correctness fixes only — each one a candidate for upstreaming</p>
+        <p class="div-stat-note">The <code>minimal</code> profile is riscv64 correctness fixes only — each one meant for upstream</p>
       </div>
       <div class="div-stat">
         <div class="div-stat-num">2<span class="unit">.NET lines</span></div>

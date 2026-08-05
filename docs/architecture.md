@@ -41,11 +41,12 @@ managed bodies, a **link step** that swaps unsupported OS and runtime calls
 for zkVM-safe ones, an **ELF postprocessor** that satisfies the prover's
 loader, and **target-specific memory layouts**.
 
-That layering is a deliberate constraint rather than an accident: the aim
-is to keep .NET itself unpatched, so a version bump is a rebuild instead of
-a merge (see [Runtime](runtime.md)). These extra stages run only for the
-zkVM targets (`--libc zisk` / `--libc zisk_sim`); for every other target
-bflat behaves like upstream.
+That layering is a deliberate constraint rather than an accident: it keeps
+the runtime an official .NET build — upstream sources, upstream build system,
+plus a handful of riscv64 fixes meant to be upstreamed (see
+[Runtime](runtime.md)) — so a version bump is a rebuild instead of a merge.
+These extra stages run only for the zkVM targets (`--libc zisk` /
+`--libc zisk_sim`); for every other target bflat behaves like upstream.
 
 ## What you get — and how we know it works
 

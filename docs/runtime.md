@@ -3,20 +3,27 @@ layout: default
 title: Runtime — dotnet-riscv
 eyebrow: The .NET runtime build
 lead: >
-  bflat-riscv64 doesn't ship its own runtime. It downloads one — built by
-  the sibling project <a href="https://github.com/NethermindEth/dotnet-riscv">dotnet-riscv</a>
-  — from upstream .NET sources. The guiding aim is that those sources stay
-  unpatched.
+  bflat-riscv64 doesn't ship its own runtime. It downloads an official .NET
+  build — produced by the sibling project
+  <a href="https://github.com/NethermindEth/dotnet-riscv">dotnet-riscv</a>
+  from upstream sources, with upstream's own build system, plus a handful of
+  riscv64 fixes we intend to upstream.
 prev: /
 next: /architecture/
 ---
 
-## The aim: stock .NET
+## An official build, not a fork
 
-Every adaptation a zkVM needs is applied *around* the runtime rather than
-inside it. That is a deliberate constraint, and it is what makes bumping
-.NET a routine operation instead of a merge exercise: the toolchain tracks
-upstream rather than forking it.
+The runtime bflat links against is .NET itself: the upstream VMR
+(`dotnet/dotnet`) at a release branch, built by upstream's own build system,
+for a target upstream already supports. It is not a re-implementation, not a
+vendored subset and not a long-lived fork — the delta against the release
+branch is a handful of riscv64 patches, each of which we intend to send
+upstream, and after which this project would carry none.
+
+That is possible because every adaptation a zkVM needs is applied *around*
+the runtime rather than inside it, which is also what makes bumping .NET a
+routine operation instead of a merge exercise.
 
 The three layers that absorb the work all live in bflat, not in the
 runtime — see [Architecture](architecture.md):
@@ -33,11 +40,12 @@ runtime — see [Architecture](architecture.md):
 An adaptation belongs to the earliest of those layers that can express it.
 Only what none of them can reach is allowed to touch .NET itself.
 
-## What still touches .NET
+## The patches we carry
 
-A small, tracked set — and the direction of travel is to shrink it. The
-runtime repository is moving from an open-ended patch queue to per-version
-*fixup profiles*:
+Each one is a riscv64 correctness fix that belongs upstream and is written to
+be proposed there — not a zkVM-specific hack kept private. They are tracked
+as per-version *fixup profiles* rather than an open-ended patch queue, so
+what is carried, and against which .NET, is always legible:
 
 <dl class="kv">
   <dt><code>minimal</code></dt>
@@ -54,9 +62,11 @@ Profiles are selected when the runtime is built (`patch_runtime.sh
 minimal|perf`) and are versioned per .NET major, so a new runtime release
 never silently reuses fixups written against the previous one.
 
-A short, upstreamable list per .NET line, carried for one reason only: the
-zkVM target. Nothing else justifies touching .NET. The counts differ between
-majors — .NET 11 needs one fixup .NET 10 does not, because only its JIT can
+A short list per .NET line, carried for one reason only: the zkVM target
+needs riscv64 code generation to be correct today. Nothing else justifies
+touching .NET, and every entry is meant to leave this repository by being
+accepted upstream rather than by being maintained here. The counts differ
+between majors — .NET 11 needs one fixup .NET 10 does not, because only its JIT can
 emit compressed instructions in the first place — so the directory, not this
 page, is the roster:
 [`fixup/<major>/profile/<profile>/`](https://github.com/NethermindEth/dotnet-riscv/tree/feature/minimal/fixup).
