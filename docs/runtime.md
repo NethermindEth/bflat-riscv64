@@ -42,7 +42,7 @@ runtime repository is moving from an open-ended patch queue to per-version
 <dl class="kv">
   <dt><code>minimal</code></dt>
   <dd>Correctness fixes for riscv64 code generation only — the kind that
-    belongs upstream. Four fixups for each of .NET 10 and .NET 11.</dd>
+    belongs upstream.</dd>
   <dt><code>perf</code></dt>
   <dd>Optional. Adds riscv64 code-quality work on top of
     <code>minimal</code>; pairs with the
@@ -54,8 +54,12 @@ Profiles are selected when the runtime is built (`patch_runtime.sh
 minimal|perf`) and are versioned per .NET major, so a new runtime release
 never silently reuses fixups written against the previous one.
 
-Four upstreamable fixups per .NET line, carried for one reason only: the
-zkVM target. Nothing else justifies touching .NET.
+A short, upstreamable list per .NET line, carried for one reason only: the
+zkVM target. Nothing else justifies touching .NET. The counts differ between
+majors — .NET 11 needs one fixup .NET 10 does not, because only its JIT can
+emit compressed instructions in the first place — so the directory, not this
+page, is the roster:
+[`fixup/<major>/profile/<profile>/`](https://github.com/NethermindEth/dotnet-riscv/tree/feature/minimal/fixup).
 
 ### The minimal profile, in full
 
@@ -65,19 +69,12 @@ zkVM target. Nothing else justifies touching .NET.
 | `14_riscv64_honor_isa_mode_atomic_asm` | The same for the atomic sequences (`#ifdef __riscv_atomic`) in exception handling | As above |
 | `20_…splitcodedata` | Stops the JIT folding read-only data chunks into the code chunk on riscv64, so data with code pointers lands in `.rodata` | A codegen decision; no post-hoc rewrite is safe |
 | `22_riscv64_stubdispatch` (.NET 10) / `22_riscv64_dispatchresolve_tail` (.NET 11) | The `tail` pseudo-instruction expands to `auipc + jalr`, clobbering the dispatch-cell address the resolver needs | Assembly thunk, same reason |
+| `24_riscv64_gate_compressed_emission` (.NET 11) | Adds `EnableRiscV64Compressed`, gating the one place the JIT emits a compressed encoding | A JIT decision; .NET 10's RyuJIT has no RVC support to gate |
+| `25_riscv64_gate_atomic_emission` | Adds `EnableRiscV64Atomic`; with it off, `Interlocked` lowers to plain load/modify/store | Register lifetimes change with the lowering, so it cannot be a post-hoc rewrite |
 
-To put a size on it — measured on the `feature/minimal` branch at commit
-`46e7df4`, 1 August 2026:
-
-| Profile | Fixups | Files touched | Lines |
-|---------|--------|---------------|-------|
-| .NET 10 `minimal` | 4 | 23 | +372 / −21 |
-| .NET 11 `minimal` | 4 | 13 | +141 / −9 |
-
-The commit is named on purpose. This set is worked on actively — a fixup
-landing upstream, or a concern moving out into one of bflat's three
-layers, changes these numbers — so a figure without a ref is not something
-you can check. What is stable is the *shape*: a per-version profile of
+This set is worked on actively — fixups land upstream, and concerns move out
+into one of bflat's three layers — so any count written here would be stale
+before it was useful. What is stable is the *shape*: a per-version profile of
 correctness-only fixes, small enough to read in one sitting.
 
 Historically this list was far longer — a numbered series that stripped
@@ -92,17 +89,46 @@ elimination in managed code moved to bflat's ILC stage.
 is the pipeline that produces the artifacts bflat links against. It:
 
 1. Pulls a specific upstream .NET VMR (`dotnet/dotnet`) at a tagged
-   release branch — `release/10.0.1xx` or `release/11.0.1xx`.
+   release branch — `release/10.0.1xx` or `release/11.0.1xx-preview7`.
 2. Applies the fixup profile for that .NET major.
 3. Builds against an Alpine RISC-V64 cross rootfs produced by upstream's
    own `eng/common/cross/build-rootfs.sh` — there is no rebuilt
-   distribution of our own any more. One package is the exception:
-   Alpine's feed ships musl built for `rv64gc`, so musl is rebuilt from
-   the same aport for `rv64im` and the stock `libc.a` and `crt` objects
-   in the rootfs are overwritten with it. A guest that decodes only the
-   base ISA cannot link against compressed or atomic instructions, and
-   no marker patching hides that.
+   distribution of our own any more. Two packages are the exception:
+   Alpine's feed ships musl and `libatomic` built for `rv64gc`, so both are
+   rebuilt for `rv64im` and the stock `libc.a`, `crt` objects and
+   `libatomic.a` are overwritten with them. A guest that decodes only the
+   base ISA cannot link against compressed or atomic instructions, and no
+   marker patching hides that.
 4. Packs the results into archives that bflat downloads by URL.
+
+### Keeping the native runtime on the base ISA
+
+The fixups above guard hand-written assembly with `#ifdef __riscv_flen` and
+`#ifdef __riscv_atomic`, which only helps if those macros are actually
+undefined — that is, if the code is compiled for the base ISA. Nothing in
+upstream's CMake sets a `-march` for a riscv64 *cross* target, so the build
+would otherwise inherit the toolchain default and the guards would never
+fire.
+
+A compiler wrapper (`tools/clang`, pointed at by `CLR_CC`/`CLR_CXX`) supplies
+it. Compilations bound for the client — the NativeAOT runtime tree, the GC
+and llvm-libunwind objects it pulls in, and `System.Native` — get
+`-march=rv64im -mabi=lp64`; everything SDK-side (the CoreCLR PAL, the
+savannah libunwind it uses, corehost) keeps the rootfs-native `rv64imafd`,
+because it runs on real hardware where atomics matter. Objects are retagged
+to the double-float ABI afterwards so `lld` does not refuse to mix them.
+
+Classification is by path, and that is the part to be careful with: a
+NativeAOT target whose sources live outside the `nativeaot/` tree is
+recognised by its CMake target directory rather than by the source path,
+because `make` runs the compiler from inside the target's build directory
+and the object path it passes carries no `nativeaot/` component. When that
+rule was missing, a minority of objects — the GC, llvm-libunwind, the shared
+runtime assembly — were compiled with F/D and A while the rest were clean,
+and the resulting guest was rejected by the emulator with an opaque invalid-
+instruction panic. If you add a client-bound target, check that it is
+classified: build a guest with `--error-on-float-binary --error-on-atomic`,
+which names the offending symbol.
 
 | Step | Script | Output |
 |------|--------|--------|
@@ -113,9 +139,12 @@ is the pipeline that produces the artifacts bflat links against. It:
 | 4 | `04_pack_libs.sh` | Built CoreCLR runtime libraries (`libSystem.Native`, …) |
 | 6 | `06_pack_refs.sh` | Reference assemblies bflat consumes |
 | 7 | `07_pack_bflat_libs_linux.sh` | bflat-side static libraries (`uGC.cpp.obj`, the AOT bootstrap, …) |
-| 8 | `08_pack_bflat_compiler_nupkg.sh` | The driver packed as a NuGet `.nupkg` |
+| 8 | `08_pack_bflat_compiler_nupkg.sh` | ILCompiler (the AOT compiler bflat drives) packed as a NuGet `.nupkg` |
 | 9 | `09_pack_bflat_compiler_native_linux.sh` | Native-RISC-V64–hosted driver |
 | ⋯ | `xx_pack_whole_source.sh` | Source archive of the full tree |
+
+Step numbers are historical and not contiguous — a step that stopped being
+needed keeps its number free rather than renumbering the rest.
 
 ## How the artifact reaches bflat
 
@@ -128,7 +157,7 @@ from two properties in
   the performance-oriented one or the minimal one, mirroring the fixup
   profiles of the same names.
 
-Together they form the release tag (`v10.0.0.p1`, `v11.0.0.x3`, …). Treat
+Together they form the release tag (`v10.0.0.p3`, `v11.0.0.x8`, …). Treat
 `bflat.variant.props` as the source of truth: the exact tags move as
 runtime releases are cut, and the blob cache is keyed by them, so switching
 variant or .NET version re-downloads rather than reusing a stale layout.

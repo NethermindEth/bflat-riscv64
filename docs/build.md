@@ -84,11 +84,15 @@ Three Docker images are published, one per supported combination:
 | `nethermindeth/bflat-riscv64-min` | min | 10 |
 | `nethermindeth/bflat-riscv64-11-min` | min | 11 |
 
-**About the SDK.** A .NET 11 SDK builds both flavours — downlevel
-targeting is a supported SDK feature — so one install covers everything,
-and that is what the toolchain image ships. An SDK carries only its own
-major's *runtime*, though: to run a `net10.0` bflat on an 11-only machine,
-set `DOTNET_ROLL_FORWARD=LatestMajor`.
+**About the SDK.** A .NET 11 SDK *builds* both flavours — downlevel
+targeting is a supported SDK feature — so one install covers compilation,
+and that is what the toolchain image ships. Running is the other half: an
+SDK carries only its own major's *runtime*, so a `net10.0` bflat on an
+11-only machine aborts with `framework '10.0.0' not found` unless you set
+`DOTNET_ROLL_FORWARD=LatestMajor`. The published images do not rely on that
+— `Dockerfile` derives the SDK from `DOTNET_VERSION`, refuses a mismatched
+`SDK_VERSION`, and runs `bflat --info` on the finished image, so an image
+whose packaged driver cannot start fails to build.
 
 ## Verifying a build
 
@@ -98,7 +102,7 @@ the CoreLib it just unpacked, so a runtime bump that moves a substituted
 method fails here rather than at your first guest compilation:
 
 ```
-zkVM: applied 14 C#-snippet body substitution(s)
+zkVM: applied 18 C#-snippet body substitution(s)
 zkVM: substitutions verified for libc=zisk against System.Private.CoreLib
 ```
 
@@ -121,12 +125,19 @@ Optional but useful flags:
 | `-Os` / `-Ot` | Optimise for size or speed. zkVMs reward size — every prover-step counts. |
 | `--mstat` | Emit MSTAT and DGML files for `dotnet-stat` size analysis. |
 | `--symchart` | After linking, run `readelf` and produce an HTML symbol-size chart. |
-| `--error-on-float` | Fail the build if any emitted method contains a floating-point conversion. Known-dead sites are listed and reported as warnings. |
+| `--error-on-float` | Fail the build if any emitted method's IL contains a floating-point conversion. Known-dead sites are listed and reported as warnings. |
+| `--error-on-float-binary` | Fail if the *linked binary* contains any F/D instruction. Catches what the IL scan cannot see — comparisons, and native objects. |
+| `--error-on-compressed` | Fail if the linked binary contains a compressed (C) instruction. |
+| `--error-on-atomic` | Fail if the linked binary contains an atomic (A) instruction: `lr`/`sc`, `amo*`. |
+| `--substitution <file>` | Apply an extra ILLink substitutions file on top of the built-in zkVM set. |
 | `-x` | Print the ILC and linker commands as they run. |
 
-The output is a single ELF file. For `--libc zisk`, that file is the
-postprocessed binary ready for Zisk; for `--libc zisk_sim`, it runs
-under `qemu-riscv64` or natively on RISC-V64 Linux.
+For `--libc zisk` the link produces `<output>` and the postprocessor then
+writes `<output>.patched` beside it — **`.patched` is the file Zisk runs**,
+and the one to ship; the unpatched ELF is kept because it is the more
+convenient thing to disassemble. For `--libc zisk_sim` there is no
+postprocessing step and the single output runs under `qemu-riscv64` or
+natively on RISC-V64 Linux.
 
 ## Run a built binary
 
@@ -137,8 +148,9 @@ $ ./hello
 # x86 host with QEMU user-mode
 $ qemu-riscv64 ./hello
 
-# Inside Zisk (refer to the Zisk repo for the prover invocation)
-$ ziskemu --rom ./hello
+# Inside Zisk's emulator — note it is the postprocessed ELF, passed with -e
+# (--rom takes an already-converted ROM, not an ELF)
+$ ziskemu -e ./hello.patched
 ```
 
 ## Linking external libraries via NuGet
@@ -201,5 +213,7 @@ environment.
 - **Filesystem and console.** `open`, `__stdio_write`, and `__stdio_read`
   all return failure. Programs must do their I/O through whatever the
   zkVM provides (in Zisk's case, the precompile API).
-- **Time and randomness are deterministic.** `clock_gettime` returns
-  `-1`.
+- **Time and randomness are deterministic.** `clock_gettime` returns `-1`,
+  and the RNG entry points are answered by a fixed-sequence PRNG (see the
+  [rng_stupid module](modules.md#rng-stupid)) — the same build produces the
+  same bytes on every run, which is what a reproducible proof requires.
