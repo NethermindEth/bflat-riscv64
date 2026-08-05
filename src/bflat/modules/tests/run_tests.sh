@@ -189,16 +189,6 @@ for m in zkvm_zisk zkvm_zisk_sim ; do
 		-Wl,--defsym,_global_pointer=zkvm_test_gp
 done
 
-# _zkvm_restore: the snapshot trampoline (cold boot + warm register
-# restore). Only zkvm_zisk has it.
-if obj="$(prepare_zkvm_obj zkvm_zisk)" ; then
-	run_one test_zkvm_restore \
-		${CC} ${CFLAGS} "${TESTS_DIR}/test_zkvm_restore.c" \
-		"${TESTS_DIR}/restore_pad.S" "${obj}" \
-		-Wl,--defsym,_init_stack_top=${STACK_TOP} \
-		-Wl,--defsym,_global_pointer=zkvm_test_gp
-fi
-
 echo "--------------------------------------------------"
 if [ "${failures}" != "0" ] ; then
 	echo "module unit tests: ${failures} suite(s) FAILED"

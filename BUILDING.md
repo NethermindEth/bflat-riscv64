@@ -121,11 +121,6 @@ what makes that possible:
 - `zkvm_zisk` / `zkvm_zisk_sim` `_start` — checks the handoff to
   `__libc_start_main`: managed entry point, `argc == 1`, `argv[0] ==
   "app"`, NULL terminator, sp inside the guest stack.
-- `_zkvm_restore` (snapshot trampoline) — both paths for real: an
-  unpatched or wrong-magic blob cold-boots, a baked one restores x1..x31
-  and resumes at the captured PC. The blob lives in `.rodata`, so the test
-  `mprotect`s it writable and fills it the way `bflat rebake` would; an
-  assembly landing pad records the register file it was resumed with.
 
 Two link-level details make this work, both handled by `run_tests.sh`:
 the version symbol reaches the assembler via `-Wa,--defsym` and never as
