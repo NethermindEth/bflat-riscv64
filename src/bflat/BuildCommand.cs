@@ -74,6 +74,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
     private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
     private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
+    private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
@@ -175,6 +176,7 @@ internal class BuildCommand : CommandBase
             ErrorOnFloatBinaryOption,
             ErrorOnCompressedOption,
             ErrorOnAtomicOption,
+            NoUnalignedAccessOption,
         };
         command.Handler = new BuildCommand();
 
@@ -1317,6 +1319,23 @@ internal class BuildCommand : CommandBase
         {
             backendOptions.Add("EnableRiscV64Compressed=0");
             backendOptions.Add("EnableRiscV64Atomic=0");
+        }
+
+        // Unaligned access. dotnet-riscv fixup 35 (JitNoUnalignedAccess) defaults the
+        // knob ON, expanding every access the front end flagged unaligned
+        // (Unsafe.Read/WriteUnaligned, the `unaligned.` IL prefix, unrolled
+        // cpblk/initblk) into a byte-wise lbu/slli/or - sb/srli sequence. That is only
+        // needed by an executor that asserts addr % width == 0; ZisK is not one (its
+        // emulator runs and its prover verifies wide unaligned accesses), and the
+        // expansion costs roughly a quarter of the executed instructions on a guest.
+        // So the value is always passed explicitly and defaults to wide accesses;
+        // --no-unaligned-access opts back in. A JIT built without fixup 35 ignores the
+        // unknown knob.
+        if (targetArchitecture == TargetArchitecture.RiscV64)
+        {
+            backendOptions.Add(result.GetValueForOption(NoUnalignedAccessOption)
+                ? "JitNoUnalignedAccess=1"
+                : "JitNoUnalignedAccess=0");
         }
 
         builder
