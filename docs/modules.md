@@ -39,6 +39,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
 | [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
+| [eh](#eh) | Synthetic program headers for the unwinder | No loader, so nothing maps the real ones |
 | [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
 | [nofp](#nofp) | Soft-float and libm entry points that trap loudly | No floating-point hardware |
 | [zisk_subst](#zisk-subst) | ILC-stage substitutions and C# snippets — data, not an object file | Managed code that carries FP |
@@ -312,6 +313,37 @@ One exception, deliberately not a trap: `__wrap_asprintf` returns `-1`.
 It is referenced only by the cgroup parsing that pal already stubs out,
 and `-1` is the documented failure result its callers handle — so if that
 path is ever reached it degrades instead of aborting.
+
+## eh — synthetic program headers for the unwinder
+{: #eh }
+
+**File:** `modules/eh/module.c`
+
+Managed exception handling starts with a lookup the guest cannot answer.
+`UnixNativeCodeManager` caches the DWARF unwind sections once, at code
+manager registration, through libunwind's `findUnwindSections`; on Linux
+that path is `dl_iterate_phdr`, which walks the loader's program headers
+for a `PT_LOAD` covering the queried PC and a `PT_GNU_EH_FRAME` over
+`.eh_frame_hdr`. ZisK loads no program headers at all — it materializes
+memory from segments and jumps to the entry point — so there is no loader
+state, no auxv, and the ELF header is not even mapped. musl's
+`dl_iterate_phdr` walks an empty `dso` list, every `FindMethodInfo` fails,
+and a throw fail-fasts before the handler search.
+
+libunwind never reads the real headers, only what the callback hands it, so
+this module wraps `dl_iterate_phdr` and describes the image from linker
+script symbols: one `PT_LOAD` over the executable range (`__image_text_start`
+… `__image_text_end`, which the script extends across `__managedcode` and
+`__unbox`) and one `PT_GNU_EH_FRAME` over `.eh_frame_hdr`. The image is not
+position independent, so `dlpi_addr` is 0 and the vaddrs are absolute. An
+empty `.eh_frame_hdr` — what a `--remove-eh` link leaves — reports the load
+segment alone, so the lookup fails cleanly instead of decoding a stripped
+range.
+
+The module is linked only when the build keeps its unwind tables, which is
+the default; `--remove-eh` drops both, and with them exception handling:
+a throw then exits the guest through `__wrap_RhpThrowEx`. It is proved with
+Frama-C — see [Fuzzing and machine-checked proofs](verification.md).
 
 ## rng_stupid — deterministic PRNG
 {: #rng-stupid }
