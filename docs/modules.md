@@ -228,7 +228,15 @@ manually, looks up the interface slot on the object's MethodTable, and
 returns the resolved target — replacing the fast-path cache that
 NativeAOT normally maintains in writable memory.
 
-### Managed exceptions
+### Managed exceptions — the fail-fast policy
+
+By default a managed `throw` is dispatched for real: filters run, `finally`
+funclets run, and the `catch` resumes execution. That path needs the unwind
+tables and the [eh module](#eh); nothing in `rhp` participates in it.
+
+What follows is the *other* policy, selected with `--remove-eh`, where the
+unwind tables are stripped and a throw cannot be dispatched. Only then is
+`RhpThrowEx` wrapped.
 
 A managed `throw` is lowered by the JIT to `CORINFO_HELP_THROW`, which
 calls `RhpThrowEx` with the exception object in `a0`. The wrapper hands
@@ -249,9 +257,9 @@ A program that exports `ZkvmThrow` via
 the throw and receives the live `Exception` reference (the `a0` pointer
 *is* the managed object reference). A program that doesn't export it links
 fine — the weak reference stays null and the wrapper falls back to
-`exit(1)`, preserving the old fail-fast behaviour. `FailFast` carries a
-message string, not an exception object, so it keeps the plain `exit(1)`
-path rather than routing through `ZkvmThrow`. See the
+`exit(1)`. No `catch` or `finally` runs on this path: the guest is gone.
+`FailFast` carries a message string, not an exception object, so it keeps
+the plain `exit(1)` path rather than routing through `ZkvmThrow`. See the
 [ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler).
 
 To let the handler be entered from the throw path, `RhpReversePInvoke`

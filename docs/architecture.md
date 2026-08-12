@@ -267,7 +267,7 @@ For `--libc zisk`, the linked ELF is fed through `scripts/patch_elf.py`
 with the following options:
 
 ```
---fix-init-array  --fix-tdata  --remove-eh  --trim-bss
+--fix-init-array  --fix-tdata  --trim-bss          # + --remove-eh, on request
 ```
 
 Each pass is a small, self-contained ELF-header rewrite that fixes a
@@ -277,7 +277,7 @@ concrete loader behaviour Zisk wouldn't otherwise accept:
 |------|--------------|-------------------|
 | `--fix-init-array` | Forces `.init_array` to `SHT_PROGBITS`, alignment 8 | Otherwise the loader skips the section and module initialisers never run |
 | `--fix-tdata` | Adds `ALLOC \| WRITE \| TLS` flags, alignment ≥ 8 | Without TLS bit the loader doesn't include `.tdata` in the program header table; the TLS shim then sees zero bytes |
-| `--remove-eh` | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | We never unwind; throwing trips `__wrap_RhpThrowEx`. The tables are large dead weight |
+| `--remove-eh` | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | **Not passed by default.** Those tables are what the unwinder reads, so dropping them trades managed exception handling for image size; a throw then fail-fasts through `__wrap_RhpThrowEx` |
 | `--trim-bss` | Removes the `.bss` section header | Linker scripts already provide explicit heap symbols; trimming `.bss` removes a region the prover would otherwise account for |
 
 For `--libc zisk_sim` the postprocessor is **not** run. The simulator
@@ -308,12 +308,32 @@ which ZisK does not treat as program end. So `pal` wraps all three to
 `zkvm_raw_exit`, which emits the real ZisK exit ecall (see the
 [pal module](modules.md#pal)).
 
-A managed `throw` is lowered to `RhpThrowEx`. The `rhp` wrapper hands the
-exception object to an optional, **weak** `ZkvmThrow` symbol that a program
-may export via `[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`; programs
-that don't define it fall back to `exit(1)`. So the handler can be entered
-from the throw path, `RhpReversePInvoke`/`RhpReversePInvokeReturn` are
-no-op'd — the real transition would spin on a GC rendezvous that never
+Managed exceptions are dispatched for real. A `throw` lowers to
+`RhpThrowEx`, the runtime walks the stack twice — first to run filters and
+find a handler, then to unwind, running `finally` funclets on the way — and
+resumes in the `catch`. Standard .NET semantics: filters, rethrow with
+`InnerException`, multi-frame unwinding, `using`/`Dispose` on the throw
+path. An exception nobody catches ends in `FailFast`, which aborts the
+guest.
+
+None of that is free-standing: the runtime's unwinder has to locate
+`.eh_frame_hdr` first, and in an image no loader ever mapped it cannot. The
+[eh module](modules.md#eh) answers that lookup with synthetic program
+headers, and the linker scripts keep the unwind tables named and reachable —
+see [Stage 3](#stage-3--postprocessing-zisk-only) for what the
+postprocessor does and does not remove.
+
+`--remove-eh` selects the other policy: the tables are stripped and a
+managed `throw` never reaches dispatch. `rhp` then wraps `RhpThrowEx` and
+hands the exception object to an optional, **weak** `ZkvmThrow` symbol that
+a program may export via `[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`;
+programs that don't define it fall back to `exit(1)`. So that handler can be
+entered from the throw path, `RhpReversePInvoke`/`RhpReversePInvokeReturn`
+are no-op'd — the real transition would spin on a GC rendezvous that never
 comes in the single-threaded, never-collecting zkVM. See the
 [ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)
 and the [rhp module](modules.md#rhp).
+
+The cost of dispatch is paid only when something is thrown: entering a
+`try` executes no code, and a guest that never throws pays a single
+unwind-section lookup at startup.
