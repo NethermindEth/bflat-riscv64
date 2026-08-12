@@ -12,24 +12,14 @@ next: /build/
 ## What they are
 
 Each module is a small, self-contained object file — C, C++, or assembly —
-that the linker pulls into the final binary, overriding a specific symbol via
-`--wrap=`. Together they replace exactly the parts of .NET, musl, and
+that the linker pulls into the final binary, overriding a specific symbol
+via `--wrap=`. Together they replace exactly the parts of .NET, musl and
 compiler-RT that a zkVM cannot honour, **without editing a single line of
-upstream source**.
-
-## Why it's done at link time
-
-The alternative — forking the runtime and musl — means re-merging on every
-upstream release. Instead each adaptation is an isolated object file plus a
-`--wrap=` redirect, so the upstream code stays pristine and a .NET version
-bump is a rebase, not a fork. (Same philosophy as the
-[runtime fixups](runtime.md).)
-
-## The constraints they answer
+upstream source**: a .NET version bump is a rebase, not a fork.
 
 A zkVM gives you far less than a Linux host: no kernel (so no syscalls,
-files, threads, signals, or clock), no floating-point hardware, no
-compressed instructions, no randomness, and a requirement that every run be
+files, threads, signals or clock), no floating-point hardware, no compressed
+instructions, no randomness, and a requirement that every run be
 bit-for-bit reproducible. Each module closes one of those gaps.
 
 | Module | What it provides | Constraint it answers |
@@ -52,38 +42,30 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 
 ## Results
 
-Because each of these is an object the linker pulls in — or, in
-`zisk_subst`'s case, data the driver applies one stage earlier — **no
-upstream source is modified** to make C# run in a zkVM. The same set
-carries real production C#, Nethermind's
-[StatelessExecutor](https://github.com/NethermindEth/nethermind), end to end
+No upstream source is modified to make C# run in a zkVM: every adaptation is
+an object the linker pulls in, or — for `zisk_subst` — data the driver
+applies one stage earlier. The same set carries Nethermind's
+[StatelessExecutor](https://github.com/NethermindEth/nethermind) end to end
 through a zkVM prover.
 
-They are also the most heavily checked code in the repository, which is the
-other half of why patching upstream is avoidable: a replacement is only as
-good as the confidence you have in it. Every function in the C modules
-carries a Frama-C contract; every native module built in this repository —
-C, C++ and assembly alike — is unit-tested on the real ISA under qemu; the
-allocator is fuzzed and its bounds properties are machine-checked with
-CBMC. Two entries in the table above are outside that: `zisk_subst` ships
-data rather than code, and `ugc-zero` is prebuilt and tested in its own
-repository. See [Verification](verification.md).
+These modules are also the most heavily checked code in the repository:
+contracts, unit tests on the real ISA, fuzzing and machine-checked proofs.
+See [Verification](verification.md).
 
 ---
 
 ## Under the hood
 
-The rest of this page documents each module in detail — the wrapped symbols,
-the data structures, and the assembly. It's developer reference; the
+The rest of this page is developer reference: the wrapped symbols, the data
+structures and the assembly, module by module. The
 [architecture page](architecture.md#stage-2--the-link-command) shows where
 these objects sit in the link line.
 
-The modules live under `src/bflat/modules/`. Each one contains a
+Modules live under `src/bflat/modules/`. Each has a
 `module.c`/`module.cpp`/`module.S` source, an optional `module_params.yml`
-listing its linker switches (mostly `--wrap=` declarations), and the compiled
-`module.o` produced by `build.sh modules riscv64`. `BuildCommand.cs` wires
-them into the link line in a specific order; the sections below follow roughly
-the order they matter at runtime.
+listing its linker switches (mostly `--wrap=` declarations), and a compiled
+`module.o` from `build.sh modules riscv64`. The sections below follow
+roughly the order they matter at runtime.
 
 ## ubootstrap — runtime entry point
 {: #ubootstrap }
@@ -228,15 +210,12 @@ manually, looks up the interface slot on the object's MethodTable, and
 returns the resolved target — replacing the fast-path cache that
 NativeAOT normally maintains in writable memory.
 
-### Managed exceptions — the fail-fast policy
+### Managed exceptions under `--remove-eh`
 
-By default a managed `throw` is dispatched for real: filters run, `finally`
-funclets run, and the `catch` resumes execution. That path needs the unwind
-tables and the [eh module](#eh); nothing in `rhp` participates in it.
-
-What follows is the *other* policy, selected with `--remove-eh`, where the
-unwind tables are stripped and a throw cannot be dispatched. Only then is
-`RhpThrowEx` wrapped.
+With the unwind tables stripped a `throw` cannot be dispatched, so `rhp`
+wraps `RhpThrowEx` and the guest exits on it. (The default build dispatches
+exceptions normally; that path runs through the [eh module](#eh) and
+nothing here.)
 
 A managed `throw` is lowered by the JIT to `CORINFO_HELP_THROW`, which
 calls `RhpThrowEx` with the exception object in `a0`. The wrapper hands
@@ -327,31 +306,24 @@ path is ever reached it degrades instead of aborting.
 
 **File:** `modules/eh/module.c`
 
-Managed exception handling starts with a lookup the guest cannot answer.
-`UnixNativeCodeManager` caches the DWARF unwind sections once, at code
-manager registration, through libunwind's `findUnwindSections`; on Linux
-that path is `dl_iterate_phdr`, which walks the loader's program headers
-for a `PT_LOAD` covering the queried PC and a `PT_GNU_EH_FRAME` over
-`.eh_frame_hdr`. ZisK loads no program headers at all — it materializes
-memory from segments and jumps to the entry point — so there is no loader
-state, no auxv, and the ELF header is not even mapped. musl's
-`dl_iterate_phdr` walks an empty `dso` list, every `FindMethodInfo` fails,
-and a throw fail-fasts before the handler search.
+The runtime's unwinder locates its DWARF tables through
+`dl_iterate_phdr`: it wants a `PT_LOAD` covering the queried PC and a
+`PT_GNU_EH_FRAME` over `.eh_frame_hdr`. A zkVM image has no program headers
+to walk — ZisK materialises memory from segments and jumps to the entry
+point, so there is no loader, no auxv, and the ELF header is not mapped.
 
-libunwind never reads the real headers, only what the callback hands it, so
-this module wraps `dl_iterate_phdr` and describes the image from linker
-script symbols: one `PT_LOAD` over the executable range (`__image_text_start`
-… `__image_text_end`, which the script extends across `__managedcode` and
+libunwind reads only what the callback hands it, so this module wraps
+`dl_iterate_phdr` and describes the image from linker-script symbols: one
+`PT_LOAD` over the executable range (`__image_text_start` …
+`__image_text_end`, which the script extends across `__managedcode` and
 `__unbox`) and one `PT_GNU_EH_FRAME` over `.eh_frame_hdr`. The image is not
-position independent, so `dlpi_addr` is 0 and the vaddrs are absolute. An
-empty `.eh_frame_hdr` — what a `--remove-eh` link leaves — reports the load
-segment alone, so the lookup fails cleanly instead of decoding a stripped
-range.
+position independent, so `dlpi_addr` is 0 and the vaddrs are absolute. When
+`.eh_frame_hdr` is empty — a `--remove-eh` link — only the load segment is
+reported and the lookup fails cleanly rather than decoding a stripped range.
 
-The module is linked only when the build keeps its unwind tables, which is
-the default; `--remove-eh` drops both, and with them exception handling:
-a throw then exits the guest through `__wrap_RhpThrowEx`. It is proved with
-Frama-C — see [Fuzzing and machine-checked proofs](verification.md).
+The module is linked with the unwind tables, so `--remove-eh` drops both.
+Its contracts are proved with Frama-C; see
+[Fuzzing and machine-checked proofs](verification.md).
 
 ## rng_stupid — deterministic PRNG
 {: #rng-stupid }
