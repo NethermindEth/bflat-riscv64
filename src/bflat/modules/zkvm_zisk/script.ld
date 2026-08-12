@@ -34,6 +34,10 @@ PHDRS {
 SECTIONS
 {
   .text : {
+    /* Image bounds handed to libunwind by pal/module.c's synthetic
+     * PT_LOAD; every managed PC the unwinder resolves lives in here. */
+    __image_text_start = .;
+
     /* First: Bootstrap code */
     *(.text.init)
     . = ALIGN(4);
@@ -62,10 +66,28 @@ SECTIONS
 
     /* Ensure proper alignment and padding */
     . = ALIGN(16);
+    __image_text_end = .;
   } >rom AT>rom :text
 
   .rodata ALIGN(16) : {
     *(.rodata .rodata.*)
+  } >rom AT>rom :rodata
+
+  /* DWARF unwind tables. Placed explicitly (they would otherwise land as
+   * orphan sections) so their bounds are named: pal/module.c reports
+   * .eh_frame_hdr as a synthetic PT_GNU_EH_FRAME, which is how libunwind
+   * finds the FDE binary-search index. Dropped from the image by
+   * patch_elf.py only when the build passes --remove-eh. */
+  .eh_frame_hdr ALIGN(8) : {
+    __eh_frame_hdr_start = .;
+    KEEP(*(.eh_frame_hdr))
+    __eh_frame_hdr_end = .;
+  } >rom AT>rom :rodata
+
+  .eh_frame ALIGN(8) : {
+    __eh_frame_start = .;
+    KEEP(*(.eh_frame .eh_frame.*))
+    __eh_frame_end = .;
   } >rom AT>rom :rodata
 
   .modules ALIGN(16) : {
