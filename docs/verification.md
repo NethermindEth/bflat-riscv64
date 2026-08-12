@@ -111,8 +111,8 @@ On top of that, `tests/verify/` proves the allocator's bounds properties
 with [CBMC](https://www.cbmc.diffblue.com/) for *all* sizes and reachable
 states rather than sampled ones. The harness includes the real
 `pal/module.c` with its heap-window symbols re-pointed at a local array.
-The proof is mutation-tested: restoring a pre-fix bounds check makes CBMC
-report the wild write, so a passing run is not vacuous.
+The proof is mutation-tested: weakening the bounds check makes CBMC report
+the wild write, so a passing run is not vacuous.
 
 The `eh` module — the synthetic program headers that make managed exception
 handling work at all — is proved outright rather than sampled:
@@ -136,9 +136,7 @@ covers it. CI runs the gate on every push.
 The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
 are the layer most exposed to runtime drift, and the failure is silent by
 nature: if a substituted CoreLib method is renamed or re-signatured, the
-original FP-carrying body simply stays in the image. That has happened —
-`Number.FormatFloat`'s signature changed in .NET 11, the entry stopped
-matching, and floating point came back.
+entry stops matching and the original FP-carrying body stays in the image.
 
 The two halves of the substitution machinery are not equally protected, and
 the difference is worth knowing before you rely on either.

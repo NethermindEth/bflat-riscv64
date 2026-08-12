@@ -29,43 +29,25 @@ One command — `bflat build` — does it end to end.
 
 ## Why the extra stages exist
 
-Stock .NET NativeAOT already compiles C# to a native binary, but that
-binary assumes a kernel, dynamic linking, floating-point hardware, and
-compressed instructions — none of which a zkVM provides.
+Stock .NET NativeAOT already compiles C# to a native binary, but that binary
+assumes a kernel, dynamic linking, floating-point hardware and compressed
+instructions — none of which a zkVM provides.
 
 bflat is a **compiler driver**: it contains no code generator of its own.
 Roslyn turns C# into IL, Microsoft's ILCompiler turns IL into a RISC-V64
-object, `lld` links it — all stock. What bflat adds is the adaptation
-around them: **ILC-stage substitutions** that take floating point out of
-managed bodies, a **link step** that swaps unsupported OS and runtime calls
-for zkVM-safe ones, an **ELF postprocessor** that satisfies the prover's
-loader, and **target-specific memory layouts**.
+object, `lld` links it — all stock. What bflat adds around them is
+**ILC-stage substitutions** that take floating point out of managed bodies,
+a **link step** that swaps unsupported OS and runtime calls for zkVM-safe
+ones, an **ELF postprocessor** that satisfies the prover's loader, and
+**target-specific memory layouts**. Those stages run only for `--libc zisk`
+and `--libc zisk_sim`; for every other target bflat behaves like upstream.
 
-That layering is a deliberate constraint rather than an accident: it keeps
-the runtime an official .NET build — upstream sources, upstream build system,
-plus a handful of riscv64 fixes meant to be upstreamed (see
-[Runtime](runtime.md)) — so a version bump is a rebuild instead of a merge.
-These extra stages run only for the zkVM targets (`--libc zisk` /
-`--libc zisk_sim`); for every other target bflat behaves like upstream.
-
-## What you get — and how we know it works
-
-The pipeline links **real, unmodified C#** — exceptions, allocation,
-interface dispatch, generics — into a binary that loads and runs in the
-prover. The evidence is end-to-end rather than synthetic:
-
-- It drives Nethermind's
-  [StatelessExecutor](https://github.com/NethermindEth/nethermind), a real
-  Ethereum state-transition function in production C#, proven inside a zkVM
-  (see [Verification](verification.md)).
-- Every push rebuilds the driver and all modules from source in CI
-  ([`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)),
-  alongside the contract gate, the module tests, fuzzing and the allocator
-  proof. Running the samples and proving the workload happen in a separate
-  pipeline that reports to the public
-  [zk-testing dashboard](https://zk-testing.nethermind.dev).
-- **One source, three targets**: the identical `.cs` builds for the prover,
-  QEMU, and native RISC-V64.
+Keeping them outside .NET is the point: the runtime stays an official build
+— upstream sources, upstream build system, plus a handful of riscv64 fixes
+meant to be upstreamed (see [Runtime](runtime.md)) — so a version bump is a
+rebuild instead of a merge. What goes through the pipeline is ordinary C#:
+exceptions, allocation, interface dispatch and generics all work, and the
+same source builds for the prover, QEMU and real hardware.
 
 ## How it works, at a glance
 
@@ -86,10 +68,8 @@ on which runtime versions.
 
 ## Under the hood
 
-The rest of this page is the developer-facing walk-through of each stage —
-the exact switches, the link command, the postprocessor passes, and the
-boot sequence. It's reference material; skip it unless you're working on
-the pipeline itself.
+The rest of this page walks through each stage — the exact switches, the
+link command, the postprocessor passes and the boot sequence.
 
 ## Stage 1 — Microsoft's NativeAOT (ILC) emits an object file
 
@@ -267,7 +247,7 @@ For `--libc zisk`, the linked ELF is fed through `scripts/patch_elf.py`
 with the following options:
 
 ```
---fix-init-array  --fix-tdata  --trim-bss          # + --remove-eh, on request
+--fix-init-array  --fix-tdata  --trim-bss     # --remove-eh is opt-in
 ```
 
 Each pass is a small, self-contained ELF-header rewrite that fixes a
@@ -277,7 +257,7 @@ concrete loader behaviour Zisk wouldn't otherwise accept:
 |------|--------------|-------------------|
 | `--fix-init-array` | Forces `.init_array` to `SHT_PROGBITS`, alignment 8 | Otherwise the loader skips the section and module initialisers never run |
 | `--fix-tdata` | Adds `ALLOC \| WRITE \| TLS` flags, alignment ≥ 8 | Without TLS bit the loader doesn't include `.tdata` in the program header table; the TLS shim then sees zero bytes |
-| `--remove-eh` | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | **Not passed by default.** Those tables are what the unwinder reads, so dropping them trades managed exception handling for image size; a throw then fail-fasts through `__wrap_RhpThrowEx` |
+| `--remove-eh` | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | Opt-in: those tables are what the unwinder reads, so this trades exception handling for image size |
 | `--trim-bss` | Removes the `.bss` section header | Linker scripts already provide explicit heap symbols; trimming `.bss` removes a region the prover would otherwise account for |
 
 For `--libc zisk_sim` the postprocessor is **not** run. The simulator
@@ -308,32 +288,19 @@ which ZisK does not treat as program end. So `pal` wraps all three to
 `zkvm_raw_exit`, which emits the real ZisK exit ecall (see the
 [pal module](modules.md#pal)).
 
-Managed exceptions are dispatched for real. A `throw` lowers to
-`RhpThrowEx`, the runtime walks the stack twice — first to run filters and
-find a handler, then to unwind, running `finally` funclets on the way — and
-resumes in the `catch`. Standard .NET semantics: filters, rethrow with
-`InnerException`, multi-frame unwinding, `using`/`Dispose` on the throw
-path. An exception nobody catches ends in `FailFast`, which aborts the
-guest.
+Managed exceptions are dispatched by the runtime: a `throw` walks the stack
+twice — filters first, then unwinding with `finally` funclets — and resumes
+in the `catch`. Filters, rethrow with `InnerException` and multi-frame
+unwinding all behave as they do on stock .NET; an exception nobody catches
+ends in `FailFast`. Entering a `try` costs nothing at runtime, so a guest
+that never throws pays only one unwind-section lookup at startup.
 
-None of that is free-standing: the runtime's unwinder has to locate
-`.eh_frame_hdr` first, and in an image no loader ever mapped it cannot. The
-[eh module](modules.md#eh) answers that lookup with synthetic program
-headers, and the linker scripts keep the unwind tables named and reachable —
-see [Stage 3](#stage-3--postprocessing-zisk-only) for what the
-postprocessor does and does not remove.
+The unwinder finds those sections through the [eh module](modules.md#eh),
+which answers `dl_iterate_phdr` with synthetic program headers — a zkVM
+image has none of its own.
 
-`--remove-eh` selects the other policy: the tables are stripped and a
-managed `throw` never reaches dispatch. `rhp` then wraps `RhpThrowEx` and
-hands the exception object to an optional, **weak** `ZkvmThrow` symbol that
-a program may export via `[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`;
-programs that don't define it fall back to `exit(1)`. So that handler can be
-entered from the throw path, `RhpReversePInvoke`/`RhpReversePInvokeReturn`
-are no-op'd — the real transition would spin on a GC rendezvous that never
-comes in the single-threaded, never-collecting zkVM. See the
-[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)
-and the [rhp module](modules.md#rhp).
-
-The cost of dispatch is paid only when something is thrown: entering a
-`try` executes no code, and a guest that never throws pays a single
-unwind-section lookup at startup.
+`--remove-eh` selects the opposite trade: the tables are stripped, the
+guest is smaller, and a `throw` exits it instead of being dispatched,
+optionally through a program-supplied `ZkvmThrow` handler (see the
+[rhp module](modules.md#rhp) and the
+[ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)).

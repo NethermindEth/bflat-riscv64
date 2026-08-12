@@ -87,12 +87,6 @@ into one of bflat's three layers — so any count written here would be stale
 before it was useful. What is stable is the *shape*: a per-version profile of
 correctness-only fixes, small enough to read in one sitting.
 
-Historically this list was far longer — a numbered series that stripped
-compressed instructions and floating point out of the runtime after the
-fact. Those concerns are now handled where they belong: the runtime is
-*built* for the target ISA and its assembly honours that, while FP
-elimination in managed code moved to bflat's ILC stage.
-
 ## What the build produces
 
 [`NethermindEth/dotnet-riscv`](https://github.com/NethermindEth/dotnet-riscv)
@@ -152,9 +146,6 @@ which names the offending symbol.
 | 8 | `08_pack_bflat_compiler_nupkg.sh` | ILCompiler (the AOT compiler bflat drives) packed as a NuGet `.nupkg` |
 | 9 | `09_pack_bflat_compiler_native_linux.sh` | Native-RISC-V64–hosted driver |
 | ⋯ | `xx_pack_whole_source.sh` | Source archive of the full tree |
-
-Step numbers are historical and not contiguous — a step that stopped being
-needed keeps its number free rather than renumbering the rest.
 
 ## How the artifact reaches bflat
 

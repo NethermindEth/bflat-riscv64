@@ -38,9 +38,7 @@ adaptation belongs to the earliest of these layers that can express it:
    [Modules](#modules)). Nothing in the runtime source changes; the linker
    simply resolves a call somewhere else.
 3. **Post-link — ELF postprocessing.** Section attributes are fixed up for
-   the Zisk loader, and the DWARF unwind tables are kept so that managed
-   exception handling works (`--remove-eh` drops them for builds that would
-   rather have the size back).
+   the Zisk loader.
 
 What remains inside .NET is deliberately small and tracked. The
 [runtime repository](https://github.com/NethermindEth/dotnet-riscv) is moving
@@ -127,7 +125,7 @@ and `os`.
 
 | Module | Description |
 |--------|-------------|
-| eh | Synthetic ELF program headers, so the runtime's unwinder can find the exception tables in an image no loader ever mapped |
+| eh | Synthetic ELF program headers, so the runtime's unwinder can find its tables in an image with no loader |
 | gs_cookie | Pins the stack-cookie symbol to a constant (a zkVM has no entropy and no page protection) |
 | nofp | Traps soft-float builtins and the libm surface, so stray floating point fails loudly instead of returning garbage |
 | pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and an FP-free `vfprintf` |
@@ -152,10 +150,9 @@ properties are machine-checked with CBMC. See [BUILDING.md](BUILDING.md).
 
 ### Postprocessing
 
-Zisk linking includes additional postprocessing to prepare the final binary —
-fixing up section attributes for the Zisk loader, trimming what the prover
-would otherwise have to account for, and, when `--remove-eh` is given,
-removing the exception-handling tables.
+Zisk linking includes additional postprocessing to prepare the final binary:
+section attributes are fixed up for the Zisk loader and regions the prover
+would otherwise account for are trimmed.
 
 ### External libraries
 

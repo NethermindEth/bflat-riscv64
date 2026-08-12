@@ -121,7 +121,7 @@ Optional but useful flags:
 |------|--------------|
 | `--arch riscv64` | Set explicitly; otherwise inferred from `--libc` |
 | `--no-stacktrace-data` | Drop textual stack-trace tables. Saves significant binary size. |
-| `--remove-eh` | Strip the DWARF unwind tables and fail fast on `throw` instead of dispatching it: no `catch` or `finally` runs, the guest exits. Saves ~100 KiB on a small guest; the default keeps them and managed exception handling works. |
+| `--remove-eh` | Strip the DWARF unwind tables: ~100 KiB smaller, but a `throw` exits the guest instead of running `catch`/`finally`. |
 | `--no-globalization` | Forced on for `zisk` / `zisk_sim`; listed for clarity. |
 | `-Os` / `-Ot` | Optimise for size or speed. zkVMs reward size — every prover-step counts. |
 | `--mstat` | Emit MSTAT and DGML files for `dotnet-stat` size analysis. |
@@ -218,10 +218,8 @@ environment.
   and the RNG entry points are answered by a fixed-sequence PRNG (see the
   [rng_stupid module](modules.md#rng-stupid)) — the same build produces the
   same bytes on every run, which is what a reproducible proof requires.
-- **Hardware faults are not managed exceptions.** `try`/`catch`/`finally`,
-  filters and rethrow all work (see the [eh module](modules.md#eh)), but
-  only for an explicit `throw`. A null dereference or a fault raised by the
-  machine kills the guest with `SIGSEGV`: no signal handler is installed
-  and the emulator raises no trap, so the runtime's hardware-exception
-  entry point is never reached. An exception nobody catches ends in
-  `FailFast`, which aborts.
+- **Exceptions cover explicit `throw` only.** `try`/`catch`/`finally`,
+  filters and rethrow work; an uncaught exception ends in `FailFast`. A
+  hardware fault — a null dereference, say — kills the guest with `SIGSEGV`
+  instead of surfacing as an exception: nothing installs a signal handler
+  and the emulator raises no trap.
