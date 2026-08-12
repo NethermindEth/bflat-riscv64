@@ -5,13 +5,15 @@
 
 Nethermind's Bflat turns C# into fully static RISC-V64 binaries that run
 inside zkVMs. It is a fork of [bflat](https://github.com/bflattened/bflat) by
-[MichalStrehovsky](https://github.com/MichalStrehovsky), and it is used to
-build [StatelessExecutor](https://github.com/NethermindEth/nethermind) for
-RISC-V64.
+[MichalStrehovsky](https://github.com/MichalStrehovsky) that produces binaries
+with no dependency on a host operating system, and it builds
+[StatelessExecutor](https://github.com/NethermindEth/nethermind) for RISC-V64.
+The same binaries run under user-mode QEMU and on RISC-V64 Linux, which is
+what makes them debuggable.
 
 Bflat is a **compiler driver**, not a compiler: it contains no code generator
-of its own. What it does is drive Microsoft's toolchain end to end and adapt
-the result to a target that toolchain does not know about:
+of its own. It drives Microsoft's toolchain end to end and adapts the result
+for a target that toolchain does not know about:
 
 | Stage | Who does the work | What Bflat adds |
 |-------|-------------------|-----------------|
@@ -22,41 +24,27 @@ the result to a target that toolchain does not know about:
 
 ## Design principle: stock .NET, no patches
 
-**The main aim is to keep .NET free of patches.** Every adaptation that a
-zkVM target needs is applied *around* the runtime rather than inside it, so
-the toolchain tracks upstream .NET instead of forking it. Concretely, an
-adaptation belongs to the earliest of these layers that can express it:
+Every adaptation a zkVM target needs is applied *around* the runtime rather
+than inside it, so the toolchain tracks upstream .NET instead of forking it.
+An adaptation belongs to the earliest layer that can express it:
 
 1. **ILC stage — substitutions and snippets.** Managed method bodies are
    replaced through an ILLink substitutions file
    (`modules/zisk_subst/zisk.substitutions.xml`) and whole-body C# snippets
    (`zisk.snippets.cs`) compiled against the guest's own reference set. This
-   is how floating point is eliminated from CoreLib paths that would
-   otherwise emit F/D instructions on an FPU-less target.
+   is how floating point leaves CoreLib paths that would otherwise emit F/D
+   instructions on an FPU-less target.
 2. **Link stage — modules and `--wrap`.** Native objects are injected into
    the link and existing symbols are redirected to them (see
    [Modules](#modules)). Nothing in the runtime source changes; the linker
-   simply resolves a call somewhere else.
+   resolves a call somewhere else.
 3. **Post-link — ELF postprocessing.** Section attributes are fixed up for
    the Zisk loader.
 
-What remains inside .NET is deliberately small and tracked. The
-[runtime repository](https://github.com/NethermindEth/dotnet-riscv) is moving
-from an open-ended patch queue to a per-version *fixup* set organised in
-profiles: `minimal` carries correctness fixes for riscv64 code generation and
-nothing else, while an optional `perf` profile adds code-quality work on top.
-The minimal profile is currently four fixups for each of .NET 10 and .NET 11.
-
-Four upstreamable fixups per .NET line, carried for one reason only: the
-zkVM target. Nothing else justifies touching .NET.
-
-## Motivation
-
-[Original bflat](https://github.com/bflattened/bflat) builds only dynamically
-linked binaries. This fork produces fully static ones with no dependency on a
-host operating system at all — which is what a zkVM guest has to be. The same
-binaries also run under user-mode QEMU or on native RISC-V64 Linux, which is
-what makes them debuggable.
+What remains inside .NET is a per-version *fixup* set organised in profiles:
+`minimal` carries riscv64 code-generation correctness fixes and nothing else
+— four per .NET line, each meant for upstream — while an optional `perf`
+profile adds code-quality work on top.
 
 ## Supported zkVMs
 
@@ -75,46 +63,36 @@ Bflat itself builds against .NET 10 or .NET 11; see
 
 ### Target ISA
 
-zkVMs offer a limited subset of instructions. They typically do not provide a
-full riscv64 computing environment, so most cannot run Linux. The agreed
-target excludes compressed instructions and floating point — a limitation
-that drives everything below.
+zkVMs offer a limited subset of instructions and generally cannot run Linux.
+The target excludes compressed instructions and floating point — the
+limitation that drives everything below.
 
 ### Toolchain and ABI
 
-A typical GCC-based Linux riscv64 cross toolchain is used. The code Bflat
-compiles and links targets `rv64ima` with the soft-float `lp64` ABI — the
-modules are built `-mabi=lp64`, and floating point is removed by
-construction (see the `nofp` module and the ILC substitutions) rather than
-left to the ABI to police.
-
-Not every input agrees yet: the C runtime objects from the distribution feed
-are built for `rv64gc` and still advertise a double-float ABI, so Bflat
-normalizes the ELF ABI markers at build time to let `ld.lld` mix them. That
-is a workaround; rebuilding those artifacts for the target ISA is the real
-fix, and it is in progress.
+A GCC-based Linux riscv64 cross toolchain is used. Compiled and linked code
+targets `rv64ima` with the soft-float `lp64` ABI: modules are built
+`-mabi=lp64`, and floating point is removed by construction (the `nofp`
+module and the ILC substitutions) rather than left to the ABI to police.
+C runtime objects from the distribution feed are built for `rv64gc` and
+still advertise a double-float ABI, so Bflat normalizes the ELF ABI markers
+at build time to let `ld.lld` mix them.
 
 ### Runtime
 
 Bflat uses a [custom runtime build](https://github.com/NethermindEth/dotnet-riscv)
-based on musl, produced from the upstream .NET VMR with the small fixup set
-described above. The build is published as a release and downloaded
-automatically by the Bflat build; see the runtime repository for how to
-produce one.
+based on musl, produced from the upstream .NET VMR with the fixup set
+described above. It is published as a release and downloaded automatically
+by the Bflat build.
 
 ### Operating system
 
-Linux is the target operating system. The reason is pragmatic: Linux has an
-enormous library ecosystem, and treating all of it as alien would throw away
-more than it buys. So the standard Linux toolchain and libraries are used,
-based on [musl](https://git.musl-libc.org/cgit/musl) instead of glibc, with a
-significant number of libraries phased out through entry-point wrappers.
-
-The musl side comes from an Alpine cross rootfs built by upstream .NET's
-own `eng/common/cross/build-rootfs.sh`; there is no rebuilt distribution of
-our own. The one exception is musl itself: Alpine's feed builds it for
-`rv64gc`, so it is rebuilt from the same aport for `rv64im` and overwrites
-the stock `libc.a` and `crt` objects in the rootfs.
+Linux is the target: its library ecosystem is too large to treat as alien.
+The standard Linux toolchain is used with [musl](https://git.musl-libc.org/cgit/musl)
+instead of glibc, and a significant number of libraries are phased out
+through entry-point wrappers. The musl side comes from an Alpine cross
+rootfs built by upstream .NET's own `eng/common/cross/build-rootfs.sh`;
+musl itself is rebuilt from the same aport for `rv64im`, overwriting the
+stock `libc.a` and `crt` objects.
 
 ### Modules
 
@@ -139,20 +117,20 @@ and `os`.
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
 | zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
-| zkvm_zisk | Entry point, snapshot-restore trampoline and linker script for Zisk |
+| zkvm_zisk | Entry point and linker script for Zisk |
 | zkvm_zisk_sim | Entry point and linker script for the Zisk simulator |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
-C, C++ and assembly modules are covered by unit tests that execute on the
-real ISA under qemu. The allocator is additionally fuzzed, and its bounds
-properties are machine-checked with CBMC. See [BUILDING.md](BUILDING.md).
-(`ugc-zero` is prebuilt elsewhere and is tested in its own repository.)
+C, C++ and assembly modules are unit-tested on the real ISA under qemu. The
+allocator is fuzzed and its bounds properties machine-checked with CBMC;
+`ugc-zero` is prebuilt and tested in its own repository. See
+[BUILDING.md](BUILDING.md).
 
 ### Postprocessing
 
-Zisk linking includes additional postprocessing to prepare the final binary:
-section attributes are fixed up for the Zisk loader and regions the prover
-would otherwise account for are trimmed.
+Zisk linking includes additional postprocessing: section attributes are
+fixed up for the Zisk loader and regions the prover would otherwise account
+for are trimmed.
 
 ### External libraries
 
@@ -192,11 +170,6 @@ the target platform. On a match, `static_lib` is linked into the binary and
 
 See [BUILDING.md](BUILDING.md) for the build, the .NET version and variant
 matrix, and the test, fuzzing and verification workflows.
-
-Note that `compiler` appears in the names of published artifacts
-(`bflat.compiler.*.nupkg`, `bflat-compiler-native-*.zip`) and in the MSBuild
-targets that fetch them. Those are historical artifact names on the release
-side, not a claim about what this repository builds.
 
 ## License
 

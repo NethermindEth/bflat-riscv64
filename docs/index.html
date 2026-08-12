@@ -51,7 +51,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 <!-- ====================================================== STAT STRIP -->
 <section class="stat-strip">
   <div class="stat">
-    <div class="stat-value">15<span class="unit">modules</span></div>
+    <div class="stat-value">16<span class="unit">modules</span></div>
     <p class="stat-label">Link-time adaptations</p>
   </div>
   <div class="stat">
@@ -155,7 +155,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div class="feature-icon">
         <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
       </div>
-      <h3>Fifteen link-time modules</h3>
+      <h3>Sixteen link-time modules</h3>
       <p>Small C / C++ / asm objects plug into the linker via
       <code>--wrap=</code> overrides. No upstream code is patched in place.</p>
     </div>
@@ -173,8 +173,8 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       </div>
       <h3>ELF postprocessor</h3>
       <p>A Python script that fixes <code>.init_array</code> and
-      <code>.tdata</code> attributes for the Zisk loader, removes EH
-      tables, and trims sections the prover doesn't load.</p>
+      <code>.tdata</code> attributes for the Zisk loader and trims sections
+      the prover doesn't load.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">
@@ -299,7 +299,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">03</div>
       <div>
         <h3 style="margin: 0 0 4px;">patch_elf.py rewrites the ELF</h3>
-        <p style="margin: 0; color: var(--text-muted);">Fixes <code>.init_array</code> and <code>.tdata</code> attributes for the Zisk loader, removes EH frames, trims <code>.bss</code>. Only runs for <code>--libc zisk</code>.</p>
+        <p style="margin: 0; color: var(--text-muted);">Fixes <code>.init_array</code> and <code>.tdata</code> attributes for the Zisk loader and trims <code>.bss</code>. Only runs for <code>--libc zisk</code>.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">

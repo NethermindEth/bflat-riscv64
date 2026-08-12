@@ -130,24 +130,14 @@ written to be exact rather than approximate: `Hashtable`'s `0.72f` load
 factor becomes integer `× 72 / 100`, and a `TimeZoneInfo` initializer's
 `AddMilliseconds(2)` becomes the tick-exact `20_000`.
 
-**Drift is the failure mode to design against.** If a substituted method is
-renamed or re-signatured by a runtime update, the substitution stops
-applying and the FP-carrying original stays in the image — this happened
-when `Number.FormatFloat`'s signature changed in .NET 11.
-
-The C#-snippet map defends against it directly: every target must resolve or
-the build fails with the full list of mismatches. Substitutions whose donor
-reproduces an entire method body additionally verify the original's shape —
-the `TimeZoneInfo` cctor donor is applied only while the original still
-stores exactly the fields it initializes, and there is one donor variant per
-known runtime field set.
-
-ILLink entries in the XML have no such guarantee: an unmatched
-`<method signature=…>` is an `IL2009` warning, not an error, and the
-signature rendering itself differs between .NET majors, so an entry can be
-correct for one and inert for the other. Treat the [ISA
-gates](verification.md) as the check that actually holds, and read the build
-output for IL2009.
+**Drift is the failure mode to design against.** A substituted method that
+is renamed or re-signatured stops matching, and the FP-carrying original
+stays in the image. The C#-snippet map defends against it directly — every
+target must resolve or the build fails — and donors that reproduce a whole
+method body also verify the original's shape, so the `TimeZoneInfo` cctor
+donor applies only while the original still stores exactly the fields it
+initializes. ILLink entries in the XML carry no such guarantee; the
+[ISA gates](verification.md) are the check that holds.
 
 ### zkVM RyuJIT codegen knobs
 
@@ -203,16 +193,15 @@ ld.lld -static -nostdlib -m elf64lriscv \
     --whole-archive \
         <ziskLibPath>/ubootstrap.o \
         <ziskLibPath>/stdcppshim.o \
-        --wrap=inline_bump_alloc_aligned \
         <ziskLibPath>/rhp.o \
-        --wrap=RhpNewFast --wrap=RhpNewObject ... \
-        --wrap=RhpThrowEx \
-        --wrap=RhpReversePInvoke --wrap=RhpReversePInvokeReturn ... \
+        --wrap=RhpPInvoke --wrap=RhpReversePInvoke ... \
+        --wrap=RhBulkMoveWithWriteBarrier \
         <ziskLibPath>/rhp_native.o \
         --wrap=RhpAssignRefRiscV64 --wrap=RhpCidResolve \
         <ziskLibPath>/pal.o \
         --wrap=getenv --wrap=getcwd ... --wrap=__stdio_write \
         --wrap=exit --wrap=_Exit --wrap=abort \
+        <ziskLibPath>/eh.o --wrap=dl_iterate_phdr \
         <ziskLibPath>/tls.o \
         --wrap=__tls_get_addr --wrap=__init_tls ... \
     --no-whole-archive \
@@ -238,8 +227,10 @@ Two mechanisms are doing all the work:
   (such as `__wrap_getenv`) replaces musl's implementation without
   touching musl.
 
-The full list of wrapped symbols and the modules that satisfy them is on
-the [Modules](modules.md) page.
+Which symbols are wrapped depends on the target and on the build: each
+module declares its own set in `module_params.yml`, so `--remove-eh`, for
+instance, swaps `--wrap=dl_iterate_phdr` for `--wrap=RhpThrowEx`. The
+[Modules](modules.md) page has the full list.
 
 ## Stage 3 — Postprocessing (Zisk only)
 

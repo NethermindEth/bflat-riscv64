@@ -16,36 +16,21 @@ next: /architecture/
 
 The runtime bflat links against is .NET itself: the upstream VMR
 (`dotnet/dotnet`) at a release branch, built by upstream's own build system,
-for a target upstream already supports. It is not a re-implementation, not a
-vendored subset and not a long-lived fork — the delta against the release
-branch is a handful of riscv64 patches, each of which we intend to send
-upstream, and after which this project would carry none.
+for a target upstream already supports. The delta is a handful of riscv64
+patches, each written to be sent upstream.
 
 That is possible because every adaptation a zkVM needs is applied *around*
-the runtime rather than inside it, which is also what makes bumping .NET a
-routine operation instead of a merge exercise.
-
-The three layers that absorb the work all live in bflat, not in the
-runtime — see [Architecture](architecture.md):
-
-1. **ILC stage** — managed method bodies are replaced through an
-   ILLink substitutions file and whole-body C# snippets. This is where
-   floating point is removed from CoreLib paths that would otherwise emit
-   F/D instructions.
-2. **Link stage** — native [modules](modules.md) are injected and existing
-   symbols redirected to them with `--wrap`. No runtime source changes;
-   the linker simply resolves a call somewhere else.
-3. **Post-link** — the ELF is rewritten for the prover's loader.
-
-An adaptation belongs to the earliest of those layers that can express it.
-Only what none of them can reach is allowed to touch .NET itself.
+the runtime — ILC-stage substitutions, link-time [modules](modules.md), ELF
+postprocessing — rather than inside it (see
+[Architecture](architecture.md)). An adaptation belongs to the earliest of
+those layers that can express it; only what none of them can reach is
+allowed to touch .NET itself.
 
 ## The patches we carry
 
-Each one is a riscv64 correctness fix that belongs upstream and is written to
-be proposed there — not a zkVM-specific hack kept private. They are tracked
-as per-version *fixup profiles* rather than an open-ended patch queue, so
-what is carried, and against which .NET, is always legible:
+Each one is a riscv64 correctness fix meant for upstream, not a private
+zkVM hack. They are tracked as per-version *fixup profiles*, so what is
+carried, and against which .NET, stays legible:
 
 <dl class="kv">
   <dt><code>minimal</code></dt>
@@ -62,13 +47,9 @@ Profiles are selected when the runtime is built (`patch_runtime.sh
 minimal|perf`) and are versioned per .NET major, so a new runtime release
 never silently reuses fixups written against the previous one.
 
-A short list per .NET line, carried for one reason only: the zkVM target
-needs riscv64 code generation to be correct today. Nothing else justifies
-touching .NET, and every entry is meant to leave this repository by being
-accepted upstream rather than by being maintained here. The counts differ
-between majors — .NET 11 needs one fixup .NET 10 does not, because only its JIT can
-emit compressed instructions in the first place — so the directory, not this
-page, is the roster:
+Counts differ between majors — .NET 11 needs one fixup .NET 10 does not,
+because only its JIT can emit compressed instructions — so the roster is the
+directory, not this page:
 [`fixup/<major>/profile/<profile>/`](https://github.com/NethermindEth/dotnet-riscv/tree/feature/minimal/fixup).
 
 ### The minimal profile, in full
@@ -81,11 +62,6 @@ page, is the roster:
 | `22_riscv64_stubdispatch` (.NET 10) / `22_riscv64_dispatchresolve_tail` (.NET 11) | The `tail` pseudo-instruction expands to `auipc + jalr`, clobbering the dispatch-cell address the resolver needs | Assembly thunk, same reason |
 | `24_riscv64_gate_compressed_emission` (.NET 11) | Adds `EnableRiscV64Compressed`, gating the one place the JIT emits a compressed encoding | A JIT decision; .NET 10's RyuJIT has no RVC support to gate |
 | `25_riscv64_gate_atomic_emission` | Adds `EnableRiscV64Atomic`; with it off, `Interlocked` lowers to plain load/modify/store | Register lifetimes change with the lowering, so it cannot be a post-hoc rewrite |
-
-This set is worked on actively — fixups land upstream, and concerns move out
-into one of bflat's three layers — so any count written here would be stale
-before it was useful. What is stable is the *shape*: a per-version profile of
-correctness-only fixes, small enough to read in one sitting.
 
 ## What the build produces
 
@@ -126,13 +102,12 @@ Classification is by path, and that is the part to be careful with: a
 NativeAOT target whose sources live outside the `nativeaot/` tree is
 recognised by its CMake target directory rather than by the source path,
 because `make` runs the compiler from inside the target's build directory
-and the object path it passes carries no `nativeaot/` component. When that
-rule was missing, a minority of objects — the GC, llvm-libunwind, the shared
-runtime assembly — were compiled with F/D and A while the rest were clean,
-and the resulting guest was rejected by the emulator with an opaque invalid-
-instruction panic. If you add a client-bound target, check that it is
-classified: build a guest with `--error-on-float-binary --error-on-atomic`,
-which names the offending symbol.
+and the object path carries no `nativeaot/` component. A client-bound
+target that slips through is compiled with F/D and A, and the emulator
+rejects the resulting guest with an opaque invalid-instruction panic. After
+adding one, check it: build a guest with
+`--error-on-float-binary --error-on-atomic`, which names the offending
+symbol.
 
 | Step | Script | Output |
 |------|--------|--------|
@@ -158,10 +133,9 @@ from two properties in
   the performance-oriented one or the minimal one, mirroring the fixup
   profiles of the same names.
 
-Together they form the release tag (`v10.0.0.p3`, `v11.0.0.x8`, …). Treat
-`bflat.variant.props` as the source of truth: the exact tags move as
-runtime releases are cut, and the blob cache is keyed by them, so switching
-variant or .NET version re-downloads rather than reusing a stale layout.
+Together they form the release tag (`v10.0.0.p3`, `v11.0.0.x8`, …). Tags
+move as releases are cut and the blob cache is keyed by them, so switching
+variant or .NET version re-downloads.
 
 At build time the archives land in `lib/<os>/<arch>/<libc>` next to the
 bflat binary; when you run `bflat build`, those files are what the driver
