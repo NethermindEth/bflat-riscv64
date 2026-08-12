@@ -20,8 +20,10 @@ options:
     - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register
     - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventSource__InitializeDefaultEventSources
     # EH policy: route the exception object to the weak ZkvmThrow handler or
-    # fail fast - real unwinding is not available (yet) on the zkVM.
+    # fail fast. Only under --remove-eh: by default the image carries its
+    # unwind tables and RhThrowEx runs the real two-pass dispatch instead.
     - value: --wrap=RhpThrowEx
+      eh: failfast
     - value: --wrap=S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast
     # FP elimination: exact integer reimplementations of the two CoreLib
     # methods whose managed bodies are stubbed by zisk.substitutions.xml.

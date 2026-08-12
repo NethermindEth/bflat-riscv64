@@ -28,13 +28,49 @@ SECTIONS
 
   .text : ALIGN(16)
   {
+    /* Image bounds handed to libunwind by pal/module.c's synthetic
+     * PT_LOAD; see zkvm_zisk/script.ld for the full story. __managedcode
+     * and __unbox are pulled in explicitly (they would otherwise be placed
+     * as orphans AFTER this section) so that every managed PC the unwinder
+     * resolves really is inside the segment we describe. */
+    __image_text_start = .;
     KEEP(*(.text.init))
     *(.text .text.*)
+    . = ALIGN(16);
+
+    __start___managedcode = .;
+    KEEP(*(__managedcode))
+    __stop___managedcode = .;
+    . = ALIGN(4);
+
+    __start___unbox = .;
+    KEEP(*(__unbox))
+    __stop___unbox = .;
+    . = ALIGN(16);
+
+    __image_text_end = .;
   } :text
 
   .rodata : ALIGN(0x1000)
   {
     *(.rodata .rodata.*)
+  } :rodata
+
+  /* DWARF unwind tables, named for the synthetic PT_GNU_EH_FRAME. The sim
+   * leg keeps them unconditionally (patch_elf.py runs on zisk only), so the
+   * unwinder sees the same layout on both legs. */
+  .eh_frame_hdr ALIGN(8) :
+  {
+    __eh_frame_hdr_start = .;
+    KEEP(*(.eh_frame_hdr))
+    __eh_frame_hdr_end = .;
+  } :rodata
+
+  .eh_frame ALIGN(8) :
+  {
+    __eh_frame_start = .;
+    KEEP(*(.eh_frame .eh_frame.*))
+    __eh_frame_end = .;
   } :rodata
 
   .data : ALIGN(16)

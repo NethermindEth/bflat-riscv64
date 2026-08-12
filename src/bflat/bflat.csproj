@@ -134,6 +134,12 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.params.yml" />
 
+    <!-- EH: synthetic program headers for the unwinder -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\eh\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\eh.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\eh\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\eh.params.yml" />
+
     <!-- RHP -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.o" />

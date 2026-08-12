@@ -74,6 +74,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
     private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
     private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
+    private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zisk image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
@@ -177,6 +178,7 @@ internal class BuildCommand : CommandBase
             ErrorOnCompressedOption,
             ErrorOnAtomicOption,
             NoUnalignedAccessOption,
+            RemoveEhOption,
         };
         command.Handler = new BuildCommand();
 
@@ -204,6 +206,7 @@ internal class BuildCommand : CommandBase
     ///   libc: [zisk, musl]    (flow list)
     ///   arch: riscv64
     ///   os:   linux
+    ///   eh:   unwind          (or failfast; see --remove-eh)
     /// Conditions are AND-ed; a missing condition does not constrain. The
     /// parser is deliberately minimal (no YAML dependency) and fails loudly
     /// on anything it does not understand.
@@ -218,6 +221,7 @@ internal class BuildCommand : CommandBase
         string libcName = (libc ?? "").ToLowerInvariant();
         string archName = arch.ToString().ToLowerInvariant();
         string osName = os.ToString().ToLowerInvariant();
+        string ehName = _removeEh ? "failfast" : "unwind";
 
         string currentSection = null;
         string pendingKind = null;
@@ -240,6 +244,7 @@ internal class BuildCommand : CommandBase
                 "libc" => libcName,
                 "arch" => archName,
                 "os" => osName,
+                "eh" => ehName,
                 _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
             };
             foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
@@ -276,7 +281,7 @@ internal class BuildCommand : CommandBase
             string rest = line.Substring(colon + 1).Trim();
 
             // Condition attached to the current list entry.
-            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os"))
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh"))
             {
                 pendingApplies &= ConditionHolds(k, rest);
                 continue;
@@ -468,8 +473,16 @@ internal class BuildCommand : CommandBase
     }
 
 
+    /// <summary>
+    /// --remove-eh: drop the unwind tables and fail fast on throw instead of
+    /// dispatching. Read by the params.yml "eh:" condition, which is evaluated
+    /// far from the parse result, so it is latched here.
+    /// </summary>
+    private bool _removeEh;
+
     public override int Handle(ParseResult result)
     {
+        _removeEh = result.GetValueForOption(RemoveEhOption);
         bool nooptimize = result.GetValueForOption(DisableOptimizationOption);
         bool optimizeSpace = result.GetValueForOption(OptimizeSizeOption);
         bool optimizeTime = result.GetValueForOption(OptimizeSpeedOption);
@@ -1895,6 +1908,12 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
                 AppendModuleParams(ldArgs, ziskLibPath, "pal", libc, targetArchitecture, targetOS);
 
+                /* eh: synthetic program headers so libunwind can find
+                 * .eh_frame_hdr in an image no loader ever mapped. Dropped,
+                 * with the unwind tables themselves, under --remove-eh. */
+                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "eh.o")}\" ");
+                AppendModuleParams(ldArgs, ziskLibPath, "eh", libc, targetArchitecture, targetOS);
+
                 /* tls */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
                 AppendModuleParams(ldArgs, ziskLibPath, "tls", libc, targetArchitecture, targetOS);
@@ -1951,7 +1970,12 @@ internal class BuildCommand : CommandBase
 
         if (libc == "zisk" && exitCode == 0)
         {
-            var patchElfArgs = " --fix-init-array --fix-tdata --remove-eh --trim-bss ";
+            /* patch_elf's --remove-eh drops .eh_frame/.eh_frame_hdr/
+             * .dotnet_eh_table - exactly what the unwinder reads. Keep them
+             * unless the build asked to trade exception handling for size. */
+            var patchElfArgs = _removeEh
+                ? " --fix-init-array --fix-tdata --remove-eh --trim-bss "
+                : " --fix-init-array --fix-tdata --trim-bss ";
             if (verbose)
                 patchElfArgs += "--print-fn-boundaries ";
 
