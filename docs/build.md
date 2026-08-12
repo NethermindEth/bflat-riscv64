@@ -32,10 +32,6 @@ C++ / asm module under `src/bflat/modules/`. You need:
   assembly modules and the layout steps, plus the `gcc`/`g++` cross
   packages — which supply the sysroot clang compiles against, and are the
   compilers used for the module unit tests.
-- A NuGet config in `src/bflat/` that authenticates against the
-  `bflattened` GitHub package registry — see
-  [BUILDING.md](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md)
-  for how to mint a PAT.
 - Python 3 with `lief` and `pyelftools` for the postprocessor.
 
 A Dockerfile (`Dockerfile.build`) bundles all of this; run
@@ -69,12 +65,10 @@ or, driving MSBuild directly, `-p:DotnetVersion=` and `-p:Variant=`.
 </dl>
 
 The default is .NET 11 with `min`. The two selectors decide the
-TargetFramework and the runtime release tag together, and the download
-cache is keyed by that tag, so switching either re-downloads instead of
-reusing a stale layout. The mapping lives in
-[`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props);
-treat it as the source of truth, since the tags move as runtime releases
-are cut.
+TargetFramework and the runtime release tag together, and the download cache
+is keyed by that tag. The mapping lives in
+[`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props),
+which is the source of truth as release tags move.
 
 Three Docker images are published, one per supported combination:
 
@@ -84,15 +78,13 @@ Three Docker images are published, one per supported combination:
 | `nethermindeth/bflat-riscv64-min` | min | 10 |
 | `nethermindeth/bflat-riscv64-11-min` | min | 11 |
 
-**About the SDK.** A .NET 11 SDK *builds* both flavours — downlevel
-targeting is a supported SDK feature — so one install covers compilation,
-and that is what the toolchain image ships. Running is the other half: an
-SDK carries only its own major's *runtime*, so a `net10.0` bflat on an
-11-only machine aborts with `framework '10.0.0' not found` unless you set
-`DOTNET_ROLL_FORWARD=LatestMajor`. The published images do not rely on that
-— `Dockerfile` derives the SDK from `DOTNET_VERSION`, refuses a mismatched
-`SDK_VERSION`, and runs `bflat --info` on the finished image, so an image
-whose packaged driver cannot start fails to build.
+**About the SDK.** A .NET 11 SDK builds both flavours, so one install
+covers compilation. Running is the other half: an SDK carries only its own
+major's runtime, so a `net10.0` bflat on an 11-only machine aborts with
+`framework '10.0.0' not found` unless you set
+`DOTNET_ROLL_FORWARD=LatestMajor`. The published images derive the SDK from
+`DOTNET_VERSION` and run `bflat --info` on the finished image, so a
+mismatch fails the image build instead of the first use.
 
 ## Verifying a build
 
@@ -200,11 +192,9 @@ which exposes Zisk's precompile API to managed code.
 $ bflat build app.cs --os linux --libc zisk_sim
 ```
 
-The build produces a fully static RISC-V64 ELF that uses the same
-runtime, the same allocator, the same TLS shim — but skips the ELF
-postprocessor and links a slightly looser linker script. Use it when
-you need to debug a problem under GDB without provisioning a real Zisk
-environment.
+Same runtime, allocator and TLS shim as the Zisk target, but without the
+ELF postprocessor and with a slightly looser linker script — the build to
+reach for when debugging under GDB.
 
 ## Known limitations
 
