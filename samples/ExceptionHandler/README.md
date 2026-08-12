@@ -1,14 +1,23 @@
 # ExceptionHandler sample
 
-Shows how to replace the default zkVM fail-fast on a managed `throw` with a
-**C# handler that receives the exception object**, prints it, and exits cleanly.
+Shows how to take over a managed `throw` with a **C# handler that receives the
+exception object**, prints it, and exits cleanly.
+
+## When this applies
+
+A default build does not need any of this: managed exception handling works,
+so `try`/`catch`/`finally` and filters behave as they do on stock .NET, and an
+unhandled exception ends in `FailFast`. This sample is about the other policy,
+`--remove-eh`, where the unwind tables are stripped and a throw cannot be
+dispatched — for a guest that wants the image size back and treats any throw
+as the end of the run.
 
 ## Background
 
 In the Zisk zkVM build a managed `throw` is lowered by the JIT to
-`CORINFO_HELP_THROW`, which calls `RhpThrowEx`. bflat redirects that symbol with
-`--wrap=RhpThrowEx` to `__wrap_RhpThrowEx` (in `rhp/module.c`). Normally that
-wrapper just fail-fasts.
+`CORINFO_HELP_THROW`, which calls `RhpThrowEx`. Under `--remove-eh` bflat
+redirects that symbol with `--wrap=RhpThrowEx` to `__wrap_RhpThrowEx` (in
+`rhp/module.c`). Normally that wrapper just fail-fasts.
 
 This sample wires the wrapper to forward the exception object (passed in `a0`)
 to a **weak** symbol `ZkvmThrow`. A program that exports one — via
@@ -33,7 +42,9 @@ static void ZkvmThrow(IntPtr exceptionObj)
    .NET console path (`SystemNative_Write` / `__stdio_write`) is wrapped to a
    no-op, so `Console` output is invisible. `sys_write` (from `libziskos`, the
    same call behind `Nethermind.Zkvm.Abstractions.IO.PrintLine`) reaches the
-   real zkVM stdout. It is only linked when you pass `--extlib`.
+   real zkVM stdout. It is only linked when you pass `--extlib`. Without any
+   external library, a one-byte store to `UART_ADDR` (`0xa0000200`) also
+   reaches the emulator's stdout — handy for tracing a guest.
 
 2. **Exit with the native `exit()`, not `Environment.Exit`.** The zkVM only
    ends on a Zisk exit ecall (`a7 = 93`); `pal`'s `__wrap_exit` emits it.
@@ -43,13 +54,15 @@ static void ZkvmThrow(IntPtr exceptionObj)
 
 The runtime side (forwarding in `__wrap_RhpThrowEx`, the `exit` override, and a
 no-op `RhpReversePInvoke` so the handler can be entered from the throw path) is
-provided by the `rhp` / `pal` modules and the bflat linker wiring.
+provided by the `rhp` / `pal` modules and the bflat linker wiring. Drop
+`--remove-eh` and none of it is linked: the throw is dispatched instead, and
+`ZkvmThrow` is never called.
 
 ## Build and run
 
 ```console
 $ bflat build exhandler.cs --os linux --libc zisk --stdlib dotnet \
-      --no-pthread --no-pie --no-stacktrace-data \
+      --no-pthread --no-pie --no-stacktrace-data --remove-eh \
       --extlib https://github.com/NethermindEth/bflat-libziskos:v1.0.0-preview.27
 $ ziskemu -e ./exhandler.patched          # or run inside Zisk
 ```
