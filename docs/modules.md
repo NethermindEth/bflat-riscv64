@@ -154,9 +154,12 @@ that .NET calls during startup or runtime:
 
 The bump allocator deserves a note: it grows downward from
 `_kernel_heap_top`, stores an 8-byte size header before each allocation,
-and never frees. That is enough to satisfy a managed runtime whose own
-GC sits on top — see the `ugc-zero` module below — and it removes any
-need for musl's full `mallocng`, which is large and uses syscalls.
+and never frees. That is enough to satisfy a managed runtime whose own GC
+sits on top — see the `ugc-zero` module below — and it removes any need for
+musl's `mallocng`, which is large and uses syscalls. Managed allocation
+reaches it indirectly: objects come from the runtime's own riscv64
+`AllocFast.S` fast path, whose allocation-context budget `uGCHeap::Alloc`
+refills from this heap.
 
 The bump pointer itself lives in a **fixed-address cell** — the top 8 bytes
 of RAM (`g_zk_bump_ptr`, `0xbffefff8`), provided by the linker script —
@@ -172,15 +175,6 @@ whose instruction carries the `end` flag the emulator waits for. musl's
 run would stop "not completed". So `pal` wraps all three terminators to emit
 the real ZisK exit ecall (`abort` exits with `134` = 128 + SIGABRT).
 
-**`__wrap_RhpNewFast` — fixed-size fast path.** The hot allocation helper
-lives here (not in `rhp`), in the same translation unit as the bump pointer,
-the heap bounds, and `align_down_8_uintptr`, so the downward bump is inlined
-directly: no nested `malloc` call, a single alignment step, and a leaf body
-eligible for frameless-leaf codegen. This mirrors how x64/arm64 get fast
-allocation through a tight `RhpNewFast` rather than per-site JIT inlining.
-`--wrap=RhpNewFast` (declared by the `rhp` module) redirects managed callers
-here regardless of which object file defines the symbol.
-
 ## rhp — Redhawk Platform shims
 {: #rhp }
 
@@ -188,27 +182,20 @@ here regardless of which object file defines the symbol.
 
 Replacements for parts of the .NET runtime itself. Responsibilities:
 
-1. **Object allocators.** `RhpNewObject`, `RhpNewArrayFast`,
-   `RhpNewPtrArrayFast`, and `RhNewString` are reimplemented on top of the
-   bump allocator. The originals expect a thread-local allocation context;
-   in our world there is exactly one thread and a bump allocator, so a flat
-   path is both simpler and provable. The hottest helper, `RhpNewFast`, is
-   *not* here — it moved to [`pal`](#pal) so its downward bump is inlined
-   directly; the `--wrap=RhpNewFast` declaration that redirects callers
-   still lives in this module's `module_params.yml`.
-2. **Subsystem stubs.** EventPipe, ProcessorIdCache, default-locale
-   queries, type-cast cache lookups, lock acquisition/release,
-   thread-static storage, and a custom `RhpCidResolve` that bypasses the
-   cached interface-dispatch fast path. Each of these would otherwise
-   pull in code that touches signals, threads, or the OS.
-3. **Exceptions and exit.** `RhpThrowEx`, `RhpReversePInvoke`, and
-   `FailFast` are wrapped — see below.
-
-The `__rhp_cid_resolve_nocache` function (called via the assembly
-trampoline `__wrap_RhpCidResolve` in `rhp_native`) walks a dispatch cell
-manually, looks up the interface slot on the object's MethodTable, and
-returns the resolved target — replacing the fast-path cache that
-NativeAOT normally maintains in writable memory.
+1. **P/Invoke transitions.** `RhpPInvoke`/`RhpReversePInvoke` and their
+   return halves become no-ops: the frames they build park a thread at a GC
+   rendezvous that never comes in a single-threaded, never-collecting guest.
+2. **Subsystem stubs.** EventPipe and EventSource registration, and — on
+   the real zkVM, which has no terminal — console initialisation and
+   `SystemNative_Write`.
+3. **Write barrier.** `RhBulkMoveWithWriteBarrier` is a plain `memmove`;
+   uGC never scans, so there is nothing to record.
+4. **Integer replacements for FP-carrying helpers.** `HashHelpers.IsPrime`
+   (one copy per assembly that embeds the shared source) and
+   `FrozenHashTable.CalcNumBuckets`, whose managed bodies are stubbed by the
+   ILC substitutions.
+5. **Fail-fast.** `FailFast`, and under `--remove-eh` also `RhpThrowEx` —
+   see below.
 
 ### Managed exceptions under `--remove-eh`
 
@@ -287,14 +274,11 @@ RISC-V toolchain emits calls to these even when `double` appears only in
 code that is never reached; without the module the link fails with
 hundreds of unresolved symbols.
 
-Every one of them **traps**: the body calls a `noreturn` helper that
-exits with status 255. That is deliberate and it is the second version of
-this module — the first one used empty bodies, which meant a stray FP
-call returned an undefined register value and the run continued with a
-silently wrong result. For a proving system that is the worst possible
-failure mode, so the policy is now "fail loudly instead of computing
-garbage", and it lives in one function (`nofp_trap`) if it ever needs to
-change.
+Every one of them **traps**: the body calls a `noreturn` helper that exits
+with status 255. Empty bodies would let a stray FP call return an undefined
+register value and the run continue with a silently wrong result — the worst
+failure mode for a proving system. The policy lives in one function
+(`nofp_trap`).
 
 One exception, deliberately not a trap: `__wrap_asprintf` returns `-1`.
 It is referenced only by the cgroup parsing that pal already stubs out,
