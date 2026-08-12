@@ -43,7 +43,7 @@
 
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p3</RuntimeVersionPostfix>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x10</RuntimeVersionPostfix>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">.x8</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">.x9</RuntimeVersionPostfix>
 
     <!-- Full runtime release tag. RuntimeVersion stays the plain NuGet
          version: every release ships bflat.compiler.$(RuntimeVersion).nupkg,
