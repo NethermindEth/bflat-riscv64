@@ -35,6 +35,27 @@ jobs:
       - name: Check ACSL contracts on native modules
         run: python3 src/bflat/scripts/check_acsl.py
 
+  eh_proof:
+    runs-on: ubuntu-latest
+    name: Formal proof of the eh module (Frama-C WP + Eva)
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # The Debian package is CLI-only and ships no provers, so the proof
+      # runs in the upstream image (WP with Alt-Ergo, plus Eva).
+      - name: Pull Frama-C image
+        run: docker pull framac/frama-c:30.0
+
+      # WP discharges every contract of the code that builds the synthetic
+      # program headers (RTE included); Eva then runs the module end to end
+      # in both image shapes and must report zero alarms.
+      - name: Run WP + Eva
+        run: |
+          chmod +x src/bflat/modules/eh/verify/run_wp.sh
+          docker run --rm -v "$PWD":/work -w /work framac/frama-c:30.0 \
+            src/bflat/modules/eh/verify/run_wp.sh
+
   csharp_analyzers:
     runs-on: ubuntu-latest
     container:
