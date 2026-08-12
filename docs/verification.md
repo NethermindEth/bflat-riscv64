@@ -114,6 +114,23 @@ states rather than sampled ones. The harness includes the real
 The proof is mutation-tested: restoring a pre-fix bounds check makes CBMC
 report the wild write, so a passing run is not vacuous.
 
+The `eh` module — the synthetic program headers that make managed exception
+handling work at all — is proved outright rather than sampled:
+
+```console
+$ docker run --rm -v "$PWD":/w -w /w framac/frama-c:30.0 \
+      src/bflat/modules/eh/verify/run_wp.sh
+```
+
+Frama-C/WP discharges every contract of the code that builds the answer,
+runtime-error guards included, and Eva then runs the module end to end —
+dispatcher and all — in both shapes an image can have, unwind tables kept
+and stripped, and must report zero alarms with no logical property left
+unknown. The split exists because WP cannot reason about a call through a
+caller-supplied function pointer, which is all the dispatcher does once the
+block is built; Eva resolves that pointer against the driver's callback and
+covers it. CI runs the gate on every push.
+
 ## Keeping the substitutions honest
 
 The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
