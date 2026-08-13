@@ -656,6 +656,19 @@ internal class BuildCommand : CommandBase
         bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
+
+        if (targetArchitecture == TargetArchitecture.RiscV64 && (libc == "zisk" || libc == "zisk_sim"))
+        {
+            // zkVM guests target rv64im: drop the C, A, F and D extensions at
+            // the instruction-set level. Losing F flips ilc and the JIT into
+            // the lp64 soft-float ABI + soft-float lowering (runtime patches
+            // 26-28); C and A stop compressed/atomic emission through the
+            // same instruction-set mechanism as the EnableRiscV64* knobs
+            // passed below.
+            const string reducedIsa = "-c,-a,-f,-d";
+            isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
+        }
+
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
