@@ -3,6 +3,20 @@
 # JIT lowers FP into soft-float calls (dotnet-riscv fixups 26-28) instead of
 # the nofp trap model.
 options:
+  # Compiler flags for the module sources (multi-file build, see
+  # module_srcs.lst): the vendored compiler-rt builtins must be compiled
+  # strictly for rv64im so no F/D/C/A/Zicond encoding can appear, and are
+  # kept out of LTO so the common rv64imad flags never re-codegen them.
+  cc:
+    - value: -march=rv64im
+    - value: -mabi=lp64
+    - value: -mcmodel=medany
+    - value: -mno-relax
+    - value: -O2
+    - value: -fno-builtin
+    - value: -ffreestanding
+    - value: -fno-stack-protector
+    - value: -Ibuiltins
   ld:
     # The runtime blobs ship these compiled for rv64gc (hard-float); divert
     # every reference to the soft __wrap_ implementations in module.c so the

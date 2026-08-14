@@ -1,1 +1,0 @@
--march=rv64im -mabi=lp64 -mcmodel=medany -mno-relax -O2 -fno-builtin -ffreestanding -fno-stack-protector -Ibuiltins

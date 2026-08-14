@@ -94,8 +94,11 @@ function build_modules()
 						# and must not be re-codegenned at LTO link time with
 						# the common flags) and merge with ld -r.
 						mod_cflags="${cflags_common}"
-						if [ -f module_cflags ] ; then
-							mod_cflags="--target=riscv64-linux-gnu --sysroot=/usr/riscv64-linux-gnu $(cat module_cflags)"
+						if [ -f module_params.yml ] ; then
+							yml_cflags="$(yq -r '(.options.cc // [])[] | .value' module_params.yml 2>/dev/null | xargs)"
+							if [ -n "${yml_cflags}" ] ; then
+								mod_cflags="--target=riscv64-linux-gnu --sysroot=/usr/riscv64-linux-gnu ${yml_cflags}"
+							fi
 						fi
 						rm -rf obj && mkdir -p obj
 						objs=""
