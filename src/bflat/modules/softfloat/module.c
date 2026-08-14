@@ -33,7 +33,20 @@
 #include <stdint.h>
 
 /* Vendored musl fmod/fmodf as the __wrap_ definitions. math.h declarations
- * are renamed along with the definitions by the defines below. */
+ * are renamed along with the definitions by the defines below. The ACSL
+ * contracts sit on forward declarations; Frama-C attaches a declaration
+ * spec to the (renamed) definitions pulled in by the includes. */
+
+/*@ // IEEE-754 remainder as computed by musl's bit-manipulation fmod:
+    // finite arguments with y != 0 produce the exact remainder; NaN
+    // operands, infinite x or zero y produce NaN. Pure integer code.
+    assigns \nothing;
+*/
+double __wrap_fmod(double x, double y);
+
+/*@ assigns \nothing; */
+float __wrap_fmodf(float x, float y);
+
 #define fmod __wrap_fmod
 #include "fmod.c"
 #undef fmod
@@ -45,6 +58,17 @@
 /* .NET-semantics FP->int conversions (see nativeaot MathHelpers.cpp).
  * The comparisons compile into calls to the vendored soft-float builtins. */
 
+/*@ // .NET double -> uint64 conversion semantics (MathHelpers.cpp):
+    // NaN and negative values saturate to 0, values at or above 2^64
+    // saturate to UINT64_MAX, the rest truncate toward zero.
+    assigns \nothing;
+    behavior nan_or_nonpositive:
+      assumes \is_NaN(val) || val <= 0.0;
+      ensures \result == 0;
+    behavior too_big:
+      assumes \is_finite(val) && val >= 18446744073709551616.0;
+      ensures \result == UINT64_MAX;
+*/
 uint64_t
 __wrap_RhpDbl2ULng(double val)
 {
@@ -55,6 +79,20 @@ __wrap_RhpDbl2ULng(double val)
                      : 0;
 }
 
+/*@ // .NET double -> int64 conversion semantics: NaN maps to 0, values
+    // beyond either end of the int64 range saturate to Min/MaxValue, the
+    // rest truncate toward zero.
+    assigns \nothing;
+    behavior nan:
+      assumes \is_NaN(val);
+      ensures \result == 0;
+    behavior too_small:
+      assumes \is_finite(val) && val <= -9223372036854775808.0;
+      ensures \result == INT64_MIN;
+    behavior too_big:
+      assumes \is_finite(val) && val >= 9223372036854775808.0;
+      ensures \result == INT64_MAX;
+*/
 int64_t
 __wrap_RhpDbl2Lng(double val)
 {
@@ -69,24 +107,36 @@ __wrap_RhpDbl2Lng(double val)
 
 /* int64 -> FP: plain casts, exact via the builtins. */
 
+/*@ // int64 -> double, round to nearest even (soft-float builtin underneath).
+    assigns \nothing;
+*/
 double
 __wrap_RhpLng2Dbl(int64_t val)
 {
     return (double)val;
 }
 
+/*@ // uint64 -> double, round to nearest even (soft-float builtin underneath).
+    assigns \nothing;
+*/
 double
 __wrap_RhpULng2Dbl(uint64_t val)
 {
     return (double)val;
 }
 
+/*@ // int64 -> float, round to nearest even (soft-float builtin underneath).
+    assigns \nothing;
+*/
 float
 __wrap_RhpLng2Flt(int64_t val)
 {
     return (float)val;
 }
 
+/*@ // uint64 -> float, round to nearest even (soft-float builtin underneath).
+    assigns \nothing;
+*/
 float
 __wrap_RhpULng2Flt(uint64_t val)
 {
