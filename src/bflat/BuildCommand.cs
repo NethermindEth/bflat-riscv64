@@ -657,7 +657,14 @@ internal class BuildCommand : CommandBase
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
 
-        if (targetArchitecture == TargetArchitecture.RiscV64 && (libc == "zisk" || libc == "zisk_sim"))
+        // Whether the compiler package models the RISC-V extensions as
+        // instruction sets (the .NET 11 soft-float line does; .NET 10
+        // packages know only base/zba/zbb). Probed on a throwaway builder so
+        // the same bflat sources serve both runtime generations.
+        bool riscvIsaAware = targetArchitecture == TargetArchitecture.RiscV64
+            && new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet("f");
+
+        if (riscvIsaAware && (libc == "zisk" || libc == "zisk_sim"))
         {
             // zkVM guests target rv64im: drop the C, A, F and D extensions at
             // the instruction-set level. Losing F flips ilc and the JIT into
@@ -679,8 +686,19 @@ internal class BuildCommand : CommandBase
         // Soft-float mode: a riscv64 target without the F extension. The JIT
         // lowers FP to soft-float calls (dotnet-riscv fixups 26-28); the link
         // switches from the nofp trap module to the softfloat builtins module.
-        bool zkSoftFloat = targetArchitecture == TargetArchitecture.RiscV64
-            && !instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_F);
+        // Resolved reflectively: the enum member only exists in compiler
+        // packages that model F/D/C/A (see riscvIsaAware); on older packages
+        // this stays false and the classic nofp path is used.
+        bool zkSoftFloat = false;
+        if (riscvIsaAware)
+        {
+            var fField = typeof(Internal.JitInterface.InstructionSet).GetField("RiscV64_F");
+            if (fField != null)
+            {
+                var fSet = (Internal.JitInterface.InstructionSet)fField.GetValue(null);
+                zkSoftFloat = !instructionSetSupport.IsInstructionSetSupported(fSet);
+            }
+        }
 
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
