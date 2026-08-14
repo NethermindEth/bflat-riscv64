@@ -665,8 +665,11 @@ internal class BuildCommand : CommandBase
             // 26-28); C and A stop compressed/atomic emission through the
             // same instruction-set mechanism as the EnableRiscV64* knobs
             // passed below.
-            const string reducedIsa = "-c,-a,-f,-d";
+            if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") == "1")
+                goto skipReduction;
+            const string reducedIsa = "-c,-a,-f,-d,-zba,-zbb,-zbs,-zicond";
             isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
+            skipReduction: ;
         }
 
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
@@ -1351,6 +1354,17 @@ internal class BuildCommand : CommandBase
         {
             backendOptions.Add("EnableRiscV64Compressed=0");
             backendOptions.Add("EnableRiscV64Atomic=0");
+            // The cross-JIT resolves ISA availability through the altjit path
+            // (unmatched VM), where every EnableRiscV64* knob defaults to on -
+            // independent of the ilc instruction-set support. Turn off
+            // everything the zkVM cannot decode; F/D for hygiene (the
+            // soft-float lowering is driven by SOFTFP_ABI, not these).
+            backendOptions.Add("EnableRiscV64Zicond=0");
+            backendOptions.Add("EnableRiscV64Zba=0");
+            backendOptions.Add("EnableRiscV64Zbb=0");
+            backendOptions.Add("EnableRiscV64Zbs=0");
+            backendOptions.Add("EnableRiscV64F=0");
+            backendOptions.Add("EnableRiscV64D=0");
         }
 
         // Unaligned access. dotnet-riscv fixup 35 (JitNoUnalignedAccess) defaults the
@@ -2019,6 +2033,18 @@ internal class BuildCommand : CommandBase
                 outputFilePath + " " + patchedFilePath +
                 patchElfArgs,
                 printCommands);
+            if (patchExitCode != 0)
+            {
+                Console.Error.WriteLine("ELF postprocessing failed");
+                return patchExitCode;
+            }
+            // patch_elf writes its result to patchedFilePath; put it where the
+            // caller asked. Historically the guest recipes passed
+            // -o <name>.patched, which made ChangeExtension a no-op and the
+            // script overwrite its input in place - any other output name left
+            // the final file UNPROCESSED (and unbootable on the zkVM).
+            if (!string.Equals(patchedFilePath, outputFilePath, StringComparison.Ordinal))
+                File.Move(patchedFilePath, outputFilePath, overwrite: true);
         }
 
         // Exact whole-image ISA verification: decode the linked binary and fail
