@@ -3,10 +3,46 @@
 # JIT lowers FP into soft-float calls (dotnet-riscv fixups 26-28) instead of
 # the nofp trap model.
 options:
-  # Compiler flags for the module sources (multi-file build, see
-  # module_srcs.lst): the vendored compiler-rt builtins must be compiled
-  # strictly for rv64im so no F/D/C/A/Zicond encoding can appear, and are
-  # kept out of LTO so the common rv64imad flags never re-codegen them.
+  # Multi-file module: build.sh compiles every listed source as a plain ELF
+  # object and merges them with ld -r (no LTO, so the common rv64imad flags
+  # never re-codegen the builtins).
+  sources:
+    - value: module.c
+    - value: builtins/adddf3.c
+    - value: builtins/addsf3.c
+    - value: builtins/comparedf2.c
+    - value: builtins/comparesf2.c
+    - value: builtins/divdf3.c
+    - value: builtins/divsf3.c
+    - value: builtins/extendsfdf2.c
+    - value: builtins/fixdfdi.c
+    - value: builtins/fixdfsi.c
+    - value: builtins/fixsfdi.c
+    - value: builtins/fixsfsi.c
+    - value: builtins/fixunsdfdi.c
+    - value: builtins/fixunsdfsi.c
+    - value: builtins/fixunssfdi.c
+    - value: builtins/fixunssfsi.c
+    - value: builtins/floatdidf.c
+    - value: builtins/floatdisf.c
+    - value: builtins/floatsidf.c
+    - value: builtins/floatsisf.c
+    - value: builtins/floatundidf.c
+    - value: builtins/floatundisf.c
+    - value: builtins/floatunsidf.c
+    - value: builtins/floatunsisf.c
+    - value: builtins/fp_mode.c
+    - value: builtins/muldf3.c
+    - value: builtins/mulsf3.c
+    - value: builtins/negdf2.c
+    - value: builtins/negsf2.c
+    - value: builtins/subdf3.c
+    - value: builtins/subsf3.c
+    - value: builtins/truncdfsf2.c
+
+  # Compiler flags for the module sources: the vendored compiler-rt builtins
+  # must be compiled strictly for rv64im so no F/D/C/A/Zicond encoding can
+  # appear.
   cc:
     - value: -march=rv64im
     - value: -mabi=lp64

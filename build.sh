@@ -87,28 +87,31 @@ function build_modules()
 			if [ -d "$mod" ] ; then
 				echo Building module $mod
 				pushd $mod
-					if [ -f module_srcs.lst ] ; then
-						# Multi-file module: compile each listed source as a
-						# plain ELF object (no LTO - the sources carry their
-						# own -march, e.g. rv64im for the soft-float builtins,
-						# and must not be re-codegenned at LTO link time with
-						# the common flags) and merge with ld -r.
+					mod_sources=""
+					if [ -f module_params.yml ] ; then
+						mod_sources="$(yq -r '(.options.sources // [])[] | .value' module_params.yml 2>/dev/null | xargs)"
+					fi
+					if [ -n "${mod_sources}" ] ; then
+						# Multi-file module (options.sources in
+						# module_params.yml): compile each source as a plain
+						# ELF object (no LTO - the sources carry their own
+						# flags from options.cc, e.g. rv64im for the
+						# soft-float builtins, and must not be re-codegenned
+						# at LTO link time with the common flags) and merge
+						# with ld -r.
 						mod_cflags="${cflags_common}"
-						if [ -f module_params.yml ] ; then
-							yml_cflags="$(yq -r '(.options.cc // [])[] | .value' module_params.yml 2>/dev/null | xargs)"
-							if [ -n "${yml_cflags}" ] ; then
-								mod_cflags="--target=riscv64-linux-gnu --sysroot=/usr/riscv64-linux-gnu ${yml_cflags}"
-							fi
+						yml_cflags="$(yq -r '(.options.cc // [])[] | .value' module_params.yml 2>/dev/null | xargs)"
+						if [ -n "${yml_cflags}" ] ; then
+							mod_cflags="--target=riscv64-linux-gnu --sysroot=/usr/riscv64-linux-gnu ${yml_cflags}"
 						fi
 						rm -rf obj && mkdir -p obj
 						objs=""
-						while read -r srcf ; do
-							[ -z "$srcf" ] && continue
+						for srcf in ${mod_sources} ; do
 							of="obj/$(echo "$srcf" | tr / _).o"
 							clang ${mod_cflags} -DBFLAT_DOTNET=${dotnet_version} -c "$srcf" -o "$of"
 							on_fail $? "Failed to compile module $mod source $srcf"
 							objs="$objs $of"
-						done < module_srcs.lst
+						done
 						riscv64-linux-gnu-ld -r $objs -o module.o
 						on_fail $? "Failed to merge module $mod objects"
 					elif [ -f module.c ] ; then
