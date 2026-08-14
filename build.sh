@@ -87,7 +87,28 @@ function build_modules()
 			if [ -d "$mod" ] ; then
 				echo Building module $mod
 				pushd $mod
-					if [ -f module.c ] ; then
+					if [ -f module_srcs.lst ] ; then
+						# Multi-file module: compile each listed source as a
+						# plain ELF object (no LTO - the sources carry their
+						# own -march, e.g. rv64im for the soft-float builtins,
+						# and must not be re-codegenned at LTO link time with
+						# the common flags) and merge with ld -r.
+						mod_cflags="${cflags_common}"
+						if [ -f module_cflags ] ; then
+							mod_cflags="--target=riscv64-linux-gnu --sysroot=/usr/riscv64-linux-gnu $(cat module_cflags)"
+						fi
+						rm -rf obj && mkdir -p obj
+						objs=""
+						while read -r srcf ; do
+							[ -z "$srcf" ] && continue
+							of="obj/$(echo "$srcf" | tr / _).o"
+							clang ${mod_cflags} -DBFLAT_DOTNET=${dotnet_version} -c "$srcf" -o "$of"
+							on_fail $? "Failed to compile module $mod source $srcf"
+							objs="$objs $of"
+						done < module_srcs.lst
+						riscv64-linux-gnu-ld -r $objs -o module.o
+						on_fail $? "Failed to merge module $mod objects"
+					elif [ -f module.c ] ; then
 						# Compile module as C (clang + LTO so lld can do cross-module opt)
 						# -DBFLAT_DOTNET: some module bodies are contract-versioned
 						# against the target runtime (the C/C++ analog of the .S

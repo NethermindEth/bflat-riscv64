@@ -673,6 +673,12 @@ internal class BuildCommand : CommandBase
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
 
+        // Soft-float mode: a riscv64 target without the F extension. The JIT
+        // lowers FP to soft-float calls (dotnet-riscv fixups 26-28); the link
+        // switches from the nofp trap module to the softfloat builtins module.
+        bool zkSoftFloat = targetArchitecture == TargetArchitecture.RiscV64
+            && !instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_F);
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
@@ -1885,11 +1891,28 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
-                /* nofp: FP trap stubs; the math-symbol wrap surface is
-                 * declared in nofp.params.yml. (The musl target links the
-                 * object without these wraps.) */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
+                if (zkSoftFloat)
+                {
+                    /* softfloat: real soft-float builtins (compiler-rt,
+                     * rv64im) plus soft replacements for the hard-float
+                     * runtime conversion helpers and fmod; the wrap surface
+                     * is declared in softfloat.params.yml. The nofp trap
+                     * module and its libm wraps are NOT linked: FP works.
+                     * Note: the libm surface itself (sin, sqrt, formatting
+                     * via fmt_fp) still resolves to hard-float musl members
+                     * and is caught by --error-on-float-binary until a
+                     * soft-float libm ships. */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "softfloat.o")}\" ");
+                    AppendModuleParams(ldArgs, ziskLibPath, "softfloat", libc, targetArchitecture, targetOS);
+                }
+                else
+                {
+                    /* nofp: FP trap stubs; the math-symbol wrap surface is
+                     * declared in nofp.params.yml. (The musl target links the
+                     * object without these wraps.) */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                    AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
+                }
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");

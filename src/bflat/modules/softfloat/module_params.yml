@@ -1,0 +1,19 @@
+# Linker options owned by the softfloat module (packed as softfloat.params.yml).
+# Applied for zisk/zisk_sim targets built without the F extension, where the
+# JIT lowers FP into soft-float calls (dotnet-riscv fixups 26-28) instead of
+# the nofp trap model.
+options:
+  ld:
+    # The runtime blobs ship these compiled for rv64gc (hard-float); divert
+    # every reference to the soft __wrap_ implementations in module.c so the
+    # hard-float archive members never enter the link.
+    - value: --wrap=RhpDbl2Lng
+    - value: --wrap=RhpDbl2ULng
+    - value: --wrap=RhpLng2Dbl
+    - value: --wrap=RhpULng2Dbl
+    - value: --wrap=RhpLng2Flt
+    - value: --wrap=RhpULng2Flt
+    # CORINFO_HELP_DBLREM/FLTREM resolve to fmod/fmodf; musl's members are
+    # hard-float, the wrapped ones (vendored musl sources) are integer-only.
+    - value: --wrap=fmod
+    - value: --wrap=fmodf
