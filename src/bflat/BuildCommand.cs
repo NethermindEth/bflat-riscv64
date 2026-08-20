@@ -1305,7 +1305,7 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
 
             // Lower constant-size SpanHelpers.SequenceEqual to the inline
-            // `csrs 0x814, src ; addi rd, dst, count` idiom that the ZisK
+            // `csrrs rd, 0x814, src ; addi x0, dst, count` idiom that the ZisK
             // transpiler folds into one dma_xmemcmp step. ZisK-only (a plain
             // riscv64 CPU would mis-execute the addi). Needs runtime patch
             // 30_dma_memcmp_inline_riscv64.
