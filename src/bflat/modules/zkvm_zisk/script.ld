@@ -96,22 +96,32 @@ SECTIONS
     __stop___modules  = .;
   } >ram AT>rom :data
 
-  .tdata ALIGN(8) : {
-    __tdata_start = .;
-    *(.tdata .tdata.* .gnu.linkonce.td.*)
-    __tdata_end = .;
-  } >ram AT>ram :tls
+  /* .init_array and .got are placed explicitly, ahead of the TLS template
+   * below. Left as orphans, ld drops them right after .tbss, and every
+   * PROGBITS section that follows a NOBITS one inside a PT_LOAD breaks the
+   * segment's `vaddr - offset` congruence: ZisK >= 1.1.0 loads the image from
+   * program headers only (transpilers/common/src/elf_extraction.rs) and would
+   * then read .got from the wrong file bytes. Keep every PROGBITS section
+   * ahead of .tbss/.bss. .init_array must also stay its own output section -
+   * scripts/patch_elf.py --fix-init-array looks it up by name. */
+  .init_array ALIGN(8) : {
+    PROVIDE_HIDDEN(__init_array_start = .);
+    KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+    KEEP(*(.init_array))
+    PROVIDE_HIDDEN(__init_array_end = .);
+  } >ram AT>ram :data
 
-  __tdata_load = LOADADDR(.tdata);
-  __tdata_len = SIZEOF(.tdata);
+  .fini_array ALIGN(8) : {
+    PROVIDE_HIDDEN(__fini_array_start = .);
+    KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+    KEEP(*(.fini_array))
+    PROVIDE_HIDDEN(__fini_array_end = .);
+  } >ram AT>ram :data
 
-  .tbss (NOLOAD) : {
-    __tbss_start = .;
-    *(.tbss .tbss.* .gnu.linkonce.tb.*)
-    __tbss_end = .;
-  } >ram AT>ram :tls
-
-  __tbss_len = SIZEOF(.tbss);
+  .got ALIGN(8) : {
+    *(.got.plt)
+    *(.got .got.*)
+  } >ram AT>ram :data
 
   .data ALIGN(64) : {
     __data_start = .;
@@ -129,6 +139,27 @@ SECTIONS
   } >ram AT>ram :data
 
   __data_load = LOADADDR(.data);
+
+  /* TLS template last among the loaded data: .tdata is the final PROGBITS
+   * section, .tbss the first NOBITS one, so the file image stays contiguous
+   * (see the note above .init_array). The two must stay adjacent - PT_TLS
+   * covers both. */
+  .tdata ALIGN(8) : {
+    __tdata_start = .;
+    *(.tdata .tdata.* .gnu.linkonce.td.*)
+    __tdata_end = .;
+  } >ram AT>ram :tls
+
+  __tdata_load = LOADADDR(.tdata);
+  __tdata_len = SIZEOF(.tdata);
+
+  .tbss (NOLOAD) : {
+    __tbss_start = .;
+    *(.tbss .tbss.* .gnu.linkonce.tb.*)
+    __tbss_end = .;
+  } >ram AT>ram :tls
+
+  __tbss_len = SIZEOF(.tbss);
 
   .bss (NOLOAD) : {
     PROVIDE(_bss_start = .);
