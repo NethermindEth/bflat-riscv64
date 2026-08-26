@@ -692,16 +692,30 @@ internal class BuildCommand : CommandBase
         bool zkSoftFloat = false;
         if (riscvIsaAware)
         {
-            var fField = typeof(Internal.JitInterface.InstructionSet).GetField("RiscV64_F");
-            if (fField != null)
+            foreach (var extName in new[] { "RiscV64_F", "RiscV64_D" })
             {
-                var fSet = (Internal.JitInterface.InstructionSet)fField.GetValue(null);
-                zkSoftFloat = !instructionSetSupport.IsInstructionSetSupported(fSet);
+                var extField = typeof(Internal.JitInterface.InstructionSet).GetField(extName);
+                if (extField != null)
+                {
+                    var extSet = (Internal.JitInterface.InstructionSet)extField.GetValue(null);
+                    zkSoftFloat |= !instructionSetSupport.IsInstructionSetSupported(extSet);
+                }
             }
         }
 
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
+        if (zkSoftFloat)
+        {
+            // The ABI is a property of the target, not of the instruction set: the
+            // compiler selects the lp64 (soft-float) calling convention, the JIT flag
+            // and the ELF float-ABI marker from TargetAbi, which the runtime, libm and
+            // compiler-rt of the zisk toolchain (all built with -mabi=lp64) match.
+            // Resolved reflectively like the instruction sets above; on packages
+            // without the member the ISA-derived flag of that package applies.
+            if (Enum.TryParse(typeof(TargetAbi), "NativeAotRiscV64SoftFloat", out object softAbi))
+                targetAbi = (TargetAbi)softAbi;
+        }
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         var ms = new MemoryStream();
 
