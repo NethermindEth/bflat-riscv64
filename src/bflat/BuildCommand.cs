@@ -74,6 +74,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
     private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
     private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
+    private static Option<string> ZkGcOption = new Option<string>("--zk-gc", "GC of the zkVM guest: 'ugc' (default: NethermindEth/uGC, a bump allocator that never collects) or 'clr' (the upstream workstation GC in the single-threaded runtime flavor, libRuntime.SingleThreaded: no background GC, no finalizer thread; finalizers run from GC.WaitForPendingFinalizers). Requires a runtime pack with dotnet-riscv fixup 30.");
     private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zisk image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
@@ -177,6 +178,7 @@ internal class BuildCommand : CommandBase
             ErrorOnFloatBinaryOption,
             ErrorOnCompressedOption,
             ErrorOnAtomicOption,
+            ZkGcOption,
             NoUnalignedAccessOption,
             RemoveEhOption,
         };
@@ -207,6 +209,10 @@ internal class BuildCommand : CommandBase
     ///   arch: riscv64
     ///   os:   linux
     ///   eh:   unwind          (or failfast; see --remove-eh)
+    ///   fpu:  none            (or soft / hard; the target's floating-point
+    ///                          model: none = rv64ima with the nofp traps,
+    ///                          soft = riscv64-lp64 soft-float link, hard = FPU)
+    ///   gc:   ugc             (or clr; the GC linked into the guest, --zk-gc)
     /// Conditions are AND-ed; a missing condition does not constrain. The
     /// parser is deliberately minimal (no YAML dependency) and fails loudly
     /// on anything it does not understand.
@@ -245,6 +251,8 @@ internal class BuildCommand : CommandBase
                 "arch" => archName,
                 "os" => osName,
                 "eh" => ehName,
+                "fpu" => _fpuName,
+                "gc" => _gcName,
                 _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
             };
             foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
@@ -281,7 +289,7 @@ internal class BuildCommand : CommandBase
             string rest = line.Substring(colon + 1).Trim();
 
             // Condition attached to the current list entry.
-            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh"))
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh" || k == "fpu" || k == "gc"))
             {
                 pendingApplies &= ConditionHolds(k, rest);
                 continue;
@@ -458,7 +466,7 @@ internal class BuildCommand : CommandBase
         {
             "libSystem.Native.a", "libatomic.a", "libeventpipe-disabled.a",
             "libaotminipal.a", "libstandalonegc-disabled.a", "libstdc++compat.a",
-            "libRuntime.WorkstationGC.a", "libSystem.IO.Compression.Native.a",
+            "libRuntime.WorkstationGC.a", "libRuntime.SingleThreaded.a", "libSystem.IO.Compression.Native.a",
             "libSystem.Security.Cryptography.Native.OpenSsl.a",
             "libSystem.Globalization.Native.a",
         };
@@ -479,6 +487,21 @@ internal class BuildCommand : CommandBase
     /// far from the parse result, so it is latched here.
     /// </summary>
     private bool _removeEh;
+
+    /// <summary>
+    /// The target's floating-point model, read by the params.yml "fpu:"
+    /// condition: "none" (zisk/zisk_sim rv64ima, FP trapped by the nofp module),
+    /// "soft" (zisk/zisk_sim soft-float link, see zkSoftFloat) or "hard" (an
+    /// FPU target). Latched once the instruction-set support is resolved.
+    /// </summary>
+    private string _fpuName = "hard";
+
+    /// <summary>
+    /// The GC linked into the guest, read by the params.yml "gc:" condition:
+    /// "ugc" (zisk/zisk_sim default) or "clr" (the upstream GC; also every
+    /// non-zkVM target). Latched next to _fpuName.
+    /// </summary>
+    private string _gcName = "clr";
 
     public override int Handle(ParseResult result)
     {
@@ -656,12 +679,83 @@ internal class BuildCommand : CommandBase
         bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
+
+        // Whether the compiler package models the RISC-V extensions as
+        // instruction sets (the .NET 11 soft-float line does; .NET 10
+        // packages know only base/zba/zbb). Probed on a throwaway builder so
+        // the same bflat sources serve both runtime generations.
+        bool riscvIsaAware = targetArchitecture == TargetArchitecture.RiscV64
+            && new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet("f");
+
+        if (riscvIsaAware && (libc == "zisk" || libc == "zisk_sim"))
+        {
+            // zkVM guests target rv64im: drop the C, A, F and D extensions at
+            // the instruction-set level. Losing F flips ilc and the JIT into
+            // the lp64 soft-float ABI + soft-float lowering (runtime patches
+            // 26-28); C and A stop compressed/atomic emission through the
+            // same instruction-set mechanism as the EnableRiscV64* knobs
+            // passed below.
+            if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") == "1")
+                goto skipReduction;
+            const string reducedIsa = "-c,-a,-f,-d,-zba,-zbb,-zbs,-zicond";
+            isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
+            skipReduction: ;
+        }
+
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
 
+        // Soft-float mode: a riscv64 target without the F extension. The JIT
+        // lowers FP to soft-float calls (dotnet-riscv fixups 26-28); the link
+        // switches from the nofp trap module to the softfloat builtins module.
+        // Resolved reflectively: the enum member only exists in compiler
+        // packages that model F/D/C/A (see riscvIsaAware); on older packages
+        // this stays false and the classic nofp path is used.
+        bool zkSoftFloat = false;
+        if (riscvIsaAware)
+        {
+            foreach (var extName in new[] { "RiscV64_F", "RiscV64_D" })
+            {
+                var extField = typeof(Internal.JitInterface.InstructionSet).GetField(extName);
+                if (extField != null)
+                {
+                    var extSet = (Internal.JitInterface.InstructionSet)extField.GetValue(null);
+                    zkSoftFloat |= !instructionSetSupport.IsInstructionSetSupported(extSet);
+                }
+            }
+        }
+
+        // The FP-elimination surface (nofp substitutions, C# snippets, the
+        // CustomILProvider rewrites) belongs to the FPU-less link only. The
+        // --verify-substitutions probe checks that surface against the CoreLib
+        // in front of us regardless of the link's FP model, so it always sees it.
+        bool zkvmTarget = libc == "zisk" || libc == "zisk_sim";
+        bool zkNofpSurface = zkvmTarget &&
+            (!zkSoftFloat || result.GetValueForOption(VerifySubstitutionsOption));
+        _fpuName = !zkvmTarget ? "hard" : zkNofpSurface ? "none" : "soft";
+        string zkGc = (result.GetValueForOption(ZkGcOption) ?? "ugc").ToLowerInvariant();
+        if (zkGc != "ugc" && zkGc != "clr")
+        {
+            Console.Error.WriteLine($"Error: --zk-gc must be 'ugc' or 'clr' (got '{zkGc}')");
+            return 1;
+        }
+        _gcName = zkvmTarget ? zkGc : "clr";
+        bool zkClrGc = zkvmTarget && _gcName == "clr";
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
+        if (zkSoftFloat)
+        {
+            // The ABI is a property of the target, not of the instruction set: the
+            // compiler selects the lp64 (soft-float) calling convention, the JIT flag
+            // and the ELF float-ABI marker from TargetAbi, which the runtime, libm and
+            // compiler-rt of the zisk toolchain (all built with -mabi=lp64) match.
+            // Resolved reflectively like the instruction sets above; on packages
+            // without the member the ISA-derived flag of that package applies.
+            if (Enum.TryParse(typeof(TargetAbi), "NativeAotRiscV64SoftFloat", out object softAbi))
+                targetAbi = (TargetAbi)softAbi;
+        }
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         var ms = new MemoryStream();
 
@@ -768,8 +862,10 @@ internal class BuildCommand : CommandBase
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
+        // The zkVM IL rewrites strip floating point from CoreLib bodies for the
+        // FPU-less (rv64ima) link; a soft-float link keeps the original bodies.
         CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
-            isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
+            isZkvmTarget: zkNofpSurface);
         ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();
@@ -972,7 +1068,20 @@ internal class BuildCommand : CommandBase
         if (stdlib == StandardLibType.DotNet)
         {
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedSettingsBlob", Array.Empty<string>()));
-            compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", Array.Empty<string>()));
+            // Runtime knobs (runtimeconfig.json equivalents, read by RhConfig).
+            // The upstream GC on the zkVM guest: the guest has no virtual memory
+            // (pal's mmap is a bump allocation), so the region reservation and
+            // the heap hard limit must fit the RAM window of script.ld instead
+            // of the 256 GB / 2x-physical defaults.
+            string[] runtimeKnobs = zkClrGc
+                ? new[]
+                {
+                    "System.GC.Concurrent=false",
+                    "System.GC.HeapHardLimit=100663296",   // 96 MB
+                    "System.GC.RegionRange=134217728",     // 128 MB, reserved eagerly from the bump heap
+                }
+                : Array.Empty<string>();
+            compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", runtimeKnobs));
             compilationRoots.Add(new ExpectedIsaFeaturesRootProvider(instructionSetSupport));
         }
         else
@@ -1332,6 +1441,17 @@ internal class BuildCommand : CommandBase
         {
             backendOptions.Add("EnableRiscV64Compressed=0");
             backendOptions.Add("EnableRiscV64Atomic=0");
+            // The cross-JIT resolves ISA availability through the altjit path
+            // (unmatched VM), where every EnableRiscV64* knob defaults to on -
+            // independent of the ilc instruction-set support. Turn off
+            // everything the zkVM cannot decode; F/D for hygiene (the
+            // soft-float lowering is driven by SOFTFP_ABI, not these).
+            backendOptions.Add("EnableRiscV64Zicond=0");
+            backendOptions.Add("EnableRiscV64Zba=0");
+            backendOptions.Add("EnableRiscV64Zbb=0");
+            backendOptions.Add("EnableRiscV64Zbs=0");
+            backendOptions.Add("EnableRiscV64F=0");
+            backendOptions.Add("EnableRiscV64D=0");
         }
 
         // Unaligned access. dotnet-riscv fixup 35 (JitNoUnalignedAccess) defaults the
@@ -1776,7 +1896,10 @@ internal class BuildCommand : CommandBase
                         PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
-                    ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
+                    // zkVM + --zk-gc clr: the single-threaded flavor of the
+                    // runtime (dotnet-riscv fixup 30) carries the upstream GC.
+                    ldArgs.Append(zkClrGc ? "-lRuntime.SingleThreaded " : "-lRuntime.WorkstationGC ");
+                    ldArgs.Append("-lstdc++compat -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
                         ldArgs.Append("-lSystem.Globalization.Native ");
                 }
@@ -1872,11 +1995,28 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
                 }
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
-                /* nofp: FP trap stubs; the math-symbol wrap surface is
-                 * declared in nofp.params.yml. (The musl target links the
-                 * object without these wraps.) */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
+                if (zkSoftFloat)
+                {
+                    /* softfloat: real soft-float builtins (compiler-rt,
+                     * rv64im) plus soft replacements for the hard-float
+                     * runtime conversion helpers and fmod; the wrap surface
+                     * is declared in softfloat.params.yml. The nofp trap
+                     * module and its libm wraps are NOT linked: FP works.
+                     * Note: the libm surface itself (sin, sqrt, formatting
+                     * via fmt_fp) still resolves to hard-float musl members
+                     * and is caught by --error-on-float-binary until a
+                     * soft-float libm ships. */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "softfloat.o")}\" ");
+                    AppendModuleParams(ldArgs, ziskLibPath, "softfloat", libc, targetArchitecture, targetOS);
+                }
+                else
+                {
+                    /* nofp: FP trap stubs; the math-symbol wrap surface is
+                     * declared in nofp.params.yml. (The musl target links the
+                     * object without these wraps.) */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
+                    AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
+                }
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
@@ -1927,7 +2067,9 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
                 AppendModuleParams(ldArgs, ziskLibPath, "rust_sys", libc, targetArchitecture, targetOS);
 
-                /* ugc */
+                /* ugc (unless --zk-gc clr links the upstream GC) */
+                if (_gcName == "ugc")
+                {
                 AppendModuleParams(ldArgs, ziskLibPath, "ugc-zero", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
@@ -1937,6 +2079,7 @@ internal class BuildCommand : CommandBase
                  * verified C core shipped as separate objects. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_core.c.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_zalloc.c.obj")}\" ");
+                }
             }
         }
 
@@ -1983,6 +2126,18 @@ internal class BuildCommand : CommandBase
                 outputFilePath + " " + patchedFilePath +
                 patchElfArgs,
                 printCommands);
+            if (patchExitCode != 0)
+            {
+                Console.Error.WriteLine("ELF postprocessing failed");
+                return patchExitCode;
+            }
+            // patch_elf writes its result to patchedFilePath; put it where the
+            // caller asked. Historically the guest recipes passed
+            // -o <name>.patched, which made ChangeExtension a no-op and the
+            // script overwrite its input in place - any other output name left
+            // the final file UNPROCESSED (and unbootable on the zkVM).
+            if (!string.Equals(patchedFilePath, outputFilePath, StringComparison.Ordinal))
+                File.Move(patchedFilePath, outputFilePath, overwrite: true);
         }
 
         // Exact whole-image ISA verification: decode the linked binary and fail

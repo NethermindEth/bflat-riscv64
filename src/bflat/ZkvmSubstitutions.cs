@@ -175,7 +175,7 @@ class ZkvmSubstitutions
         // later (--error-on-float, or the emulator rejecting an F/D opcode).
         // That already happened once - Number.FormatFloat's signature changed
         // in .NET 11, the entry stopped matching, and floating point came back
-        // (see the note in zisk.substitutions.xml). So a missing target is
+        // (see the note in zisk.nofp.substitutions.xml). So a missing target is
         // fatal, and the few genuinely conditional ones must say so.
         void Add(MethodDesc target, MethodDesc snippet, string what)
         {
@@ -268,7 +268,7 @@ class ZkvmSubstitutions
 
         // System.Double / System.Single: the object overloads of Equals and
         // CompareTo. They cannot be body="remove"d (see the note in
-        // zisk.substitutions.xml - they are what ValueType.Equals and the
+        // zisk.nofp.substitutions.xml - they are what ValueType.Equals and the
         // generic comparers reach for), and the originals compare in FP
         // registers, so they are the one FP source that survives into an
         // ordinary guest. The snippets redo the same IEEE comparison on the raw

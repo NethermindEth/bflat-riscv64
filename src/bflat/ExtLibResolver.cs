@@ -369,6 +369,22 @@ internal static class ExtLibResolver
         {
             string absPath = Path.Combine(manifestDir, staticLibRel.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(absPath))
+            {
+                // NuGet layout: the manifest lives under contentFiles/any/any/
+                // while runtimes/<rid>/native/ sits at the package root, so a
+                // manifest-relative path misses it. Walk up towards the
+                // extraction root and take the first match.
+                for (string dir = manifestDir; dir != null; dir = Path.GetDirectoryName(dir))
+                {
+                    string candidate = Path.Combine(dir, staticLibRel.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(candidate))
+                    {
+                        absPath = candidate;
+                        break;
+                    }
+                }
+            }
+            if (!File.Exists(absPath))
                 throw new Exception(
                     $"Static library not found: {absPath} (referenced from manifest '{manifestPath}')");
 

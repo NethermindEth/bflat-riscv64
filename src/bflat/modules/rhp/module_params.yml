@@ -15,6 +15,7 @@ options:
     - value: --wrap=RhpReversePInvokeReturn
     # No write barrier under uGC: bulk reference copy is a plain memmove.
     - value: --wrap=RhBulkMoveWithWriteBarrier
+      gc: ugc
     # Event tracing is meaningless in the guest; candidates for replacement
     # by the EventSourceSupport=false ILC feature switch.
     - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register

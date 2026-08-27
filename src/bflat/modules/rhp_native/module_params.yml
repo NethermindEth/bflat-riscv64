@@ -1,12 +1,17 @@
 # Linker options owned by the rhp_native module (packed as
 # rhp_native.params.yml). uGC has no card table and never collects, so
 # every GC write barrier reduces to the bare store; these are the hottest
-# helpers in the image (hundreds of call sites).
+# helpers in the image (hundreds of call sites). Only under uGC: the upstream
+# GC (--zk-gc clr) needs the original card-marking barriers.
 # RhpAssignRef (the non-RiscV64 name) has shown zero references in guest
 # scans - kept as insurance until confirmed dead on a full workload.
 options:
   ld:
     - value: --wrap=RhpAssignRefRiscV64
+      gc: ugc
     - value: --wrap=RhpCheckedAssignRef
+      gc: ugc
     - value: --wrap=RhpByRefAssignRef
+      gc: ugc
     - value: --wrap=RhpAssignRef
+      gc: ugc

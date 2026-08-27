@@ -448,7 +448,7 @@ class CustomILProvider : ILProvider
         // polynomial used only by float FORMATTING). RyuJIT materializes each float
         // constant with flw/fld + fsw/fsd - this is the dominant FP in a .NET 11 image
         // (~1536 instructions). The table's sole reader is Number.DiyFp128Sqrt, reachable
-        // only through Number.FormatFloat, which zisk.substitutions.xml removes - so the
+        // only through Number.FormatFloat, which zisk.nofp.substitutions.xml removes - so the
         // table is dead. Keep the allocation (a zeroed SqrtCoefficients[256] - harmless
         // even if ever indexed) but nop out the constant-filling body between the newarr
         // and the stsfld: the array stays on the stack across the nops, so the store is

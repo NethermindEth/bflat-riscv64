@@ -1,0 +1,121 @@
+<!--
+  Built-in ILLink.Substitutions for the zisk/zisk_sim targets WITHOUT floating
+  point support (the classic rv64ima link with the nofp trap module), applied
+  after zisk.substitutions.xml. Selected by the "fpu: none" condition in
+  module_params.yml; a soft-float link (fpu: soft, riscv64-lp64 with the
+  softfloat module) keeps these bodies, since the JIT lowers their FP to
+  soft-float helper calls and the toolchain's libm is built -mabi=lp64.
+-->
+<linker>
+  <!--
+    Floating-point-carrying CoreLib methods. On a no-FPU target (rv64ima) any
+    hardware FP is invalid, so these are removed/stubbed for EVERY zisk guest.
+    Removing a method makes it throw if reached; a program that genuinely needs
+    floating point cannot run on this target anyway, so the loud failure is the
+    correct behavior. Methods with a valid NON-float path (primitive widening,
+    Convert.ChangeType) are handled by IL patches in BuildCommand instead, so
+    they are absent here.
+  -->
+  <assembly fullname="System.Private.CoreLib">
+    <!-- Primitive-widening element copy / reflection arg coercion. The actual
+         conversions live in InvokeUtils.PrimitiveWiden (a switch that fcvt's for
+         float/double destinations), inlined into these two callers. Cross-
+         element-type widening TO float cannot run on an FPU-less target, and
+         cross-integer widening via Array.Copy / reflection is rare, so both are
+         removed (throw if reached) rather than IL-rewritten. Same-typed array
+         copies never reach here (they use the memmove fast path). -->
+    <type fullname="System.Array">
+      <method signature="System.Void CopyImplPrimitiveWiden(System.Array,System.Int32,System.Array,System.Int32,System.Int32)" body="remove" />
+    </type>
+    <type fullname="System.InvokeUtils">
+      <method signature="System.Exception ConvertOrWidenPrimitivesEnumsAndPointersIfPossible(System.Object,Internal.Runtime.MethodTable*,System.InvokeUtils/CheckArgumentSemantics,System.Object&amp;)" body="remove" />
+    </type>
+
+    <!-- Core float-to-string formatter (Dragon4/Grisu3 double math) and the
+         boxed Double/Single virtual/interface slots that reach it or carry
+         fcvt rounding directly.
+         NOTE: the .NET 11 ILC signature matcher (ProcessLinkerXmlBase.
+         GetMethodSignature) renders a method's own generic parameters by NAME
+         (TChar/TNumber), not as empty variables. The pre-.NET-11 empty form
+         (ValueListBuilder`1&lt;&gt;&amp;,,...) silently stopped matching -> IL2009 ->
+         FormatFloat survived and re-carried FP. Keep the named form. -->
+    <type fullname="System.Number">
+      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;TChar&gt;&amp;,TNumber,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
+    </type>
+    <type fullname="System.Double">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <!-- Double.Equals and Double.CompareTo are NOT removed: they are the leaf
+           IEquatable/IComparable primitives that ValueType.Equals (field-by-
+           field, since a double field forbids the byte-wise fast path: -0.0 ==
+           +0.0) and the generic collections reach for ANY struct with a double
+           field, plus Comparer&lt;double&gt;.Default / Array.Sort / SortedSet /
+           LINQ OrderBy on double keys. Those paths are normal, not rare -
+           removing a body (throw) fail-fasts every such lookup. General rule:
+           never body="remove" a primitive's Equals/GetHashCode/CompareTo - the
+           trim graph keeps them reachable reflectively.
+           They do NOT lower FP-free, though: the object overloads compare in
+           FP registers (fld + feq.d/flt.d), which ziskemu rejects at ELF to ROM
+           conversion no matter whether the code runs. An earlier version of
+           this comment claimed otherwise on the strength of the IL-level
+           error-on-float gate, which structurally cannot see them: their IL is
+           ceq/clt over float64, with no conv.r8 or ldc.r8 for the scanner to
+           find. Only the binary gate (error-on-float-binary) catches it. Both
+           bodies are now replaced by the bit-pattern snippets in
+           zisk.snippets.cs (DoubleEqualsObject / DoubleCompareToObject). -->
+    </type>
+    <type fullname="System.Single">
+      <method signature="System.Int16 System.IConvertible.ToInt16(System.IFormatProvider)" body="remove" />
+      <method signature="System.Int32 System.IConvertible.ToInt32(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString()" body="remove" />
+      <method signature="System.String ToString(System.String)" body="remove" />
+      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
+      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
+      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
+      <!-- Single.Equals and Single.CompareTo kept for the same reason as the
+           Double pair above: reachable from ValueType.Equals / Comparer /
+           sorted collections on float-field or float keys. Their object
+           overloads carry the same flw + feq.s/flt.s and are replaced by the
+           same bit-pattern treatment (SingleEqualsObject /
+           SingleCompareToObject in zisk.snippets.cs). -->
+    </type>
+
+    <!-- float->int rounding conversion. Non-float Convert.ToXxx paths are
+         unaffected (only the double-input overload is removed). -->
+    <type fullname="System.Convert">
+      <method signature="System.Int32 ToInt32(System.Double)" body="remove" />
+    </type>
+
+    <!-- Math.Truncate(double): float-only; a cold dependency of date rounding. -->
+    <type fullname="System.Math">
+      <method signature="System.Double Truncate(System.Double)" body="remove" />
+    </type>
+
+    <!-- Timezone transition/validation math (double date arithmetic). zisk sets
+         System.TimeZoneInfo.Invariant, but these members stay reachable through
+         the custom-timezone API surface; cut them. UtcOffsetOutOfRange folds to
+         false (UTC offset 0 is always in +/-14h range). -->
+    <type fullname="System.TimeZoneInfo">
+      <method signature="System.DateTime TransitionTimeToDateTime(System.Int32,System.TimeZoneInfo/TransitionTime)" body="remove" />
+      <method signature="System.Boolean UtcOffsetOutOfRange(System.TimeSpan)" body="stub" value="false" />
+    </type>
+    <type fullname="System.TimeZoneInfo/AdjustmentRule">
+      <method signature="System.Boolean get_HasDaylightSaving()" body="stub" value="false" />
+      <method signature="System.Void ValidateAdjustmentRule(System.DateTime,System.DateTime,System.TimeSpan,System.TimeZoneInfo/TransitionTime,System.TimeZoneInfo/TransitionTime,System.Boolean)" body="stub" />
+    </type>
+
+    <!-- Reads boxed float/double constant values out of reflection metadata
+         (ParameterInfo.DefaultValue and enum/array constant collections). -->
+    <type fullname="System.Reflection.Runtime.General.NativeFormatMetadataReaderExtensions">
+      <method signature="System.Object ParseConstantNumericValue(Internal.Metadata.NativeFormat.Handle,Internal.Metadata.NativeFormat.MetadataReader)" body="remove" />
+      <method signature="System.Single[] ToArray(Internal.Metadata.NativeFormat.SingleCollection)" body="remove" />
+      <method signature="System.Double[] ToArray(Internal.Metadata.NativeFormat.DoubleCollection)" body="remove" />
+    </type>
+  </assembly>
+
+</linker>

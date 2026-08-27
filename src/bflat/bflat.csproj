@@ -128,6 +128,12 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.params.yml" />
 
+    <!-- SoftFloat (no-F targets: real soft-float builtins instead of nofp traps) -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\softfloat\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\softfloat.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\softfloat\module_params.yml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\softfloat.params.yml" />
+
     <!-- PAL -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />
@@ -209,6 +215,8 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk_subst.params.yml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.substitutions.xml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.substitutions.xml" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.nofp.substitutions.xml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.nofp.substitutions.xml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.snippets.cs"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.snippets.cs" />
 
