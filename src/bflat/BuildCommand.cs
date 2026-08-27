@@ -207,6 +207,9 @@ internal class BuildCommand : CommandBase
     ///   arch: riscv64
     ///   os:   linux
     ///   eh:   unwind          (or failfast; see --remove-eh)
+    ///   fpu:  none            (or soft / hard; the target's floating-point
+    ///                          model: none = rv64ima with the nofp traps,
+    ///                          soft = riscv64-lp64 soft-float link, hard = FPU)
     /// Conditions are AND-ed; a missing condition does not constrain. The
     /// parser is deliberately minimal (no YAML dependency) and fails loudly
     /// on anything it does not understand.
@@ -245,6 +248,7 @@ internal class BuildCommand : CommandBase
                 "arch" => archName,
                 "os" => osName,
                 "eh" => ehName,
+                "fpu" => _fpuName,
                 _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
             };
             foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
@@ -281,7 +285,7 @@ internal class BuildCommand : CommandBase
             string rest = line.Substring(colon + 1).Trim();
 
             // Condition attached to the current list entry.
-            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh"))
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh" || k == "fpu"))
             {
                 pendingApplies &= ConditionHolds(k, rest);
                 continue;
@@ -479,6 +483,14 @@ internal class BuildCommand : CommandBase
     /// far from the parse result, so it is latched here.
     /// </summary>
     private bool _removeEh;
+
+    /// <summary>
+    /// The target's floating-point model, read by the params.yml "fpu:"
+    /// condition: "none" (zisk/zisk_sim rv64ima, FP trapped by the nofp module),
+    /// "soft" (zisk/zisk_sim soft-float link, see zkSoftFloat) or "hard" (an
+    /// FPU target). Latched once the instruction-set support is resolved.
+    /// </summary>
+    private string _fpuName = "hard";
 
     public override int Handle(ParseResult result)
     {
@@ -703,6 +715,9 @@ internal class BuildCommand : CommandBase
             }
         }
 
+        bool zkvmTarget = libc == "zisk" || libc == "zisk_sim";
+        _fpuName = zkSoftFloat ? "soft" : zkvmTarget ? "none" : "hard";
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
         if (zkSoftFloat)
@@ -822,8 +837,10 @@ internal class BuildCommand : CommandBase
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
+        // The zkVM IL rewrites strip floating point from CoreLib bodies for the
+        // FPU-less (rv64ima) link; a soft-float link keeps the original bodies.
         CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
-            isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
+            isZkvmTarget: zkvmTarget && !zkSoftFloat);
         ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();

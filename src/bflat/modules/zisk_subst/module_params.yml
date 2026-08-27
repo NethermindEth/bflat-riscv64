@@ -11,7 +11,14 @@
 #                   BuildCommand.TryCompileZiskSnippets)
 #
 # Entries take the same libc/arch/os conditions as options.ld.
+#
+# The FP-elimination surface (zisk.nofp.substitutions.xml and every snippet)
+# is only meaningful when the guest has no floating point at all; a soft-float
+# link keeps the original CoreLib bodies (fpu condition, see ReadModuleParams).
 options:
   ilc:
     - substitutions: zisk.substitutions.xml
+    - substitutions: zisk.nofp.substitutions.xml
+      fpu: none
     - snippets: zisk.snippets.cs
+      fpu: none

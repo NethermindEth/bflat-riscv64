@@ -215,6 +215,8 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk_subst.params.yml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.substitutions.xml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.substitutions.xml" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.nofp.substitutions.xml"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.nofp.substitutions.xml" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.snippets.cs"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.snippets.cs" />
 
