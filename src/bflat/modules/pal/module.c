@@ -416,6 +416,41 @@ __wrap_mmap(void *addr, int length, int prot, int flags,
     return __wrap___libc_malloc_impl(length);
 }
 
+/* The upstream GC (--zk-gc clr) commits its regions with mprotect(RW),
+ * advises with madvise(MADV_DONTDUMP/DONTNEED) and sizes the reservation by
+ * getrlimit(RLIMIT_AS). The guest has no MMU: every mmap is a bump
+ * allocation that is readable and writable from the start, so commit and
+ * advise are no-ops, and the address-space limit query fails (the GC then
+ * treats it as unlimited and falls back to the configured hard limit). musl's
+ * own implementations would issue raw ecalls the emulator does not serve. */
+
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
+int
+__wrap_mprotect(void *addr, int length, int prot)
+{
+    return 0;
+}
+
+/*@ assigns \nothing;
+    ensures \result == 0;
+*/
+int
+__wrap_madvise(void *addr, int length, int advice)
+{
+    return 0;
+}
+
+/*@ assigns \nothing;
+    ensures \result == -1;
+*/
+int
+__wrap_getrlimit(int resource, void *rlim)
+{
+    return -1;
+}
+
 /*@ assigns \nothing;
     ensures \result == 0;
 */

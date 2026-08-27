@@ -74,6 +74,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
     private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
     private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
+    private static Option<string> ZkGcOption = new Option<string>("--zk-gc", "GC of the zkVM guest: 'ugc' (default: NethermindEth/uGC, a bump allocator that never collects) or 'clr' (the upstream workstation GC in the single-threaded runtime flavor, libRuntime.SingleThreaded: no background GC, no finalizer thread; finalizers run from GC.WaitForPendingFinalizers). Requires a runtime pack with dotnet-riscv fixup 30.");
     private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zisk image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
@@ -177,6 +178,7 @@ internal class BuildCommand : CommandBase
             ErrorOnFloatBinaryOption,
             ErrorOnCompressedOption,
             ErrorOnAtomicOption,
+            ZkGcOption,
             NoUnalignedAccessOption,
             RemoveEhOption,
         };
@@ -210,6 +212,7 @@ internal class BuildCommand : CommandBase
     ///   fpu:  none            (or soft / hard; the target's floating-point
     ///                          model: none = rv64ima with the nofp traps,
     ///                          soft = riscv64-lp64 soft-float link, hard = FPU)
+    ///   gc:   ugc             (or clr; the GC linked into the guest, --zk-gc)
     /// Conditions are AND-ed; a missing condition does not constrain. The
     /// parser is deliberately minimal (no YAML dependency) and fails loudly
     /// on anything it does not understand.
@@ -249,6 +252,7 @@ internal class BuildCommand : CommandBase
                 "os" => osName,
                 "eh" => ehName,
                 "fpu" => _fpuName,
+                "gc" => _gcName,
                 _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
             };
             foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
@@ -285,7 +289,7 @@ internal class BuildCommand : CommandBase
             string rest = line.Substring(colon + 1).Trim();
 
             // Condition attached to the current list entry.
-            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh" || k == "fpu"))
+            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh" || k == "fpu" || k == "gc"))
             {
                 pendingApplies &= ConditionHolds(k, rest);
                 continue;
@@ -462,7 +466,7 @@ internal class BuildCommand : CommandBase
         {
             "libSystem.Native.a", "libatomic.a", "libeventpipe-disabled.a",
             "libaotminipal.a", "libstandalonegc-disabled.a", "libstdc++compat.a",
-            "libRuntime.WorkstationGC.a", "libSystem.IO.Compression.Native.a",
+            "libRuntime.WorkstationGC.a", "libRuntime.SingleThreaded.a", "libSystem.IO.Compression.Native.a",
             "libSystem.Security.Cryptography.Native.OpenSsl.a",
             "libSystem.Globalization.Native.a",
         };
@@ -491,6 +495,13 @@ internal class BuildCommand : CommandBase
     /// FPU target). Latched once the instruction-set support is resolved.
     /// </summary>
     private string _fpuName = "hard";
+
+    /// <summary>
+    /// The GC linked into the guest, read by the params.yml "gc:" condition:
+    /// "ugc" (zisk/zisk_sim default) or "clr" (the upstream GC; also every
+    /// non-zkVM target). Latched next to _fpuName.
+    /// </summary>
+    private string _gcName = "clr";
 
     public override int Handle(ParseResult result)
     {
@@ -723,6 +734,14 @@ internal class BuildCommand : CommandBase
         bool zkNofpSurface = zkvmTarget &&
             (!zkSoftFloat || result.GetValueForOption(VerifySubstitutionsOption));
         _fpuName = !zkvmTarget ? "hard" : zkNofpSurface ? "none" : "soft";
+        string zkGc = (result.GetValueForOption(ZkGcOption) ?? "ugc").ToLowerInvariant();
+        if (zkGc != "ugc" && zkGc != "clr")
+        {
+            Console.Error.WriteLine($"Error: --zk-gc must be 'ugc' or 'clr' (got '{zkGc}')");
+            return 1;
+        }
+        _gcName = zkvmTarget ? zkGc : "clr";
+        bool zkClrGc = zkvmTarget && _gcName == "clr";
 
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
@@ -1049,7 +1068,20 @@ internal class BuildCommand : CommandBase
         if (stdlib == StandardLibType.DotNet)
         {
             compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedSettingsBlob", Array.Empty<string>()));
-            compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", Array.Empty<string>()));
+            // Runtime knobs (runtimeconfig.json equivalents, read by RhConfig).
+            // The upstream GC on the zkVM guest: the guest has no virtual memory
+            // (pal's mmap is a bump allocation), so the region reservation and
+            // the heap hard limit must fit the RAM window of script.ld instead
+            // of the 256 GB / 2x-physical defaults.
+            string[] runtimeKnobs = zkClrGc
+                ? new[]
+                {
+                    "System.GC.Concurrent=false",
+                    "System.GC.HeapHardLimit=100663296",   // 96 MB
+                    "System.GC.RegionRange=134217728",     // 128 MB, reserved eagerly from the bump heap
+                }
+                : Array.Empty<string>();
+            compilationRoots.Add(new RuntimeConfigurationRootProvider("g_compilerEmbeddedKnobsBlob", runtimeKnobs));
             compilationRoots.Add(new ExpectedIsaFeaturesRootProvider(instructionSetSupport));
         }
         else
@@ -1864,7 +1896,10 @@ internal class BuildCommand : CommandBase
                         PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
-                    ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
+                    // zkVM + --zk-gc clr: the single-threaded flavor of the
+                    // runtime (dotnet-riscv fixup 30) carries the upstream GC.
+                    ldArgs.Append(zkClrGc ? "-lRuntime.SingleThreaded " : "-lRuntime.WorkstationGC ");
+                    ldArgs.Append("-lstdc++compat -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
                     if (libc != "bionic")
                         ldArgs.Append("-lSystem.Globalization.Native ");
                 }
@@ -2032,7 +2067,9 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
                 AppendModuleParams(ldArgs, ziskLibPath, "rust_sys", libc, targetArchitecture, targetOS);
 
-                /* ugc */
+                /* ugc (unless --zk-gc clr links the upstream GC) */
+                if (_gcName == "ugc")
+                {
                 AppendModuleParams(ldArgs, ziskLibPath, "ugc-zero", libc, targetArchitecture, targetOS);
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
@@ -2042,6 +2079,7 @@ internal class BuildCommand : CommandBase
                  * verified C core shipped as separate objects. */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_core.c.obj")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_zalloc.c.obj")}\" ");
+                }
             }
         }
 

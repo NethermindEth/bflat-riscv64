@@ -30,6 +30,11 @@ options:
     - value: --wrap=memalign
     - value: --wrap=mmap
     - value: --wrap=munmap
+    # No MMU: the upstream GC's commit/advise are no-ops, its address-space
+    # limit query fails (= unlimited); musl's versions would ecall.
+    - value: --wrap=mprotect
+    - value: --wrap=madvise
+    - value: --wrap=getrlimit
     - value: --wrap=mlock
     - value: --wrap=munlock
     - value: --wrap=mlockall
