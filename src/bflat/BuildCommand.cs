@@ -715,8 +715,14 @@ internal class BuildCommand : CommandBase
             }
         }
 
+        // The FP-elimination surface (nofp substitutions, C# snippets, the
+        // CustomILProvider rewrites) belongs to the FPU-less link only. The
+        // --verify-substitutions probe checks that surface against the CoreLib
+        // in front of us regardless of the link's FP model, so it always sees it.
         bool zkvmTarget = libc == "zisk" || libc == "zisk_sim";
-        _fpuName = zkSoftFloat ? "soft" : zkvmTarget ? "none" : "hard";
+        bool zkNofpSurface = zkvmTarget &&
+            (!zkSoftFloat || result.GetValueForOption(VerifySubstitutionsOption));
+        _fpuName = !zkvmTarget ? "hard" : zkNofpSurface ? "none" : "soft";
 
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
@@ -840,7 +846,7 @@ internal class BuildCommand : CommandBase
         // The zkVM IL rewrites strip floating point from CoreLib bodies for the
         // FPU-less (rv64ima) link; a soft-float link keeps the original bodies.
         CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
-            isZkvmTarget: zkvmTarget && !zkSoftFloat);
+            isZkvmTarget: zkNofpSurface);
         ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();
