@@ -714,6 +714,13 @@ __wrap_syscall(long number, ...)
 extern char __zkvm_target_sp1 __attribute__((weak));
 extern char __zkvm_target_openvm __attribute__((weak));
 
+/* SP1's own halt, from libzkevm (the zkEVM SDK repackaged as the bflat-sp1
+ * bindings library). It commits the RUNNING public-values digest - the hash
+ * SP1 maintains over everything written to FD_PUBLIC_VALUES - and only then
+ * halts. Weak, because a guest that links no bindings package does not have
+ * it; see zkvm_raw_exit for why that case is still correct. */
+extern void zkvm_halt(unsigned char exit_code) __attribute__((weak));
+
 #if defined(__riscv)
 /* SP1 (sp1/crates/zkvm/entrypoint/src/syscalls/mod.rs): the syscall id goes
  * in t0, arguments in a0.. - NOT the Linux a7 convention. An id SP1 does not
@@ -729,10 +736,12 @@ extern char __zkvm_target_openvm __attribute__((weak));
  * to that descriptor (console output goes to fd 1, see zkvm_console_write),
  * so the stream is empty and its digest is constant.
  *
- * IF A FUTURE CHANGE EVER WRITES PUBLIC VALUES, this constant becomes wrong
- * and must be replaced by a running SHA-256 over the bytes written - the
- * proof would otherwise carry a digest that does not match its public
- * values. Execution is unaffected either way; only proving is. */
+ * It is only ever used when libzkevm is absent, and write_output - the only
+ * thing that writes that descriptor - lives in libzkevm, so when this constant
+ * is used the stream really is empty. Any future code path that writes public
+ * values without libzkevm would invalidate it: the proof would carry a digest
+ * that does not match its public values. Execution is unaffected either way;
+ * only proving is. */
 static const unsigned int sp1_empty_pv_digest[8] = {
     0x42c4b0e3u, 0x141cfc98u, 0xc8f4fb9au, 0x24b96f99u,
     0xe441ae27u, 0x4c939b64u, 0x1b9995a4u, 0x55b85278u
@@ -749,7 +758,13 @@ static const unsigned int sp1_empty_pv_digest[8] = {
  * emit the real target exit sequence.
  *
  * SP1 halts on its own HALT syscall (id in t0), and expects the public-values
- * and deferred-proof digests committed first. OpenVM has no syscalls at all:
+ * and deferred-proof digests committed first. That commit has to hash whatever
+ * the guest wrote to FD_PUBLIC_VALUES, so it belongs to whoever owns
+ * write_output - libzkevm - and this function hands over to its zkvm_halt when
+ * it is linked. The open-coded sequence below is the fallback for a guest
+ * built without the bindings package: nothing can have written public values
+ * then, because write_output lives in that same library, so the digest of the
+ * empty stream is the correct one. OpenVM has no syscalls at all:
  * it ends on the TERMINATE custom instruction (custom-0, funct3 0), whose
  * exit code is an IMMEDIATE - so a runtime code collapses to OpenVM's own two
  * outcomes, 0 for success and 1 for failure (openvm::process::exit/panic). */
@@ -766,6 +781,11 @@ zkvm_raw_exit(long code)
 {
 #if defined(__riscv)
     if (&__zkvm_target_sp1) {
+        if (zkvm_halt) {
+            zkvm_halt((unsigned char)(code & 0xff));
+        }
+        /* No bindings package: the public-values stream is provably empty, so
+         * the constant digest below is the digest of what was written. */
         for (int i = 0; i < 8; i++) {
             register long t0 __asm__("t0") = SP1_COMMIT;
             register long a0 __asm__("a0") = i;
