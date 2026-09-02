@@ -32,6 +32,7 @@ static char zk_heap[VERIFY_HEAP + 8] __attribute__((aligned(8)));
 #include "../../pal/module.c"
 
 uint8_t *g_zk_bump_ptr;
+uint8_t *g_zk_heap_floor;
 
 unsigned long nondet_ulong(void);
 

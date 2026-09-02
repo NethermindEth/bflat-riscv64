@@ -1,6 +1,6 @@
 # Linker options owned by the nofp module (packed as nofp.params.yml).
-# Applied only for the zisk/zisk_sim targets; the musl target links nofp.o
-# without these wraps.
+# Applied only for the zkVM targets; the musl target links nofp.o without
+# these wraps.
 options:
   ld:
     # libm: divert the math surface referenced by the runtime

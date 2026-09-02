@@ -173,10 +173,12 @@ prepare_zkvm_obj()
 	echo "${obj}"
 }
 
-# _start for both zkvm flavours: the linker-script symbols it dereferences
+# _start for every zkvm target: the linker-script symbols it dereferences
 # (_init_stack_top, _global_pointer) are pointed at real arrays in the test.
+# The halt sequence after __libc_start_main is never reached - the stub exits
+# first - so the targets' differing exit protocols do not need emulating.
 STACK_TOP="zkvm_test_stack+65536"
-for m in zkvm_zisk zkvm_zisk_sim ; do
+for m in zkvm_zisk zkvm_zisk_sim zkvm_sp1 zkvm_openvm ; do
 	if ! obj="$(prepare_zkvm_obj "${m}")" ; then
 		echo "BUILD FAIL: ${m} asm"
 		failures=$((failures + 1))

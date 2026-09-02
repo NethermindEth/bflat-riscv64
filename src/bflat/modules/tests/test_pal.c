@@ -25,6 +25,7 @@ char _kernel_heap_bottom[HEAP_SIZE] __attribute__((aligned(4096)));
 
 /* Fixed bump-pointer cell (real image: top 8 bytes of RAM). */
 uint8_t *g_zk_bump_ptr = 0;
+uint8_t *g_zk_heap_floor = 0;
 
 /* __real_syscall sentinel: proves argument forwarding. */
 static long real_syscall_last_number;

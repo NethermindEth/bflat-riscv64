@@ -133,8 +133,9 @@ SECTIONS
   .heap (NOLOAD) : ALIGN(16)
   {
     _kernel_heap_bottom = .;
-    . = 0xBFFEFFF0;        /* heap top, 16 below RAM end (0xBFFF0000) */
+    . = 0xBFFEFFE8;        /* heap top, 24 below RAM end (0xBFFF0000) */
     _kernel_heap_top = .;
+    PROVIDE(g_zk_heap_floor = 0xBFFEFFF0);
     PROVIDE(g_zk_bump_ptr = 0xBFFEFFF8);
   } :heap
 

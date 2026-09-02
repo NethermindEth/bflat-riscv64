@@ -36,6 +36,8 @@ SKIPPED = {
     "rhp_native": "assembly",
     "zkvm_zisk": "assembly",
     "zkvm_zisk_sim": "assembly",
+    "zkvm_sp1": "assembly",
+    "zkvm_openvm": "assembly",
     "zisk_subst": "no native sources (ILC substitutions module)",
     "ugc-zero": "prebuilt objects only",
 }

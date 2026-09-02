@@ -96,6 +96,13 @@
           DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk_sim" />
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\sp1" />
+    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\openvm" />
+
+    <!-- Every zkVM target gets its own script.ld + entrypoint.o under
+         lib/linux/riscv64/<libc>; the shared module objects below are laid
+         down once, in the zisk directory, and linked from there by all of
+         them (BuildCommand.ZkvmLibPath). -->
 
     <!-- Pure Zisk specific -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\script.ld"
@@ -108,6 +115,18 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\script.ld" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\entrypoint.o" />
+
+    <!-- SP1 specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_sp1\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\sp1\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_sp1\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\sp1\entrypoint.o" />
+
+    <!-- OpenVM specific -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_openvm\script.ld"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\openvm\script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_openvm\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\openvm\entrypoint.o" />
 
     <!-- Generic modules -->
 
