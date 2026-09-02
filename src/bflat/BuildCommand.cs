@@ -526,9 +526,6 @@ internal class BuildCommand : CommandBase
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
         string libc = result.GetValueForOption(TargetLibcOption);
-        // Entry point + linker script directory for the zkVM target being
-        // built (null for every other libc).
-        string zkvmLibPath = IsZkvm(libc) ? ZkvmLibPath(homePath, libc) : null;
         // Guest-visible compilation symbol, so user code and the module
         // snippets can tell the targets apart. zisk_sim deliberately gets
         // none, as before: it is a debugging layout, not a proof target.
@@ -1944,6 +1941,9 @@ internal class BuildCommand : CommandBase
 
             if (IsZkvm(libc))
             {
+                /* Entry point + linker script for the target being built;
+                 * everything below comes from the shared ZisK directory. */
+                string zkvmLibPath = ZkvmLibPath(homePath, libc);
                 /* Memory map: one linker script per zkVM target, each
                  * describing that prover's fixed address space. */
                 ldArgs.Append($"-T\"{Path.Combine(zkvmLibPath, "script.ld")}\" ");

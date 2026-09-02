@@ -28,6 +28,7 @@ extern int __wrap_vfprintf(FILE *f, const char *fmt, va_list ap);
 /* pal's heap symbols: unused by vfprintf but required to link module.c. */
 char _kernel_heap_bottom[4096];
 uint8_t *g_zk_bump_ptr;
+uint8_t *g_zk_heap_floor;
 long __real_syscall(long number, ...) { (void)number; return 0; }
 
 #define POOL 32
