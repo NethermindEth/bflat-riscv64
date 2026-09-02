@@ -86,7 +86,16 @@ SECTIONS
      * by the linker's big-endian fill pattern). */
   } >rom AT>rom :text =0x13000000
 
-  .rodata ALIGN(16) : {
+  /* Page-align the read-only segment. The three PT_LOADs share one load-address
+   * counter, and lld has to keep each segment's file offset congruent to its
+   * virtual address modulo the page size; with .rodata packed to 16 bytes, the
+   * adjustment that buys pushed the rodata sections' load addresses into the
+   * range already taken by .modules, which is the first section with its
+   * address in ram and its contents in rom. The link then failed outright with
+   * "load address range overlaps", and only once the image grew enough for the
+   * two to meet. SP1's script aligns here for its own reason (per-page
+   * protections); this one aligns to keep the segments from colliding. */
+  .rodata ALIGN(4096) : {
     *(.rodata .rodata.*)
   } >rom AT>rom :rodata
 
