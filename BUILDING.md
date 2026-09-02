@@ -117,7 +117,8 @@ The assembly modules are covered too. `rhp_native` is exercised through a
 shim that marshals the t3/t4/t5 register convention the C ABI cannot
 express, built twice — once per `BFLAT_DOTNET` contract — so the
 version-dependent write-barrier behaviour is pinned from both sides.
-`zkvm_zisk` / `zkvm_zisk_sim` `_start` is checked for its handoff to
+Every zkVM entry module — `zkvm_zisk`, `zkvm_zisk_sim`, `zkvm_sp1`,
+`zkvm_openvm` — has its `_start` checked for the handoff to
 `__libc_start_main`: managed entry point, `argc == 1`, `argv[0] == "app"`,
 NULL terminator, and sp inside the guest stack.
 

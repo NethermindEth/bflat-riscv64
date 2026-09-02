@@ -39,8 +39,9 @@ object, `lld` links it — all stock. What bflat adds around them is
 **ILC-stage substitutions** that take floating point out of managed bodies,
 a **link step** that swaps unsupported OS and runtime calls for zkVM-safe
 ones, an **ELF postprocessor** that satisfies the prover's loader, and
-**target-specific memory layouts**. Those stages run only for `--libc zisk`
-and `--libc zisk_sim`; for every other target bflat behaves like upstream.
+**target-specific memory layouts**. Those stages run only for the zkVM
+targets — `--libc zisk`, `zisk_sim`, `sp1` and `openvm`; for every other
+target bflat behaves like upstream.
 
 Keeping them outside .NET is the point: the runtime stays an official build
 — upstream sources, upstream build system, plus a handful of riscv64 fixes
@@ -88,7 +89,8 @@ The output is a single RISC-V64 ELF relocatable that contains:
 - module initialisation tables;
 - references to runtime symbols (GC, exception handling, dispatch, …).
 
-When the target is `zisk` or `zisk_sim`, ILC is told:
+When the target is a zkVM one (`zisk`, `zisk_sim`, `sp1` or `openvm`), ILC
+is told:
 
 | Switch | Effect |
 |--------|--------|
@@ -142,15 +144,16 @@ initializes. ILLink entries in the XML carry no such guarantee; the
 ### zkVM RyuJIT codegen knobs
 
 `BuildCommand.cs` passes RyuJIT knobs to ILC in two groups, and the
-distinction matters: the ISA gate below applies to **every** `zisk` /
-`zisk_sim` build, while the tuning knobs apply only to optimized ones
-(`-O`, i.e. `optimizationMode != None`).
+distinction matters: the ISA gate below applies to **every** zkVM build,
+while the tuning knobs apply only to optimized ones (`-O`, i.e.
+`optimizationMode != None`).
 
 RyuJIT parses these integer values as **hexadecimal with no `0x` prefix**
 (`JitConfigProvider.getIntConfigValue` uses `NumberStyles.AllowHexSpecifier`),
 so `"2000"` means `0x2000` = 8192.
 
-**The ISA gate.** ZisK decodes the base 32-bit encoding only and the guest is
+**The ISA gate.** Every zkVM here decodes the base 32-bit encoding only —
+ZisK is rv64imafd, SP1 riscv64im, OpenVM rv64im — and the guest is
 single-hart, so two extensions must never appear in generated code:
 
 | Knob | Value | Effect |
@@ -164,16 +167,31 @@ verified on the linked binary by `--error-on-compressed` and
 `--error-on-atomic` rather than assumed. Only the zkVM targets get them — a
 real riscv64+musl target wants C and A.
 
-**The tuning knobs**, in optimized builds:
+**The tuning knobs**, in optimized builds. The last two are *not* passed for
+every riscv64 target — each is sound only where its precondition holds, and
+the "Applies to" column says where:
 
-| Knob | Value | Effect |
-|------|-------|--------|
-| `JitObjectStackAllocation` | `1` | Enable escape-analysis stack allocation |
-| `JitObjectStackAllocationSize` | `2000` (8192) | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by a matching runtime patch |
-| `JitExtDefaultPolicyMaxIL` | `200` (512) | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
-| `JitExtDefaultPolicyMaxBB` | `10` (16) | Max inlinee basic blocks (default 7) |
-| `JitRiscV64DmaCompare` | `1` | Lower constant-size `SpanHelpers.SequenceEqual` to the `csrs 0x814, src ; addi rd, dst, count` idiom that the ZisK transpiler folds into one `dma_xmemcmp` step. ZisK-only, paired with a matching runtime patch |
-| `RiscV64ElideLeafRaSave` | `1` | Elide RA spill/reload + frame in eligible leaf methods. A matching runtime patch refuses to elide methods whose LIR uses `REG_RA` as scratch (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP |
+| Knob | Value | Applies to | Effect |
+|------|-------|------------|--------|
+| `JitObjectStackAllocation` | `1` | any riscv64 | Enable escape-analysis stack allocation |
+| `JitObjectStackAllocationSize` | `2000` (8192) | any riscv64 | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by a matching runtime patch |
+| `JitExtDefaultPolicyMaxIL` | `200` (512) | any riscv64 | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
+| `JitExtDefaultPolicyMaxBB` | `10` (16) | any riscv64 | Max inlinee basic blocks (default 7) |
+| `RiscV64ElideLeafRaSave` | `1` | zkVM targets | Elide RA spill/reload + frame in eligible leaf methods. A matching runtime patch refuses to elide methods whose LIR uses `REG_RA` as scratch (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP. Sound only on a single-threaded deterministic guest with no GC suspension and no return-address hijacking |
+| `JitRiscV64DmaCompare` | `1` | **`zisk` only** | Lower constant-size `SpanHelpers.SequenceEqual` to the `csrrs rd, 0x814, src ; addi x0, dst, count` idiom that the ZisK ROM transpiler folds into one `dma_xmemcmp` step |
+
+`JitRiscV64DmaCompare` is the narrowest of the set: only the ZisK ROM
+transpiler folds that instruction pair. A real riscv64 CPU — which is what
+`zisk_sim` runs on, under QEMU or on hardware — executes a CSR access to
+`0x814` followed by an `addi` to `x0`, and neither SP1 nor OpenVM knows the
+idiom. The knob defaults to `0` in the JIT, so every other target keeps the
+ordinary call.
+
+The register that receives the result is the **`csrrs`'s** `rd`, and the
+`addi`'s `rd` must be `x0`. The mirrored form also transpiles, but through the
+branch ZisK marks deprecated (`riscv2zisk_context.rs` prints *"DEPRECATED
+INSTRUCTION … please update toolchain/zisklibs/ziskos"*). The encoding above
+matches `ziskos/entrypoint/src/dma/memcmp.s`, which is the reference.
 
 These knobs trade ROM/`.text` size for fewer heap allocations and tighter
 hot paths; the comments in `BuildCommand.cs` note which to lower
@@ -183,7 +201,9 @@ overflows the fixed ZisK ROM.
 ## Stage 2 — The link command
 
 The final ELF is produced by `ld.lld` (Clang's linker, shipped with
-bflat). The command line for `--libc zisk` looks roughly like this:
+bflat). The command line for `--libc zisk` looks roughly like this — the
+other zkVM targets differ only in the first two lines, which come from
+`lib/linux/riscv64/<libc>/` instead of the ZisK directory:
 
 ```bash
 ld.lld -static -nostdlib -m elf64lriscv \
@@ -258,7 +278,8 @@ loader quirks don't apply.
 ## Stage 4 — Boot
 
 When the binary starts (real, simulated, or proven), the entry point is
-`_start` from `modules/zkvm_zisk{,_sim}/module.S`:
+`_start` from the target's entry module — `modules/zkvm_zisk{,_sim}/module.S`,
+`modules/zkvm_sp1/module.S` or `modules/zkvm_openvm/module.S`:
 
 1. Set `gp` to `_global_pointer` and `sp` to `_init_stack_top` (both
    provided by the linker script).
@@ -269,7 +290,10 @@ When the binary starts (real, simulated, or proven), the entry point is
 
 There is no kernel underneath any of this. Every syscall the runtime
 might make is either wrapped to a no-op, returned as a constant, or (in
-`zisk_sim`) routed to musl's real implementation.
+`zisk_sim`) routed to musl's real implementation. On SP1 and OpenVM that
+containment is not merely a tidiness matter: SP1 reads the syscall id from
+`t0` and errors out on one it does not know, and OpenVM services no `ecall`
+at all.
 
 ## Exit and exceptions
 

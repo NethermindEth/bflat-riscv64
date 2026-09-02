@@ -26,6 +26,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 |--------|------------------|-----------------------|
 | [ubootstrap](#ubootstrap) | Runtime entry point — brings .NET up and calls `Main` | No glibc-style startup / OS loader |
 | [zkvm_zisk · zkvm_zisk_sim](#zkvm-zisk) | `_start` + the memory layout the prover expects | No kernel; fixed prover memory map |
+| [zkvm_sp1 · zkvm_openvm](#zkvm-sp1) | The same, for SP1 and OpenVM | Each VM's own map and halt protocol |
 | [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
 | [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
@@ -126,6 +127,84 @@ by placing text in ROM at `0x80000000`. The `.heap` is declared `NOLOAD`
 so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
 zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
 lazily initialised exactly as on real zisk, and the binary stays small.
+
+## zkvm_sp1 / zkvm_openvm — entry point and memory map
+{: #zkvm-sp1 }
+
+**Files:** `modules/zkvm_sp1/{module.S,script.ld}`, `modules/zkvm_openvm/{module.S,script.ld}`
+
+The same shape as the Zisk pair — a `_start` that sets `gp`/`sp` and
+tail-calls `__libc_start_main(uBootstrap_main, …)`, plus a linker script
+describing the prover's address space. Neither VM sets `sp` for the guest,
+so `_start` has to, exactly as their own Rust entry points do.
+
+What differs between all four targets is the exit protocol, and that is not
+in the entry point: `pal`'s `zkvm_raw_exit` owns it, because `exit`,
+`_Exit` and `abort` all funnel through there. `pal.o` is built once and
+shared, so each of these modules exports an absolute marker symbol
+(`__zkvm_target_sp1`, `__zkvm_target_openvm`) that `pal` and `rhp` pick up
+through **weak references**: non-`NULL` only in that target's link, absent
+everywhere else, which is why Zisk keeps its original `a7 = 93` path
+untouched.
+
+| Aspect | `sp1` | `openvm` |
+|--------|-------|----------|
+| ISA | RV64IM, lp64 (no A, no C) | RV64IM, lp64 (no A, no C) |
+| Image base | ROM `0x80000000`, RAM `0xa0020000` — the Zisk map | ROM `0x400000`, RAM `0x10000000` |
+| Address ceiling | 2^48 | **2^29 (512 MiB)** — `POINTER_MAX_BITS = 28` over u16 cells |
+| Stack | `_init_stack_top = 0x78000000`; the whole range below it is reserved for the stack | `_init_stack_top = 0x400000`, growing down to `GUEST_MIN_MEM` (`0x400`) |
+| Bump-pointer cell | `0xbffefff8` — identical to Zisk | `0x1ffefff8` — see the caveat below |
+| Exit | `ecall` with the syscall id in **`t0`**: `COMMIT` ×8, `COMMIT_DEFERRED_PROOFS` ×8, then `HALT` with the code in `a0` | `TERMINATE`, a custom-0 instruction (`0x0b`, funct3 0) whose exit code is an **immediate**, so a runtime code collapses to 0 or 1 |
+| Console | `WRITE` syscall, caller's descriptor passed through (1 and 2 both reach the host) | `PrintStr` phantom instruction (`0x0b`, funct3 3, imm 1) — one channel, so the descriptor is ignored |
+| Post-link | none (both read program headers only) | none |
+
+**Segment flags matter on SP1.** Its loader rejects a segment without
+`PF_R` and a segment that is both writable and executable, and it records
+`p_flags` as the initial per-page protection. The three loadable segments
+are therefore `R+X` / `R` / `R+W`, and the read-only segment is page-aligned
+so a page shared with `.text` cannot lose its execute bit.
+
+**Both eagerly decode `.text`.** SP1 transpiles every word of every `PF_X`
+segment when the ELF is loaded and panics on one it cannot decode; OpenVM
+does the same and fails with `TranspilerError::ParseError`. A zero-filled
+alignment gap is an illegal encoding, so both scripts fill `.text` padding
+with `NOP` (`=0x13000000`) and keep `.rodata` and the unwind tables in a
+separate, non-executable segment.
+
+**Both require natural alignment.** SP1 raises `InvalidMemoryAccess` for any
+`LH`/`LW`/`LD`/`SH`/`SW`/`SD` off its boundary, and OpenVM's load/store chip
+only accepts aligned shift amounts. `BuildCommand` therefore forces
+`JitNoUnalignedAccess=1` for both, the same expansion `--no-unaligned-access`
+asks for by hand.
+
+**The inline allocator, and why each target names its own cell.** dotnet-riscv
+fixup 26 replaces the object-allocation helper call with an inline bump on the
+cell, emitted as a bare constant with no relocation. The address is not baked
+into the JIT: it comes from `JitZkBumpAddr`, which `BuildCommand` sets per
+target — `bffefff8` for Zisk, the simulator and SP1, `1ffefff8` for OpenVM,
+whose guest memory ends at `0x20000000` and could never host Zisk's address.
+The knob defaults to 0 and then nothing is inlined, so a plain riscv64 target
+(`musl`, `glibc`) is never handed an absolute guest address to write to.
+
+The value must equal `g_zk_bump_ptr` in the target's `script.ld`. The cell 8
+bytes below it, `g_zk_heap_floor`, holds the lowest address the heap may reach;
+the inline sequence loads it and fail-fasts rather than bumping down into
+`.bss`, `.data` and the stack when the heap is exhausted. That guard is a single
+`bgeu` to the method's one shared fail-fast block, and the floor load is marked
+invariant so it is hoisted out of loops and shared between allocation sites —
+one instruction more than an unchecked bump.
+
+`pal` publishes the floor from an `.init_array` constructor, before the runtime
+entry point, and never rewrites it. That ordering is what makes the load
+invariant; publishing it lazily, or moving the heap floor at runtime, would
+break every inline allocation site.
+
+**Status.** Both targets build and link; neither has been run end to end in
+its prover yet. The remaining work is a guest-side bindings package (the
+analogue of `bflat-libziskos`) for hint/public-value I/O and the
+precompiles, and confirming that no stray `ecall` escapes `pal`'s wrap
+surface — unlike Zisk, SP1 treats an unknown syscall id as a hard error and
+OpenVM has no `ecall` handler at all.
 
 ## pal — platform abstraction layer
 {: #pal }
