@@ -147,6 +147,12 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.params.yml" />
 
+    <!-- NoThread: replaces musl's locking primitives, whose lr/sc/amo* the
+         SP1 and OpenVM decoders reject. Laid down for every zkVM target but
+         only linked for those two (BuildCommand); ZisK keeps musl's. -->
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nothread\module.o"
+          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nothread.o" />
+
     <!-- PAL -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />

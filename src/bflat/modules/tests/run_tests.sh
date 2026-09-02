@@ -124,6 +124,14 @@ run_one test_pal \
 run_one test_nofp \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_nofp.c" "${MOD_DIR}/nofp/module.c"
 
+# nothread: the module defines pthread_mutex_lock and friends, which glibc
+# also defines. --allow-multiple-definition lets the host link pick ours (it
+# comes first); on the guest there is no competing definition, because keeping
+# musl's members out of the link is the entire point of the module.
+run_one test_nothread \
+	${CC} ${CFLAGS} "${TESTS_DIR}/test_nothread.c" "${MOD_DIR}/nothread/module.c" \
+	-Wl,--allow-multiple-definition
+
 # stdcppshim: --wrap=malloc makes the OOM path reachable on demand.
 run_one test_stdcppshim \
 	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_stdcppshim.cpp" \
