@@ -1886,6 +1886,24 @@ internal class BuildCommand : CommandBase
             }
             else if (libc == "musl" || IsZkvm(libc))
             {
+                /* nothread: single-hart replacements for musl's locking and
+                 * thread primitives, which are where its lr/sc/amo* live. The
+                 * bundled musl is built rv64ima, which is right for ZisK
+                 * (rv64imafd) and wrong for SP1 and OpenVM (rv64im): SP1's
+                 * loader panics on the first instruction it cannot decode, and
+                 * OpenVM turns it into a trap.
+                 *
+                 * This works by DEFINITION, not by --wrap: a wrap would leave
+                 * musl's members - and their atomics - in the image. So the
+                 * object MUST precede libc.a here. The linker extracts an
+                 * archive member only to resolve a symbol that is still
+                 * undefined at the point it reaches the archive, so with these
+                 * definitions already in hand it never takes musl's.
+                 *
+                 * ZisK is deliberately excluded and keeps musl's real
+                 * primitives: its decoder is happy with the A extension. */
+                if (libc == "sp1" || libc == "openvm")
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nothread.o")}\" ");
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
                 // The zkVM stack is linked with the soft-float (lp64) ABI
                 // marker (see PatchRiscvAbi on crt1.o/crti.o above). The
@@ -1962,18 +1980,6 @@ internal class BuildCommand : CommandBase
                  * object without these wraps.) */
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
                 AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
-                /* nothread: single-hart replacements for musl's locking and
-                 * thread primitives, which are where its lr/sc/amo* live. The
-                 * bundled musl is built rv64ima, which is right for ZisK
-                 * (rv64imafd) and wrong for SP1 and OpenVM (rv64im): SP1's
-                 * loader panics on the first instruction it cannot decode, and
-                 * OpenVM turns it into a trap. This works by DEFINITION, not
-                 * by --wrap - a wrap would leave musl's members, and their
-                 * atomics, in the image - so it has to precede libc.a on the
-                 * command line, which it does. ZisK is deliberately excluded
-                 * and keeps musl's real primitives. */
-                if (libc == "sp1" || libc == "openvm")
-                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nothread.o")}\" ");
                 ldArgs.Append($"--whole-archive ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
                 ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
