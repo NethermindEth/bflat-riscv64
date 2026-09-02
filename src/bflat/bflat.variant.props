@@ -41,7 +41,7 @@
     <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeReleaseVersion>
     <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '11'">11.0.0</RuntimeReleaseVersion>
 
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p3</RuntimeVersionPostfix>
+    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p4</RuntimeVersionPostfix>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x10</RuntimeVersionPostfix>
     <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">.x9</RuntimeVersionPostfix>
 
