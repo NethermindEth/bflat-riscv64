@@ -31,7 +31,7 @@ which is not driven from this repository.
 | **Fuzzing** | CI | The two input-driven components survive arbitrary input under ASan/UBSan | Memory errors and arithmetic UB in the printf parser and the allocator |
 | **CBMC proof** | CI | The allocator's bounds properties hold for *all* 64-bit sizes | Pointer arithmetic that wraps for inputs no test would think to try |
 | **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
-| **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for both zkVM targets | Renamed musl symbols, unresolved wraps, broken postprocessing |
+| **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for every zkVM target | Renamed musl symbols, unresolved wraps, broken postprocessing |
 | **Substitution check** | Build | Every C#-snippet body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
 | **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
 | **ISA verification** | Build, opt-in | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |

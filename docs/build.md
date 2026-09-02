@@ -114,7 +114,7 @@ Optional but useful flags:
 | `--arch riscv64` | Set explicitly; otherwise inferred from `--libc` |
 | `--no-stacktrace-data` | Drop textual stack-trace tables. Saves significant binary size. |
 | `--remove-eh` | Strip the DWARF unwind tables: ~100 KiB smaller, but a `throw` exits the guest instead of running `catch`/`finally`. |
-| `--no-globalization` | Forced on for `zisk` / `zisk_sim`; listed for clarity. |
+| `--no-globalization` | Forced on for every zkVM target; listed for clarity. |
 | `-Os` / `-Ot` | Optimise for size or speed. zkVMs reward size — every prover-step counts. |
 | `--mstat` | Emit MSTAT and DGML files for `dotnet-stat` size analysis. |
 | `--symchart` | After linking, run `readelf` and produce an HTML symbol-size chart. |
@@ -195,6 +195,24 @@ $ bflat build app.cs --os linux --libc zisk_sim
 Same runtime, allocator and TLS shim as the Zisk target, but without the
 ELF postprocessor and with a slightly looser linker script — the build to
 reach for when debugging under GDB.
+
+## Targeting SP1 and OpenVM
+
+```console
+$ bflat build app.cs --os linux --libc sp1
+$ bflat build app.cs --os linux --libc openvm
+```
+
+Same modules, allocator and substitutions again; what changes is the entry
+point, the memory map and the halt protocol, all described in
+[modules.md](modules.md#zkvm-sp1). Neither runs the ELF postprocessor —
+both provers load from program headers. Both also assert naturally aligned
+memory accesses, so these two targets always build with the byte-wise
+expansion `--no-unaligned-access` asks for by hand.
+
+Neither has been run end to end in its prover yet, and neither has a
+bindings package for hint/public-value I/O; see
+[modules.md](modules.md#zkvm-sp1) for the remaining work.
 
 ## Known limitations
 
