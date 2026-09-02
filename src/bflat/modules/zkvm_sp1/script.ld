@@ -1,8 +1,8 @@
 /**
  * @file
- * @brief ZKVM Zisk implementation linker script
+ * @brief ZKVM SP1 implementation linker script
  *
- * Copyright (C) 2025 Demerzel Solutions Limited (Nethermind)
+ * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
@@ -11,21 +11,33 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  /* biosrom (xa) : ORIGIN = 0x00001000, LENGTH = 0x1000 */
-  rom   (xa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
   /*
-   * Zisk RAM map (zisk/core/src/mem.rs):
-   *   RAM_ADDR            = 0xa0000000
-   *   AVAILABLE_MEM_ADDR  = 0xa0030000
-   *   FLOAT_LIB_RAM_ADDR  = 0xbfff0000
-   *   RAM end             = 0xc0000000
+   * SP1 memory map (sp1/crates/primitives/src/consts.rs,
+   * crates/core/executor/src/disassembler/elf.rs):
+   *   STACK_TOP           = 0x78000000   - every PT_LOAD must start at or
+   *                                        above it ("ELF has a segment that
+   *                                        is below the STACK_TOP"); the
+   *                                        region under it is the stack.
+   *   MAXIMUM_MEMORY_SIZE = 2^48 - 1     - the address space ceiling.
+   * Untouched memory reads as zero and defaults to R+W page protection
+   * (protections are only enforced for images carrying the SUCCINCT
+   * untrusted-program note, which this one does not), so the image only has
+   * to declare what it initialises.
+   *
+   * The addresses below deliberately mirror the ZisK map: the JIT's
+   * per-site inline allocator (dotnet-riscv fixup 26) hardcodes the bump
+   * cell at 0xbffefff8 with no relocation, so the RAM window must end at
+   * 0xbfff0000 for inline- and helper-allocated objects to share one heap.
    */
-  ram   (wxa) : ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
+  rom   (rxa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
+  ram   (rwxa): ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
 }
 
 PHDRS {
-  /* bios PT_LOAD FLAGS(1); */
-  text PT_LOAD FLAGS(1);
+  /* SP1 rejects a segment without PF_R and a segment that is both PF_W and
+   * PF_X, and records p_flags as the initial page protection, so the three
+   * loadable segments carry exactly R+X / R / R+W. */
+  text PT_LOAD FLAGS(5);
   rodata PT_LOAD FLAGS(4);
   data PT_LOAD FLAGS(6);
   tls PT_TLS;
@@ -67,17 +79,25 @@ SECTIONS
     /* Ensure proper alignment and padding */
     . = ALIGN(16);
     __image_text_end = .;
-  } >rom AT>rom :text
+    /* SP1 EAGERLY transpiles every word of every PF_X segment and panics on
+     * one it cannot decode (disassembler/rrs.rs transpile). A zero-filled
+     * alignment gap is an illegal encoding, so pad with NOP (0x00000013,
+     * written low byte first by the linker's big-endian fill pattern). */
+  } >rom AT>rom :text =0x13000000
 
-  .rodata ALIGN(16) : {
+  /* Page-align the read-only segment. p_flags become per-page protections in
+   * SP1's page_prot_image, and a page shared between the R+X and R segments
+   * would take whichever segment is processed last - dropping PF_X off the
+   * tail of .text. Cheap insurance; protections are inert unless the image
+   * opts into untrusted programs. */
+  .rodata ALIGN(4096) : {
     *(.rodata .rodata.*)
   } >rom AT>rom :rodata
 
   /* DWARF unwind tables. Placed explicitly (they would otherwise land as
    * orphan sections) so their bounds are named: pal/module.c reports
    * .eh_frame_hdr as a synthetic PT_GNU_EH_FRAME, which is how libunwind
-   * finds the FDE binary-search index. Dropped from the image by
-   * patch_elf.py only when the build passes --remove-eh. */
+   * finds the FDE binary-search index. */
   .eh_frame_hdr ALIGN(8) : {
     __eh_frame_hdr_start = .;
     KEEP(*(.eh_frame_hdr))
@@ -99,11 +119,9 @@ SECTIONS
   /* .init_array and .got are placed explicitly, ahead of the TLS template
    * below. Left as orphans, ld drops them right after .tbss, and every
    * PROGBITS section that follows a NOBITS one inside a PT_LOAD breaks the
-   * segment's `vaddr - offset` congruence: ZisK >= 1.1.0 loads the image from
-   * program headers only (transpilers/common/src/elf_extraction.rs) and would
-   * then read .got from the wrong file bytes. Keep every PROGBITS section
-   * ahead of .tbss/.bss. .init_array must also stay its own output section -
-   * scripts/patch_elf.py --fix-init-array looks it up by name. */
+   * segment's `vaddr - offset` congruence - SP1 loads the image from program
+   * headers only and would then read .got from the wrong file bytes. Keep
+   * every PROGBITS section ahead of .tbss/.bss. */
   .init_array ALIGN(8) : {
     PROVIDE_HIDDEN(__init_array_start = .);
     KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
@@ -170,12 +188,13 @@ SECTIONS
   . = ALIGN(8);
   PROVIDE(_global_pointer = .);
 
-  . = ALIGN(8);
-  /* Stack grows down from _init_stack_top. With deep NativeAOT call chains
-   * (TypeLoader, cctor recursion) 1 MiB overflowed into .bss and corrupted
-   * static state (notably pal/module.c:mem). 4 MiB gives ample headroom. */
-  PROVIDE(_init_stack_top = . + 0x400000);
-  PROVIDE(_kernel_heap_bottom = _init_stack_top);
+  . = ALIGN(16);
+  /* Unlike ZisK, the stack is NOT carved out of the RAM window: SP1 reserves
+   * the whole 0x00000000..STACK_TOP range below every loadable segment for
+   * it, which is what its own guests use (sp = STACK_TOP, growing down).
+   * That leaves the entire RAM window to the heap. */
+  PROVIDE(_init_stack_top    = 0x78000000);
+  PROVIDE(_kernel_heap_bottom = .);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
    * FIXED-address cell holding the downward bump pointer, so the JIT can
    * hardcode its address (lui/addi, no relocation) and the C allocator
@@ -201,13 +220,5 @@ SECTIONS
     *(.debug*)
     *(.comment)
     *(.riscv.attributes)
-    /*
-    *(.eh_frame_hdr)
-    *(.eh_frame .eh_frame.*)
-    *(.gcc_except_table .gcc_except_table.*)
-    */
-    /* *(.init_array) */
-    /* *(.tdata .tdata.* .gnu.linkonce.td.*) */
-    /* *(.tbss  .tbss.*  .gnu.linkonce.tb.*) */
   }
 }

@@ -61,9 +61,15 @@ options:
     - value: --wrap=exit
     - value: --wrap=_Exit
     - value: --wrap=abort
-    # ziskos bump-allocator bridge onto the shared heap.
+    # ziskos bump-allocator bridge onto the shared heap. ZisK-only: the
+    # symbol comes from libziskos, which no other target links.
     - value: --wrap=inline_bump_alloc_aligned
       libc: zisk
-    # Hide write() on the real zkVM; the sim keeps host stdio.
+    # Hide musl's stdio write path on the real zkVMs; the sim keeps host
+    # stdio. The unwrapped one issues a raw writev - harmless on ZisK, which
+    # emulates Linux syscalls, but a hard error on SP1 (unknown syscall id)
+    # and unserviced on OpenVM, which has no ecall handler at all. Managed
+    # console output does not go through it anyway: it takes the
+    # SystemNative_Write wrap in rhp, so nothing is lost.
     - value: --wrap=__stdio_write
-      libc: zisk
+      libc: [zisk, sp1, openvm]

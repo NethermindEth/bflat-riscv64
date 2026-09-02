@@ -130,6 +130,34 @@ __wrap_open(const char *path, int flags, int mode)
 extern uint8_t *g_zk_bump_ptr;
 #define mem g_zk_bump_ptr
 
+/* Companion cell 8 bytes below the bump pointer (also placed by the linker
+ * script), holding the lowest address the heap may occupy. JIT-emitted inline
+ * allocation loads it to bounds-check its bump before writing, so it has to be
+ * published; it is written together with the bump pointer on the first
+ * allocation, so the JIT's single guard can be trusted from the very first
+ * managed allocation.
+ *
+ * CONTRACT WITH THE JIT (dotnet-riscv fixup 26): the value is published ONCE,
+ * from .init_array - so before __libc_start_main reaches uBootstrap_main, and
+ * therefore before any managed code exists - and is never written again. That
+ * is what lets the JIT mark its load invariant and hoist it out of loops,
+ * paying for the bounds check only once per method instead of once per
+ * allocation. Publishing it later, or moving the heap floor at runtime, would
+ * silently break every inline allocation site. */
+extern uint8_t *g_zk_heap_floor;
+
+/*@ // Publishes the heap floor for JIT-emitted inline allocation. Runs from
+    // .init_array, before the runtime entry point, and exactly once.
+    assigns g_zk_heap_floor;
+    ensures g_zk_heap_floor == (uint8_t *)_kernel_heap_bottom;
+*/
+__attribute__((constructor))
+static void
+zk_publish_heap_floor(void)
+{
+    g_zk_heap_floor = (uint8_t *)_kernel_heap_bottom;
+}
+
 /*@ assigns \nothing;
     ensures \result % 8 == 0;
     ensures \result <= x < \result + 8;
@@ -675,14 +703,58 @@ __wrap_syscall(long number, ...)
     }
 }
 
-/* Clean zkVM termination. ZisK only treats an ecall with a7 == 93
- * (CAUSE_EXIT) as "program end": its trap handler routes that to ROM_EXIT,
- * whose instruction carries the `end` flag the emulator waits for. musl's
- * exit()/_Exit() issue exit_group (94) instead, which ZisK does NOT recognise,
- * so the emulation stops "not completed". Override musl's terminators (via
- * --wrap=exit/_Exit/abort) to emit the real ZisK exit ecall. */
-/*@ // Terminates the guest with the ZisK exit ecall (a7 == 93). The ecall
-    // ends the program at the emulator level - invisible to ACSL, hence
+/* Which zkVM this image is being linked for. pal.o is built once and shared
+ * by every zkVM target, so the target-specific halt and console protocols are
+ * selected at LINK time: each entry-point module (modules/zkvm_<target>/
+ * module.S) defines one of these as an absolute symbol, and the weak
+ * references below are non-NULL only in that link. No definition at all -
+ * ZisK and the ZisK simulator, plus the host test/fuzz builds - means the
+ * ZisK protocol, so those targets are bit-for-bit unaffected. The addresses
+ * are never dereferenced. */
+extern char __zkvm_target_sp1 __attribute__((weak));
+extern char __zkvm_target_openvm __attribute__((weak));
+
+#if defined(__riscv)
+/* SP1 (sp1/crates/zkvm/entrypoint/src/syscalls/mod.rs): the syscall id goes
+ * in t0, arguments in a0.. - NOT the Linux a7 convention. An id SP1 does not
+ * know is a hard ExecutionError, so nothing may leak a stray ecall. */
+#define SP1_HALT                    0x00
+#define SP1_WRITE                   0x02
+#define SP1_COMMIT                  0x10
+#define SP1_COMMIT_DEFERRED_PROOFS  0x1A
+
+/* SHA-256 of the empty byte string, as the eight little-endian u32 words
+ * SP1's syscall_halt commits before halting. SP1 hashes everything the guest
+ * writes to FD_PUBLIC_VALUES and commits the digest; this guest never writes
+ * to that descriptor (console output goes to fd 1, see zkvm_console_write),
+ * so the stream is empty and its digest is constant.
+ *
+ * IF A FUTURE CHANGE EVER WRITES PUBLIC VALUES, this constant becomes wrong
+ * and must be replaced by a running SHA-256 over the bytes written - the
+ * proof would otherwise carry a digest that does not match its public
+ * values. Execution is unaffected either way; only proving is. */
+static const unsigned int sp1_empty_pv_digest[8] = {
+    0x42c4b0e3u, 0x141cfc98u, 0xc8f4fb9au, 0x24b96f99u,
+    0xe441ae27u, 0x4c939b64u, 0x1b9995a4u, 0x55b85278u
+};
+#endif /* __riscv */
+
+/* Clean zkVM termination.
+ *
+ * ZisK only treats an ecall with a7 == 93 (CAUSE_EXIT) as "program end": its
+ * trap handler routes that to ROM_EXIT, whose instruction carries the `end`
+ * flag the emulator waits for. musl's exit()/_Exit() issue exit_group (94)
+ * instead, which ZisK does NOT recognise, so the emulation stops "not
+ * completed". Override musl's terminators (via --wrap=exit/_Exit/abort) to
+ * emit the real target exit sequence.
+ *
+ * SP1 halts on its own HALT syscall (id in t0), and expects the public-values
+ * and deferred-proof digests committed first. OpenVM has no syscalls at all:
+ * it ends on the TERMINATE custom instruction (custom-0, funct3 0), whose
+ * exit code is an IMMEDIATE - so a runtime code collapses to OpenVM's own two
+ * outcomes, 0 for success and 1 for failure (openvm::process::exit/panic). */
+/*@ // Terminates the guest with the target's exit sequence. It ends the
+    // program at the emulator level - invisible to ACSL, hence
     // ensures \false rather than an exits clause: this function never
     // returns and never reaches C's exit().
     assigns \nothing;
@@ -693,16 +765,85 @@ static void
 zkvm_raw_exit(long code)
 {
 #if defined(__riscv)
-    register long a0 __asm__("a0") = code;
-    register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
-    __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
-    for (;;) { } /* ecall ends the program; loop is just in case */
+    if (&__zkvm_target_sp1) {
+        for (int i = 0; i < 8; i++) {
+            register long t0 __asm__("t0") = SP1_COMMIT;
+            register long a0 __asm__("a0") = i;
+            register long a1 __asm__("a1") = sp1_empty_pv_digest[i];
+            __asm__ volatile("ecall" : : "r"(t0), "r"(a0), "r"(a1) : "memory");
+        }
+        /* No deferred proofs are verified by this guest, so every word of
+         * that digest is zero - but SP1's own entrypoint commits the eight
+         * words unconditionally, so do the same. */
+        for (int i = 0; i < 8; i++) {
+            register long t0 __asm__("t0") = SP1_COMMIT_DEFERRED_PROOFS;
+            register long a0 __asm__("a0") = i;
+            register long a1 __asm__("a1") = 0;
+            __asm__ volatile("ecall" : : "r"(t0), "r"(a0), "r"(a1) : "memory");
+        }
+        register long t0 __asm__("t0") = SP1_HALT;
+        register long a0 __asm__("a0") = code & 0xff;
+        __asm__ volatile("ecall" : : "r"(t0), "r"(a0) : "memory");
+    } else if (&__zkvm_target_openvm) {
+        if (code == 0)
+            __asm__ volatile(".insn i 0x0b, 0, x0, x0, 0" : : : "memory");
+        else
+            __asm__ volatile(".insn i 0x0b, 0, x0, x0, 1" : : : "memory");
+    } else {
+        register long a0 __asm__("a0") = code;
+        register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
+        __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
+    }
+    for (;;) { } /* the sequence ends the program; loop is just in case */
 #else
-    /* Host builds (fuzz harnesses) have no ZisK ecall; _Exit keeps the
+    /* Host builds (fuzz harnesses) have no zkVM ecall; _Exit keeps the
      * same no-atexit, no-flush termination contract. */
     extern void _Exit(int) __attribute__((noreturn));
     _Exit((int)code);
 #endif
+}
+
+/* Guest console. ZisK has no terminal device and swallows writes (rhp's
+ * __wrap_SystemNative_Write returns "all consumed"); SP1 and OpenVM both
+ * surface guest output on the host, so route it there instead. Called
+ * through a WEAK reference from rhp/module.c, which is linked and unit
+ * tested without pal.
+ *
+ * SP1: the WRITE syscall, which prints descriptors 1 and 2 on the host and
+ * warns about any other (sp1/crates/core/executor/src/minimal/write.rs), so
+ * the caller's descriptor is passed straight through.
+ * OpenVM: the PrintStr phantom instruction - custom-0, funct3 3, imm 1, with
+ * the buffer in the rd field and the length in rs1
+ * (openvm/extensions/riscv/guest/src/io.rs raw_print_str_from_bytes). It has
+ * a single output channel, so `fd` is ignored there. */
+/*@ requires len >= 0;
+    requires \valid_read(buf + (0 .. len - 1));
+    assigns \nothing;
+    ensures \result == len;
+*/
+int
+zkvm_console_write(int fd, const char *buf, int len)
+{
+#if defined(__riscv)
+    if (len > 0 && buf != (void *)0) {
+        if (&__zkvm_target_sp1) {
+            register long t0 __asm__("t0") = SP1_WRITE;
+            register long a0 __asm__("a0") = fd;
+            register const void *a1 __asm__("a1") = buf;
+            register long a2 __asm__("a2") = len;
+            __asm__ volatile("ecall"
+                             : : "r"(t0), "r"(a0), "r"(a1), "r"(a2)
+                             : "memory");
+        } else if (&__zkvm_target_openvm) {
+            __asm__ volatile(".insn i 0x0b, 3, %0, %1, 1"
+                             : : "r"(buf), "r"(len) : "memory");
+        }
+    }
+#else
+    (void)fd;
+    (void)buf;
+#endif
+    return len;
 }
 
 /*@ assigns \nothing;

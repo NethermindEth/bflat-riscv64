@@ -33,10 +33,13 @@ options:
     - value: --wrap=S_P_CoreLib_System_Collections_HashHelpers__IsPrime
     - value: --wrap=System_Collections_Immutable_System_Collections_HashHelpers__IsPrime
     - value: --wrap=System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets
-    # No terminal device on the real zkVM; the sim keeps the host console.
+    # No terminal device on any real zkVM; the sim keeps the host console.
+    # SystemNative_Write still goes through the wrapper on SP1/OpenVM - it is
+    # what routes the bytes to their host-visible output (pal's
+    # zkvm_console_write); on ZisK the wrapper swallows them.
     - value: --wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling
-      libc: zisk
+      libc: [zisk, sp1, openvm]
     - value: --wrap=SystemNative_SetTerminalInvalidationHandler
-      libc: zisk
+      libc: [zisk, sp1, openvm]
     - value: --wrap=SystemNative_Write
-      libc: zisk
+      libc: [zisk, sp1, openvm]

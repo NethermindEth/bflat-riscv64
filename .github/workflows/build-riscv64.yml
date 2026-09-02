@@ -270,10 +270,10 @@ jobs:
             ${{ matrix.image }}:test \
             bash -lc "bflat --info && bflat --info | grep -A1 '^Variant' | grep -q '${{ matrix.variant }}'"
 
-      - name: Smoke test bflat (zisk + zisk_sim)
+      - name: Smoke test bflat (every zkVM target)
         run: |
           set -e
-          for libc in zisk zisk_sim; do
+          for libc in zisk zisk_sim sp1 openvm; do
             echo "::group::Smoke build for libc=$libc"
             docker run --rm --platform linux/amd64 \
               ${{ matrix.image }}:test \
