@@ -120,7 +120,16 @@ SECTIONS
     __start___modules = .;
     KEEP(*(__modules))
     __stop___modules  = .;
-  } >ram AT>rom :data
+    /* Load address in ram, not rom, unlike ZisK's script. .modules is the
+     * first section whose address is in ram, and taking its contents from rom
+     * makes it straddle the two regions: lld then hands it a load address
+     * inside the range it already gave .eh_frame and refuses the link with
+     * "load address range overlaps". Nothing here needs the bytes to sit in
+     * the rom part of the file - the loader reads program headers and copies
+     * nothing - and every ram section after this one (.init_array, .got,
+     * .data) already uses AT>ram, so this just makes .modules consistent with
+     * them. */
+  } >ram AT>ram :data
 
   /* .init_array and .got are placed explicitly, ahead of the TLS template
    * below. Left as orphans, ld drops them right after .tbss, and every
