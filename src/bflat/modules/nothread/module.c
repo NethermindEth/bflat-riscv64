@@ -39,8 +39,8 @@
  * The linker only extracts an archive member if it defines a still-undefined
  * symbol, so this object is linked ahead of libc.a and defines every global of
  * each member it displaces. That is also why some functions below look
- * pointless (__membarrier_init, __acquire_ptc): they are not called, they are
- * there so pthread_create.lo is never pulled in for them.
+ * pointless (__membarrier_init, __do_cleanup_push): they are not called, they
+ * are there so pthread_create.lo is never pulled in for them.
  *
  * Linked for the sp1 and openvm targets only. ZisK decodes the A extension
  * happily, so it keeps musl's real primitives and stays bit-for-bit unchanged.
@@ -206,9 +206,15 @@ NOTHREAD_BLOCKS(__pthread_exit)
 NOTHREAD_NOOP(__tl_lock)
 NOTHREAD_NOOP(__tl_unlock)
 NOTHREAD_NOOP(__tl_sync)
-NOTHREAD_NOOP(__acquire_ptc)
-NOTHREAD_NOOP(__release_ptc)
 NOTHREAD_NOOP(__do_cleanup_push)
 NOTHREAD_NOOP(__do_cleanup_pop)
-NOTHREAD_NOOP(__pthread_tsd_run_dtors)
 NOTHREAD_NOOP(__membarrier_init)
+
+/* NOT defined here, though pthread_create.lo exports them too:
+ * __acquire_ptc / __release_ptc also live in lock_ptc.lo and
+ * __pthread_tsd_run_dtors in pthread_key_create.lo, and both of those members
+ * are pulled in on their own account (the runtime uses TLS keys) and carry no
+ * atomics. Defining them here would collide with the copy that is legitimately
+ * linked. Leaving them out is safe: they are the only globals of
+ * pthread_create.lo not defined above, so nothing can pull that member in for
+ * them either - they resolve from the member that is already there. */
