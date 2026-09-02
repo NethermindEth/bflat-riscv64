@@ -529,13 +529,18 @@ internal class BuildCommand : CommandBase
         // Guest-visible compilation symbol, so user code and the module
         // snippets can tell the targets apart. zisk_sim deliberately gets
         // none, as before: it is a debugging layout, not a proof target.
-        string zkvmDefine = libc switch
-        {
-            "zisk" => "ZKVM_ZISK",
-            "sp1" => "ZKVM_SP1",
-            "openvm" => "ZKVM_OPENVM",
-            _ => null,
-        };
+        //
+        // Spelled as an if-chain rather than a switch expression on purpose:
+        // CA1508 mis-reads a switch expression over string constants as
+        // proving the subject non-null, and then calls every later null check
+        // on libc dead code.
+        string zkvmDefine = null;
+        if (libc == "zisk")
+            zkvmDefine = "ZKVM_ZISK";
+        else if (libc == "sp1")
+            zkvmDefine = "ZKVM_SP1";
+        else if (libc == "openvm")
+            zkvmDefine = "ZKVM_OPENVM";
         if (zkvmDefine != null)
         {
             var definesList = new List<string>(defines ?? Array.Empty<string>());
