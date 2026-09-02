@@ -33,6 +33,12 @@ extern void __tl_unlock(void);
 extern void __vm_lock(void);
 extern void __vm_unlock(void);
 extern int mtx_lock(void *m);
+extern int fflush(FILE *f);
+extern int fputc(int c, FILE *f);
+extern int putc(int c, FILE *f);
+extern int putchar(int c);
+extern int fgetc(FILE *f);
+extern int getc(FILE *f);
 
 typedef int (*blocking_fn)(void);
 
@@ -61,6 +67,9 @@ int main(void)
     pthread_spinlock_t spin;
     sem_t sem;
     struct timespec ts = { 0, 0 };
+    FILE *tmp = tmpfile();
+
+    CHECK(tmp != NULL);
 
     __lock(&lockword);
     CHECK(lockword == 0x5a5a5a5a);
@@ -93,6 +102,16 @@ int main(void)
     CHECK(pthread_cond_signal(&cond) == 0);
     CHECK(pthread_cond_broadcast(&cond) == 0);
     CHECK(pthread_cond_destroy(&cond) == 0);
+
+    /* stdio: the locked names must behave as their unlocked twins, and
+     * fflush must report success without touching anything. */
+    CHECK(fflush(stdout) == 0);
+    CHECK(fputc('x', tmp) == 'x');
+    CHECK(putc('y', tmp) == 'y');
+    CHECK(putchar('\n') == '\n');
+    rewind(tmp);
+    CHECK(fgetc(tmp) == 'x');
+    CHECK(getc(tmp) == 'y');
 
     __tl_lock();
     __tl_unlock();
