@@ -127,6 +127,54 @@ NOTHREAD_NOOP(__register_locked_file)
 NOTHREAD_NOOP(__unlist_locked_file)
 NOTHREAD_NOOP(__do_orphaned_stdio_locks)
 
+/* --- buffered stdio -----------------------------------------------------
+ * The single-character stdio entry points take the FILE lock inline rather
+ * than through __lockfile, so displacing __lockfile is not enough to get their
+ * cmpxchg out of the image. musl exports an *_unlocked variant of each from a
+ * separate, atomic-free member, and on one hart the two are the same function,
+ * so route the locked names to the unlocked ones.
+ *
+ * fflush is the exception: musl has fflush_unlocked, but in the same member as
+ * fflush, so forwarding would drag the atomics back in. It returns success
+ * without doing anything, and that is not a compromise on these targets -
+ * pal's __wrap___stdio_write fails unconditionally, so the underlying write
+ * path is already inert and no buffered byte can leave the FILE either way.
+ * In this image fflush is reached only from libunwind's logging paths. */
+extern int fputc_unlocked(int c, void *f);
+extern int fgetc_unlocked(void *f);
+extern int putchar_unlocked(int c);
+extern int getchar_unlocked(void);
+
+/*@ assigns \nothing; ensures \result == 0; */
+int fflush(void *f) { (void)f; return 0; }
+
+/*@ assigns \nothing; ensures \result == 0; */
+int fflush_unlocked(void *f) { (void)f; return 0; }
+
+/*@ assigns \nothing; */
+int fputc(int c, void *f) { return fputc_unlocked(c, f); }
+
+/*@ assigns \nothing; */
+int putc(int c, void *f) { return fputc_unlocked(c, f); }
+
+/*@ assigns \nothing; */
+int _IO_putc(int c, void *f) { return fputc_unlocked(c, f); }
+
+/*@ assigns \nothing; */
+int putchar(int c) { return putchar_unlocked(c); }
+
+/*@ assigns \nothing; */
+int fgetc(void *f) { return fgetc_unlocked(f); }
+
+/*@ assigns \nothing; */
+int getc(void *f) { return fgetc_unlocked(f); }
+
+/*@ assigns \nothing; */
+int _IO_getc(void *f) { return fgetc_unlocked(f); }
+
+/*@ assigns \nothing; */
+int getchar(void) { return getchar_unlocked(); }
+
 /* --- the futex wait behind a contended lock, __wait.lo ------------------
  * Reachable only when a lock is already held, which cannot happen here. */
 NOTHREAD_BLOCKS(__wait)
