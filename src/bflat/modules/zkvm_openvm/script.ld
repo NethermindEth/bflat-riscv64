@@ -1,8 +1,8 @@
 /**
  * @file
- * @brief ZKVM Zisk implementation linker script
+ * @brief ZKVM OpenVM implementation linker script
  *
- * Copyright (C) 2025 Demerzel Solutions Limited (Nethermind)
+ * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
@@ -11,23 +11,35 @@ OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY {
-  /* biosrom (xa) : ORIGIN = 0x00001000, LENGTH = 0x1000 */
-  rom   (xa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
   /*
-   * Zisk RAM map (zisk/core/src/mem.rs):
-   *   RAM_ADDR            = 0xa0000000
-   *   AVAILABLE_MEM_ADDR  = 0xa0030000
-   *   FLOAT_LIB_RAM_ADDR  = 0xbfff0000
-   *   RAM end             = 0xc0000000
+   * OpenVM memory map, read from the live RV64 line, branch develop-v2.1.0
+   * (NOT develop-v2.1.0-rv64, an older snapshot of the same work, and NOT
+   * main, which is still RV32 and rejects a 64-bit ELF):
+   *   crates/toolchain/platform/src/memory.rs   MEM_BITS = 32, so guest
+   *     memory is the whole 4 GiB u32 space; GUEST_MIN_MEM = 0x400,
+   *     STACK_TOP = 0x200400, TEXT_START = 0x200800.
+   *   crates/vm/src/system/memory/mod.rs        DEFAULT_POINTER_MAX_BITS
+   *     = MEM_BITS - log2(u16 cell) = 31 cells, i.e. the same 4 GiB.
+   *   crates/toolchain/instructions/src/program.rs  MAX_ALLOWED_PC =
+   *     u32::MAX - 3, so any u32 text address is allowed.
+   *   crates/toolchain/transpiler/src/elf.rs    Elf::decode(.., max_mem) is
+   *     always called with MEM_SIZE, and addresses stay u32.
+   *
+   * Nothing in the loader enforces OpenVM's own STACK_TOP/TEXT_START - it
+   * takes the entry from e_entry and the rest from PT_LOAD - so this mirrors
+   * the ZisK map instead. That is what lets the bump cell sit at the same
+   * 0xbffefff8 as every other zkVM target: OpenVM used to cap guest memory at
+   * 512 MiB, which put that address out of reach and forced a target-specific
+   * JitZkBumpAddr; at 4 GiB the special case disappears.
    */
-  ram   (wxa) : ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
+  rom   (rxa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
+  ram   (rwxa): ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
 }
 
 PHDRS {
-  /* bios PT_LOAD FLAGS(1); */
-  text PT_LOAD FLAGS(1);
-  rodata PT_LOAD FLAGS(4);
-  data PT_LOAD FLAGS(6);
+  text PT_LOAD FLAGS(5);    /* R+X */
+  rodata PT_LOAD FLAGS(4);  /* R   */
+  data PT_LOAD FLAGS(6);    /* R+W */
   tls PT_TLS;
 }
 
@@ -67,7 +79,12 @@ SECTIONS
     /* Ensure proper alignment and padding */
     . = ALIGN(16);
     __image_text_end = .;
-  } >rom AT>rom :text
+    /* The transpiler decodes every word of every PF_X segment up front and
+     * fails the whole build on one it does not recognise
+     * (TranspilerError::ParseError). A zero-filled alignment gap is an
+     * illegal encoding, so pad with NOP (0x00000013, written low byte first
+     * by the linker's big-endian fill pattern). */
+  } >rom AT>rom :text =0x13000000
 
   .rodata ALIGN(16) : {
     *(.rodata .rodata.*)
@@ -76,8 +93,8 @@ SECTIONS
   /* DWARF unwind tables. Placed explicitly (they would otherwise land as
    * orphan sections) so their bounds are named: pal/module.c reports
    * .eh_frame_hdr as a synthetic PT_GNU_EH_FRAME, which is how libunwind
-   * finds the FDE binary-search index. Dropped from the image by
-   * patch_elf.py only when the build passes --remove-eh. */
+   * finds the FDE binary-search index. Keeping them OUT of the PF_X segment
+   * also keeps them away from the instruction transpiler. */
   .eh_frame_hdr ALIGN(8) : {
     __eh_frame_hdr_start = .;
     KEEP(*(.eh_frame_hdr))
@@ -99,11 +116,9 @@ SECTIONS
   /* .init_array and .got are placed explicitly, ahead of the TLS template
    * below. Left as orphans, ld drops them right after .tbss, and every
    * PROGBITS section that follows a NOBITS one inside a PT_LOAD breaks the
-   * segment's `vaddr - offset` congruence: ZisK >= 1.1.0 loads the image from
-   * program headers only (transpilers/common/src/elf_extraction.rs) and would
-   * then read .got from the wrong file bytes. Keep every PROGBITS section
-   * ahead of .tbss/.bss. .init_array must also stay its own output section -
-   * scripts/patch_elf.py --fix-init-array looks it up by name. */
+   * segment's `vaddr - offset` congruence - OpenVM loads the image from
+   * program headers only and would then read .got from the wrong file
+   * bytes. Keep every PROGBITS section ahead of .tbss/.bss. */
   .init_array ALIGN(8) : {
     PROVIDE_HIDDEN(__init_array_start = .);
     KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
@@ -128,9 +143,8 @@ SECTIONS
     /* .NET 11 GC (gcenv.unix.cpp static init) registers destructors via
      * __cxa_atexit(fn, arg, &__dso_handle). Nothing defines __dso_handle in
      * this fully custom link (no crtbegin.o), so lld synthesizes it at the
-     * image base (VA 0) - out of PCREL_HI20 range (>2GiB) from code at
-     * 0x8xxxxxxx. It is only an opaque DSO token, never dereferenced by
-     * musl's __cxa_atexit, so any in-range address works; give it 8 bytes
+     * image base (VA 0). It is only an opaque DSO token, never dereferenced
+     * by musl's __cxa_atexit, so any in-range address works; give it 8 bytes
      * of real storage here. */
     PROVIDE_HIDDEN(__dso_handle = .);
     . += 8;
@@ -171,16 +185,20 @@ SECTIONS
   PROVIDE(_global_pointer = .);
 
   . = ALIGN(8);
-  /* Stack grows down from _init_stack_top. With deep NativeAOT call chains
-   * (TypeLoader, cctor recursion) 1 MiB overflowed into .bss and corrupted
-   * static state (notably pal/module.c:mem). 4 MiB gives ample headroom. */
-  PROVIDE(_init_stack_top = . + 0x400000);
+  /* Stack grows down from _init_stack_top, carved out of RAM above .bss just
+   * as on ZisK. With deep NativeAOT call chains (TypeLoader, cctor recursion)
+   * 1 MiB overflowed into .bss; 4 MiB gives ample headroom. */
+  PROVIDE(_init_stack_top     = . + 0x400000);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
    * FIXED-address cell holding the downward bump pointer, so the JIT can
-   * hardcode its address (lui/addi, no relocation) and the C allocator
-   * (pal/module.c) + JIT-emitted inline allocation share the same pointer.
-   * Heap top is lowered by 24 so neither cell ever overlaps the heap. */
+   * emit its address as a constant (lui/addi, no relocation) and the C
+   * allocator (pal/module.c) + JIT-emitted inline allocation share the same
+   * pointer. Heap top is lowered by 24 so neither cell ever overlaps the heap.
+   *
+   * Same address as ZisK and SP1. BuildCommand passes it to the JIT as
+   * JitZkBumpAddr and the two must stay in step - dotnet-riscv fixup 26 takes
+   * the cell address from that knob and inlines nothing when it is 0. */
   PROVIDE(g_zk_bump_ptr     = ORIGIN(ram) + LENGTH(ram) - 8);   /* = 0xbffefff8 */
   /* Companion cell 8 bytes BELOW the bump pointer, holding the lowest address
    * the heap may occupy. JIT-emitted inline allocation (dotnet-riscv fixup 26)
@@ -201,13 +219,5 @@ SECTIONS
     *(.debug*)
     *(.comment)
     *(.riscv.attributes)
-    /*
-    *(.eh_frame_hdr)
-    *(.eh_frame .eh_frame.*)
-    *(.gcc_except_table .gcc_except_table.*)
-    */
-    /* *(.init_array) */
-    /* *(.tdata .tdata.* .gnu.linkonce.td.*) */
-    /* *(.tbss  .tbss.*  .gnu.linkonce.tb.*) */
   }
 }
