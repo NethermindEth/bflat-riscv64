@@ -48,13 +48,23 @@ profile adds code-quality work on top.
 
 ## Supported zkVMs
 
-Two flavours, selected by `--libc`:
+Four targets, selected by `--libc`. All of them are riscv64 (`--os linux
+--arch riscv64`) and share the same modules, soft-float musl and ISA gates;
+they differ in the entry point, the memory map and the halt protocol.
 
-- **riscv64 + [zisk](https://github.com/0xPolygonHermez/zisk)** — runs natively
-  inside Zisk. Invoke with `--os linux --arch riscv64 --libc zisk`.
-- **riscv64 + zisk_sim** — runs under user-mode QEMU or native RISC-V64 Linux.
-  Carries almost every module and adaptation Zisk needs, except support for
-  **precompiles**. Invoke with `--os linux --arch riscv64 --libc zisk_sim`.
+- **[zisk](https://github.com/0xPolygonHermez/zisk)** — runs natively inside
+  Zisk. Invoke with `--libc zisk`.
+- **zisk_sim** — runs under user-mode QEMU or native RISC-V64 Linux. Carries
+  almost every module and adaptation Zisk needs, except support for
+  **precompiles**. Invoke with `--libc zisk_sim`.
+- **[sp1](https://github.com/succinctlabs/sp1)** — SP1 v6's
+  `riscv64im-succinct-zkvm-elf`. Invoke with `--libc sp1`.
+- **[openvm](https://github.com/openvm-org/openvm)** — OpenVM's RV64 line
+  (branch `develop-v2.1.0-rv64`; `main` is still RV32 and rejects a 64-bit
+  ELF). Invoke with `--libc openvm`.
+
+SP1 and OpenVM are newer than the Zisk pair and have not been run end to end
+yet; see [docs/modules.md](docs/modules.md) for what each still needs.
 
 Bflat itself builds against .NET 10 or .NET 11; see
 [BUILDING.md](BUILDING.md) for the version and variant matrix.
@@ -119,6 +129,8 @@ and `os`.
 | zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
 | zkvm_zisk | Entry point and linker script for Zisk |
 | zkvm_zisk_sim | Entry point and linker script for the Zisk simulator |
+| zkvm_sp1 | Entry point and linker script for SP1 |
+| zkvm_openvm | Entry point and linker script for OpenVM |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
 C, C++ and assembly modules are unit-tested on the real ISA under qemu. The
