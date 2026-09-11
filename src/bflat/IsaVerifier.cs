@@ -9,8 +9,12 @@
 // To stay precise it walks only real code: the function symbols (SttFunc) in
 // the executable sections, never the constant pools / method tables / RTTI that
 // NativeAOT interleaves in .text (those decode as garbage instructions and would
-// otherwise raise false positives). If the binary carries no function symbols it
-// falls back to scanning whole executable sections and says so.
+// otherwise raise false positives). A function symbol is further clipped to the
+// code its unwind info (.eh_frame FDE) covers: since .NET 11 ILC appends the
+// JIT's read-only data (jump tables, span/string constants) to the method it
+// belongs to, inside the FUNC symbol's size, and only the FDE tells where the
+// instructions end. If the binary carries no function symbols it falls back to
+// the FDE ranges, then to scanning whole executable sections and says so.
 
 using System;
 using System.Buffers.Binary;
@@ -37,6 +41,7 @@ internal static class IsaVerifier
 
     private readonly struct Section
     {
+        public readonly uint NameOff;
         public readonly uint Type;
         public readonly ulong Flags;
         public readonly ulong Addr;
@@ -44,8 +49,8 @@ internal static class IsaVerifier
         public readonly ulong Size;
         public readonly uint Link;
         public readonly ulong EntSize;
-        public Section(uint type, ulong flags, ulong addr, ulong off, ulong size, uint link, ulong entsize)
-        { Type = type; Flags = flags; Addr = addr; Offset = off; Size = size; Link = link; EntSize = entsize; }
+        public Section(uint nameOff, uint type, ulong flags, ulong addr, ulong off, ulong size, uint link, ulong entsize)
+        { NameOff = nameOff; Type = type; Flags = flags; Addr = addr; Offset = off; Size = size; Link = link; EntSize = entsize; }
         public bool IsExec => (Flags & ShfExecinstr) != 0 && Type == 1 /*PROGBITS*/;
     }
 
@@ -98,9 +103,11 @@ internal static class IsaVerifier
             int b = (int)shoff + i * shentsize;
             if (b + 64 > elf.Length) { Console.Error.WriteLine("error: ISA verification: truncated section header"); return 1; }
             sections[i] = new Section(
-                U32(elf, b + 4), U64(elf, b + 8), U64(elf, b + 16),
+                U32(elf, b + 0), U32(elf, b + 4), U64(elf, b + 8), U64(elf, b + 16),
                 U64(elf, b + 24), U64(elf, b + 32), U32(elf, b + 40), U64(elf, b + 56));
         }
+        int shstrndx = U16(elf, 62);
+        ulong shstrOff = shstrndx < shnum ? sections[shstrndx].Offset : 0;
 
         // Collect the real code: SttFunc symbols that live in an executable
         // section. This skips the data NativeAOT interleaves in .text.
@@ -141,6 +148,28 @@ internal static class IsaVerifier
             if (end > funcs[i].Addr) funcs[i].Size = end - funcs[i].Addr;
         }
 
+        // Code extents from the unwind info. A method's FUNC symbol covers the
+        // JIT data ILC appends after its instructions; the FDE ends where the
+        // instructions do, so clip every symbol to the last FDE starting in it.
+        List<(ulong begin, ulong end)> fdes = ReadEhFrameRanges(elf, sections, shstrOff);
+        int clipped = 0;
+        if (fdes.Count > 0)
+        {
+            foreach (Func f in funcs)
+            {
+                ulong end = f.Addr + f.Size;
+                ulong codeEnd = 0;
+                int k = LowerBound(fdes, f.Addr);
+                for (; k < fdes.Count && fdes[k].begin < end; k++)
+                    if (fdes[k].end > codeEnd) codeEnd = fdes[k].end;
+                if (codeEnd != 0 && codeEnd < end)
+                {
+                    f.Size = codeEnd - f.Addr;
+                    clipped++;
+                }
+            }
+        }
+
         var fp = new Findings("floating-point (F/D)");
         var comp = new Findings("compressed (C)");
         var atom = new Findings("atomic (A)");
@@ -154,6 +183,19 @@ internal static class IsaVerifier
                 if (s.Size == 0) continue; // symbol not in an executable PROGBITS section
                 long fileBase = (long)(s.Offset + (f.Addr - s.Addr));
                 Scan(elf, fileBase, f.Addr, f.Size, f.Name, fp, comp, atom);
+            }
+            if (clipped > 0)
+                Console.WriteLine($"ISA verification: {funcs.Count} functions scanned, {clipped} clipped to their unwind range (trailing JIT data skipped)");
+        }
+        else if (fdes.Count > 0)
+        {
+            // No symbols but unwind info: the FDE ranges are exactly the code.
+            Console.WriteLine("warning: ISA verification: no function symbols; scanning the .eh_frame code ranges");
+            foreach (var (begin, end) in fdes)
+            {
+                Section s = ContainingExec(sections, begin);
+                if (s.Size == 0) continue;
+                Scan(elf, (long)(s.Offset + (begin - s.Addr)), begin, end - begin, null, fp, comp, atom);
             }
         }
         else
@@ -210,6 +252,141 @@ internal static class IsaVerifier
             }
             i += 4;
         }
+    }
+
+    // First index whose begin >= addr, on the sorted FDE list.
+    private static int LowerBound(List<(ulong begin, ulong end)> r, ulong addr)
+    {
+        int lo = 0, hi = r.Count;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (r[mid].begin < addr) lo = mid + 1; else hi = mid;
+        }
+        // Also cover an FDE that starts just before addr but the caller only
+        // needs FDEs starting inside the symbol, so no step back is required.
+        return lo;
+    }
+
+    // .eh_frame: the [pc_begin, pc_begin + pc_range) of every FDE, sorted by
+    // pc_begin. Only what the parser needs of the CIE is decoded (the
+    // augmentation, for the FDE pointer encoding); anything unexpected simply
+    // ends the walk, leaving the ranges found so far.
+    private static List<(ulong begin, ulong end)> ReadEhFrameRanges(byte[] elf, Section[] sections, ulong shstrOff)
+    {
+        var ranges = new List<(ulong, ulong)>();
+        Section eh = default;
+        foreach (Section s in sections)
+            if (s.Type == 1 && ReadStr(elf, shstrOff, s.NameOff) == ".eh_frame") { eh = s; break; }
+        if (eh.Size == 0 || eh.Offset + eh.Size > (ulong)elf.Length)
+            return ranges;
+
+        var cieEnc = new Dictionary<long, (byte fdeEnc, bool z)>();
+        long secStart = (long)eh.Offset, secEnd = (long)(eh.Offset + eh.Size);
+        long pos = secStart;
+        try
+        {
+            while (pos + 4 <= secEnd)
+            {
+                ulong len = U32(elf, (int)pos);
+                long hdr = 4;
+                if (len == 0) { pos += 4; continue; } // terminator
+                if (len == 0xffffffff) { len = U64(elf, (int)pos + 4); hdr = 12; }
+                long entry = pos + hdr, next = entry + (long)len;
+                if (next > secEnd || len < 4) break;
+                uint id = U32(elf, (int)entry);
+                if (id == 0)
+                {
+                    // CIE
+                    long p = entry + 4;
+                    byte version = elf[p++];
+                    long augStart = p;
+                    while (p < next && elf[p] != 0) p++;
+                    string aug = System.Text.Encoding.ASCII.GetString(elf, (int)augStart, (int)(p - augStart));
+                    p++;
+                    if (aug.Contains("eh")) p += 8;
+                    if (version >= 4) p += 2; // address_size, segment_size
+                    ReadUleb(elf, ref p); // code alignment
+                    ReadSleb(elf, ref p); // data alignment
+                    if (version == 1) p++; else ReadUleb(elf, ref p); // return register
+                    byte fdeEnc = 0; // DW_EH_PE_absptr
+                    bool z = aug.StartsWith("z");
+                    if (z)
+                    {
+                        ReadUleb(elf, ref p); // augmentation data length
+                        for (int i = 1; i < aug.Length; i++)
+                        {
+                            switch (aug[i])
+                            {
+                                case 'L': p++; break;
+                                case 'R': fdeEnc = elf[p++]; break;
+                                case 'P': { byte enc = elf[p++]; ReadEncoded(elf, ref p, enc, eh); break; }
+                                case 'S': case 'B': break;
+                                default: i = aug.Length; break; // unknown: stop decoding this CIE
+                            }
+                        }
+                    }
+                    cieEnc[pos] = (fdeEnc, z);
+                }
+                else
+                {
+                    // FDE: id is the distance back to its CIE
+                    long ciePos = entry - id;
+                    if (!cieEnc.TryGetValue(ciePos, out var cie)) { pos = next; continue; }
+                    long p = entry + 4;
+                    ulong begin = ReadEncoded(elf, ref p, cie.fdeEnc, eh);
+                    ulong range = ReadEncoded(elf, ref p, (byte)(cie.fdeEnc & 0x0f), eh);
+                    if (range != 0)
+                        ranges.Add((begin, begin + range));
+                }
+                pos = next;
+            }
+        }
+        catch (Exception)
+        {
+            // Malformed unwind info: keep what was parsed.
+        }
+        ranges.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+        return ranges;
+    }
+
+    // DWARF exception-header pointer: value formats in the low nibble,
+    // pc-relative application in bit 4 (relative to the field's own address).
+    private static ulong ReadEncoded(byte[] elf, ref long p, byte enc, Section sec)
+    {
+        if (enc == 0xff) return 0; // DW_EH_PE_omit
+        ulong fieldAddr = sec.Addr + (ulong)(p - (long)sec.Offset);
+        ulong v;
+        switch (enc & 0x0f)
+        {
+            case 0x00: v = U64(elf, (int)p); p += 8; break;                       // absptr
+            case 0x01: v = ReadUleb(elf, ref p); break;                          // uleb128
+            case 0x02: v = U16(elf, (int)p); p += 2; break;                      // udata2
+            case 0x03: v = U32(elf, (int)p); p += 4; break;                      // udata4
+            case 0x04: v = U64(elf, (int)p); p += 8; break;                      // udata8
+            case 0x09: v = (ulong)ReadSleb(elf, ref p); break;                   // sleb128
+            case 0x0a: v = (ulong)(long)(short)U16(elf, (int)p); p += 2; break;  // sdata2
+            case 0x0b: v = (ulong)(long)(int)U32(elf, (int)p); p += 4; break;    // sdata4
+            case 0x0c: v = U64(elf, (int)p); p += 8; break;                      // sdata8
+            default: throw new NotSupportedException("eh_frame pointer encoding");
+        }
+        if ((enc & 0x70) == 0x10) v += fieldAddr; // DW_EH_PE_pcrel
+        return v;
+    }
+
+    private static ulong ReadUleb(byte[] b, ref long p)
+    {
+        ulong result = 0; int shift = 0; byte c;
+        do { c = b[p++]; result |= (ulong)(c & 0x7f) << shift; shift += 7; } while ((c & 0x80) != 0);
+        return result;
+    }
+
+    private static long ReadSleb(byte[] b, ref long p)
+    {
+        long result = 0; int shift = 0; byte c;
+        do { c = b[p++]; result |= (long)(c & 0x7f) << shift; shift += 7; } while ((c & 0x80) != 0);
+        if (shift < 64 && (c & 0x40) != 0) result |= -1L << shift;
+        return result;
     }
 
     private static Section ContainingExec(Section[] sections, ulong addr)
