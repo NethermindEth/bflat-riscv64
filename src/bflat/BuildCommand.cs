@@ -691,12 +691,71 @@ internal class BuildCommand : CommandBase
         bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
+
+        // Whether the compiler package models the RISC-V extensions as
+        // instruction sets (the soft-float dotnet-riscv line does; older
+        // packages know only base/zba/zbb). Probed on a throwaway builder so
+        // the same bflat sources serve both runtime generations.
+        bool riscvIsaAware = targetArchitecture == TargetArchitecture.RiscV64
+            && new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet("f");
+
+        if (riscvIsaAware && IsZkvm(libc))
+        {
+            // zkVM guests target rv64im: drop the C, A, F and D extensions at
+            // the instruction-set level. Losing F/D flips ilc and the JIT into
+            // the lp64 soft-float ABI + soft-float lowering; C and A stop
+            // compressed/atomic emission through the same instruction-set
+            // mechanism as the EnableRiscV64* knobs passed below.
+            if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
+            {
+                // Only the extensions this compiler package models can be
+                // negated (.NET 10 knows no Zbs/Zicond); probe each one.
+                var reduced = new List<string>();
+                foreach (string ext in new[] { "c", "a", "f", "d", "zba", "zbb", "zbs", "zicond" })
+                {
+                    if (new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet(ext))
+                        reduced.Add("-" + ext);
+                }
+                string reducedIsa = string.Join(",", reduced);
+                isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
+            }
+        }
+
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
 
+        // Soft-float mode: a riscv64 target without the F or D extension.
+        // Resolved reflectively: the enum members only exist in compiler
+        // packages that model F/D/C/A (see riscvIsaAware); on older packages
+        // this stays false and the ISA-derived behaviour of that package applies.
+        bool zkSoftFloat = false;
+        if (riscvIsaAware)
+        {
+            foreach (var extName in new[] { "RiscV64_F", "RiscV64_D" })
+            {
+                var extField = typeof(Internal.JitInterface.InstructionSet).GetField(extName);
+                if (extField != null)
+                {
+                    var extSet = (Internal.JitInterface.InstructionSet)extField.GetValue(null);
+                    zkSoftFloat |= !instructionSetSupport.IsInstructionSetSupported(extSet);
+                }
+            }
+        }
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
+        if (zkSoftFloat)
+        {
+            // The ABI is a property of the target, not of the instruction set: the
+            // compiler selects the lp64 (soft-float) calling convention, the JIT flag
+            // and the ELF float-ABI marker from TargetAbi, which the runtime, libm and
+            // compiler-rt of the zkVM toolchains (all built with -mabi=lp64) match.
+            // Resolved reflectively like the instruction sets above; on packages
+            // without the member the ISA-derived flag of that package applies.
+            if (Enum.TryParse(typeof(TargetAbi), "NativeAotRiscV64SoftFloat", out object softAbi))
+                targetAbi = (TargetAbi)softAbi;
+        }
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         var ms = new MemoryStream();
 
@@ -1437,6 +1496,17 @@ internal class BuildCommand : CommandBase
             backendOptions.Add(noUnaligned
                 ? "JitNoUnalignedAccess=1"
                 : "JitNoUnalignedAccess=0");
+            // Strict alignment (dotnet-riscv fixup: JitRiscV64StrictAlign) goes one step
+            // further for the executors that reject any misaligned access: every scalar
+            // load/store and unrolled block copy whose address the JIT cannot prove
+            // aligned (byrefs into spans, Unsafe.As reinterpretation, pointer arithmetic)
+            // gets an inline alignment test with a wide fast path and a byte-wise slow
+            // path. Accesses through object references, array elements, stack locals and
+            // statics are provably aligned and stay single instructions. A JIT built
+            // without the fixup ignores the unknown knob.
+            backendOptions.Add((libc == "sp1" || libc == "openvm")
+                ? "JitRiscV64StrictAlign=1"
+                : "JitRiscV64StrictAlign=0");
         }
 
         builder
@@ -1903,7 +1973,17 @@ internal class BuildCommand : CommandBase
                  * ZisK is deliberately excluded and keeps musl's real
                  * primitives: its decoder is happy with the A extension. */
                 if (libc == "sp1" || libc == "openvm")
+                {
                     ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nothread.o")}\" ");
+                    /* noos: the OS surface the runtime's Unix PAL reaches for.
+                     * PalUnix.cpp.o is linked whole because RhFailFast pulls
+                     * it, and libSystem.Native's pal_io comes with it, so 150
+                     * libc entry points go live and drag 96 members of musl in
+                     * - crash dumps, dlopen, CPU counting, directory walking.
+                     * None can be serviced here. Same rule as nothread: this
+                     * works by definition, so it must precede libc.a. */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "noos.o")}\" ");
+                }
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
                 // The zkVM stack is linked with the soft-float (lp64) ABI
                 // marker (see PatchRiscvAbi on crt1.o/crti.o above). The
@@ -2086,6 +2166,30 @@ internal class BuildCommand : CommandBase
                 outputFilePath + " " + patchedFilePath +
                 patchElfArgs,
                 printCommands);
+        }
+
+        if (libc == "sp1" && exitCode == 0)
+        {
+            /* SP1 transpiles every word of every executable segment before it
+             * runs anything and faults on the first one it cannot decode.
+             * Two encodings the toolchain leaves behind are unreachable but
+             * fatal there: FENCE (maps to an illegal instruction in SP1's
+             * transpiler; a single-hart guest has nothing to order anyway)
+             * and the all-zero alignment padding ILC puts between methods.
+             * Rewrite both to NOP, in place: the sp1 artifact keeps its name. */
+            string sp1PatchedPath = outputFilePath + ".sp1patched";
+            int patchExitCode = RunCommand(patchElfPath,
+                outputFilePath + " " + sp1PatchedPath + " --nop-fences --nop-zero-words ",
+                printCommands);
+            if (patchExitCode == 0 && File.Exists(sp1PatchedPath))
+            {
+                File.Move(sp1PatchedPath, outputFilePath, true);
+            }
+            else
+            {
+                Console.Error.WriteLine("error: patch_elf --nop-fences --nop-zero-words failed for the sp1 image");
+                exitCode = patchExitCode != 0 ? patchExitCode : 1;
+            }
         }
 
         // Exact whole-image ISA verification: decode the linked binary and fail
