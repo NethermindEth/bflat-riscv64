@@ -29,7 +29,15 @@ MEMORY {
    * cell at 0xbffefff8 with no relocation, so the RAM window must end at
    * 0xbfff0000 for inline- and helper-allocated objects to share one heap.
    */
-  rom   (rxa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
+  /* The code base must stay BELOW 2^31. SP1's JIT indexes its jump table with
+   * `sub reg, pc_base as i32` (sp1-jit backends/x86 jump_to_pc): a base of
+   * 0x80000000 wraps to a negative immediate, the subtraction becomes an
+   * addition, and the very first indirect jump reads far past the table and
+   * faults (the native executor reports "invalid memory access for opcode ld
+   * and address 0"; the portable executor is unaffected, which is why this only
+   * shows up on x86_64 Linux hosts). 0x7a000000 keeps the image above SP1's
+   * STACK_TOP (0x78000000) and the length keeps it under the 2^31 ceiling. */
+  rom   (rxa) : ORIGIN = 0x7a000000, LENGTH = 0x06000000
   ram   (rwxa): ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
 }
 
