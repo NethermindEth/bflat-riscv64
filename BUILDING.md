@@ -119,9 +119,14 @@ shim that marshals the t3/t4/t5 register convention the C ABI cannot
 express, built twice — once per `BFLAT_DOTNET` contract — so the
 version-dependent write-barrier behaviour is pinned from both sides.
 Every zkVM entry module — `zkvm_zisk`, `zkvm_zisk_sim`, `zkvm_sp1`,
-`zkvm_openvm` — has its `_start` checked for the handoff to
-`__libc_start_main`: managed entry point, `argc == 1`, `argv[0] == "app"`,
-NULL terminator, and sp inside the guest stack.
+`zkvm_openvm` — has its `_start` checked for the handoff it actually makes:
+`__libc_start_main` for the Zisk pair, `noos_start_main` for OpenVM, and
+sp1-zkvm's `__start` for SP1, whose .NET side is then reached through
+`__wrap_main` → `noos_main`. Each build checks the managed entry point,
+`argc == 1`, `argv[0] == "app"`, the NULL terminator, and that sp and gp
+point at the linker-script symbols; the SP1 and OpenVM builds additionally
+check that `__wrap_main` returns `noos_main`'s value (SP1 halts with it) and
+that `syscall_keccak_f` tail-calls the target's own permutation name.
 
 **Fuzzing.** pal's hand-written `vfprintf` parser and the bump-allocator
 family are fuzzed on the host with ASan+UBSan; the allocator target drives

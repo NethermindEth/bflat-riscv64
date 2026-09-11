@@ -283,8 +283,21 @@ When the binary starts (real, simulated, or proven), the entry point is
 
 1. Set `gp` to `_global_pointer` and `sp` to `_init_stack_top` (both
    provided by the linker script).
-2. Tail-call `__libc_start_main(uBootstrap_main, 1, argv_vec, …)`.
-3. `uBootstrap_main` (in `modules/ubootstrap/module.cpp`) calls
+2. Call the target's start-up routine with `argc == 1` and
+   `argv == {"app", NULL}`:
+   - **Zisk, zisk_sim** — `__libc_start_main(uBootstrap_main, …)`, musl's own.
+   - **OpenVM** — `noos_start_main` (`modules/noos`), which replaces musl's
+     start-up wholesale: it exists to parse an auxv this guest does not have,
+     and costs 126 instructions the transpiler would have to accept.
+   - **SP1** — sp1-zkvm's `__start`, which must not be bypassed: it
+     initialises the Rust allocator and the public-values hasher that
+     `syscall_write` and `syscall_halt` depend on, then calls `main`. `main`
+     here is the entry module's `__wrap_main`, which calls `noos_main` — the
+     returning half of `noos_start_main` — and hands its result back, because
+     SP1 halts with it.
+3. `noos_start_main`/`noos_main` (and `__libc_start_main` on Zisk) set the
+   thread pointer, run `.init_array` and enter `uBootstrap_main`.
+4. `uBootstrap_main` (in `modules/ubootstrap/module.cpp`) calls
    `RhInitialize`, registers the managed-code range, runs all module
    initialisers, then jumps into `__managed__Main` — i.e., the C# `Main`.
 
