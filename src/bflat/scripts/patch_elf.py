@@ -35,6 +35,22 @@ def prepare_parser():
         default=False,
     )
     parser.add_argument(
+        "--nop-fences",
+        help="Rewrite every FENCE/FENCE.I (opcode 0x0f) word in .text to NOP. Single-hart "
+             "zkVMs have no memory ordering to enforce, and SP1's transpiler maps FENCE to an "
+             "illegal instruction that faults when executed",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--nop-zero-words",
+        help="Rewrite every all-zero word in .text to NOP. Zero is not an encoding; it only "
+             "appears as alignment padding between functions, which SP1 rejects when it "
+             "transpiles the whole segment up front",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--split-code-data",
         help="Nullify all data in .text section, make a cloned .text_overlay with data+code",
         action="store_true",
@@ -451,6 +467,20 @@ if args.split_code_data:
 elif args.print_fn_boundaries:
     # still allow printing boundaries without modifying the binary
     _ = find_fn_boundaries(args, print_report=True)
+if args.nop_fences or args.nop_zero_words:
+    text, text_data = get_text_data(args, elf)
+    NOP = (0x13).to_bytes(4, "little")
+    fences = zeros = 0
+    for off in range(0, len(text_data) - 3, 4):
+        word = text_data[off:off + 4]
+        if args.nop_fences and (word[0] & 0x7F) == 0x0F:
+            text_data[off:off + 4] = NOP
+            fences += 1
+        elif args.nop_zero_words and word == b"\0\0\0\0":
+            text_data[off:off + 4] = NOP
+            zeros += 1
+    text.content = list(text_data)
+    print(f"nop-rewrites: {fences} fence(s), {zeros} zero word(s)")
 if args.remove_eh:
     elf.remove_section(".dotnet_eh_table", clear=False)
     elf.remove_section(".eh_frame_hdr", clear=False)
