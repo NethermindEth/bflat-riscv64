@@ -55,12 +55,13 @@ the `net10.0` build where only the .NET 11 runtime is installed, set
 
 Two variants differ in which runtime release gets bundled:
 
-- `perf` — performance-oriented runtime
-- `min` — minimal runtime
+- `perf` — the upstream series plus the zkVM code-quality patches
+  (dotnet-riscv `*-upstream-perf` releases)
+- `min` — the upstream series only (`*-upstream` releases)
 
 The mapping lives in `src/bflat/bflat.variant.props`, and `bflat --info`
 prints the bundled version. Select with the `Variant` property (default:
-`perf` for .NET 10, `min` for .NET 11):
+`perf`):
 
 ```bash
 $ dotnet build src/bflat/bflat.csproj -p:Variant=min
