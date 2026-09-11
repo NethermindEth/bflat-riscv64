@@ -206,7 +206,14 @@ SECTIONS
   /* Stack grows down from _init_stack_top, carved out of RAM above .bss just
    * as on ZisK. With deep NativeAOT call chains (TypeLoader, cctor recursion)
    * 1 MiB overflowed into .bss; 4 MiB gives ample headroom. */
-  PROVIDE(_init_stack_top     = . + 0x400000);
+  /* The location counter is ADVANCED past the stack, not just annotated:
+   * OpenVM's own bump allocator (openvm_platform::memory::sys_alloc_aligned,
+   * which the bindings library keeps for its Rust side) starts its heap at
+   * _end and grows upward. With _end at the top of .bss the first sizeable
+   * allocation - the input buffer read_input copies - ran straight through
+   * the stack. _end now sits above it. */
+  . = . + 0x400000;
+  PROVIDE(_init_stack_top     = .);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
    * FIXED-address cell holding the downward bump pointer, so the JIT can

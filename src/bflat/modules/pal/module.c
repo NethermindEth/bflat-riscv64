@@ -669,6 +669,9 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 
     return total;
 }
+extern char __zkvm_target_sp1 __attribute__((weak));
+extern char __zkvm_target_openvm __attribute__((weak));
+
 
 extern long __real_syscall(long number, ...);
 
@@ -699,6 +702,13 @@ __wrap_syscall(long number, ...)
             return 0;
 
         default:
+            /* SP1 has no Linux syscalls (an unknown id is a hard executor
+             * error) and OpenVM has no ecall at all, so a passthrough would
+             * end the guest; the callers (NUMASupportInitialize's
+             * get_mempolicy, membarrier probes) all cope with a failure. ZisK
+             * emulates Linux syscalls, keep the passthrough there. */
+            if (&__zkvm_target_sp1 || &__zkvm_target_openvm)
+                return -1;
             return __real_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
     }
 }
@@ -711,8 +721,6 @@ __wrap_syscall(long number, ...)
  * ZisK and the ZisK simulator, plus the host test/fuzz builds - means the
  * ZisK protocol, so those targets are bit-for-bit unaffected. The addresses
  * are never dereferenced. */
-extern char __zkvm_target_sp1 __attribute__((weak));
-extern char __zkvm_target_openvm __attribute__((weak));
 
 /* SP1's own halt, from libzkevm (the zkEVM SDK repackaged as the bflat-sp1
  * bindings library). It commits the RUNNING public-values digest - the hash
@@ -720,6 +728,13 @@ extern char __zkvm_target_openvm __attribute__((weak));
  * halts. Weak, because a guest that links no bindings package does not have
  * it; see zkvm_raw_exit for why that case is still correct. */
 extern void zkvm_halt(unsigned char exit_code) __attribute__((weak));
+
+/* OpenVM's custom-0 instructions (TERMINATE, the PrintStr phantom) live in
+ * modules/zkvm_openvm/module.S, so that no other target's image carries an
+ * encoding it cannot decode (SP1 transpiles every word of .text up front and
+ * rejects custom opcodes). Weak: only the OpenVM entry module defines them. */
+extern void zkvm_openvm_terminate(long code) __attribute__((weak, noreturn));
+extern void zkvm_openvm_print(const char *buf, long len) __attribute__((weak));
 
 #if defined(__riscv)
 /* SP1 (sp1/crates/zkvm/entrypoint/src/syscalls/mod.rs): the syscall id goes
@@ -805,10 +820,8 @@ zkvm_raw_exit(long code)
         register long a0 __asm__("a0") = code & 0xff;
         __asm__ volatile("ecall" : : "r"(t0), "r"(a0) : "memory");
     } else if (&__zkvm_target_openvm) {
-        if (code == 0)
-            __asm__ volatile(".insn i 0x0b, 0, x0, x0, 0" : : : "memory");
-        else
-            __asm__ volatile(".insn i 0x0b, 0, x0, x0, 1" : : : "memory");
+        if (zkvm_openvm_terminate)
+            zkvm_openvm_terminate(code);
     } else {
         register long a0 __asm__("a0") = code;
         register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
@@ -855,8 +868,8 @@ zkvm_console_write(int fd, const char *buf, int len)
                              : : "r"(t0), "r"(a0), "r"(a1), "r"(a2)
                              : "memory");
         } else if (&__zkvm_target_openvm) {
-            __asm__ volatile(".insn i 0x0b, 3, %0, %1, 1"
-                             : : "r"(buf), "r"(len) : "memory");
+            if (zkvm_openvm_print)
+                zkvm_openvm_print(buf, len);
         }
     }
 #else
@@ -864,6 +877,18 @@ zkvm_console_write(int fd, const char *buf, int len)
     (void)buf;
 #endif
     return len;
+}
+
+/* Nethermind.Zkvm.Abstractions binds its console (IO.PrintLine) to
+ * sys_write(fd, buf, len). ziskos and the SP1 bindings export one; the
+ * OpenVM bindings do not, and the link fails. Weak, so a bindings library
+ * that does define it keeps its own. */
+/*@ requires nbytes <= 0x7fffffff; requires \valid_read(buf + (0 .. nbytes - 1));
+    assigns \nothing; */
+__attribute__((weak)) void
+sys_write(unsigned int fd, const unsigned char *buf, unsigned long nbytes)
+{
+    zkvm_console_write((int)fd, (const char *)buf, (int)nbytes);
 }
 
 /*@ assigns \nothing;

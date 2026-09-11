@@ -73,3 +73,8 @@ options:
     # SystemNative_Write wrap in rhp, so nothing is lost.
     - value: --wrap=__stdio_write
       libc: [zisk, sp1, openvm]
+    # SP1 enters through sp1-zkvm's __start, which calls main(); the guest's
+    # main is the entry module's __wrap_main (zkvm_sp1/module.S), not the
+    # desktop bootstrapper's.
+    - value: --wrap=main
+      libc: sp1
