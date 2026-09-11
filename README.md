@@ -63,8 +63,10 @@ they differ in the entry point, the memory map and the halt protocol.
   (branch `develop-v2.1.0-rv64`; `main` is still RV32 and rejects a 64-bit
   ELF). Invoke with `--libc openvm`.
 
-SP1 and OpenVM are newer than the Zisk pair and have not been run end to end
-yet; see [docs/modules.md](docs/modules.md) for what each still needs.
+All four targets run end to end: Nethermind's stateless guest executes the
+nine mainnet blocks of its `stateless-tests` suite on Zisk, SP1 and OpenVM
+alike, with matching output. See [docs/modules.md](docs/modules.md) for each
+target's memory map, entry sequence and exit protocol.
 
 Bflat itself builds against .NET 10 or .NET 11; see
 [BUILDING.md](BUILDING.md) for the version and variant matrix.
