@@ -222,12 +222,22 @@ sigemptyset(void *set)
     return 0;
 }
 
-/*@ assigns \nothing; ensures \result == 0; */
+/* musl's sigset_t is a bit array, one bit per signal, bit (sig-1) first.
+ * Nothing in the guest ever reads the set back - pal's __wrap_sigaction
+ * discards it - but a stub that quietly dropped the signal would be a lie
+ * the next reader of this file would have to re-derive, and the honest
+ * version is four lines. */
+/*@ requires 1 <= sig <= 1024;
+    requires \valid((unsigned long *)set + ((sig - 1) / 64));
+    assigns ((unsigned long *)set)[(sig - 1) / 64];
+    ensures \result == 0; */
 int
 sigaddset(void *set, int sig)
 {
-    (void)set;
-    (void)sig;
+    unsigned long *bits = (unsigned long *)set;
+    unsigned       n    = (unsigned)(sig - 1);
+
+    bits[n / (8u * sizeof(unsigned long))] |= 1UL << (n % (8u * sizeof(unsigned long)));
     return 0;
 }
 
@@ -677,13 +687,16 @@ extern void *__wrap___init_tls(unsigned long *aux);
 extern void (*__init_array_start[])(void);
 extern void (*__init_array_end[])(void);
 
-/*@ // Runs the constructors and the guest, then terminates - exit() resolves
-    // to the PAL's __wrap_exit, the target's real halt sequence, so control
-    // never comes back.
+/*@ // Initialises the thread pointer, runs the constructors and calls the
+    // guest. Unlike noos_start_main this one RETURNS: the caller decides how
+    // the program ends (SP1's own runtime halts with this value).
+    //
+    // The contract stays weak on purpose. The constructor loop calls through
+    // function pointers the linker script collects, and uBootstrap_main enters
+    // the managed runtime, so what is assigned is not expressible here; the
+    // frames those touch are owned by the runtime, not by this module.
     assigns \nothing;
-    ensures \false;
 */
-/*@ assigns \nothing; */
 int
 noos_main(int argc, char *argv[])
 {
@@ -702,6 +715,12 @@ noos_main(int argc, char *argv[])
 /* Targets whose own runtime wants to own the entry (SP1: its __start
  * initialises the allocator and public-values hasher, calls main and halts)
  * enter through noos_main and return; the rest exit here. */
+/*@ // Runs the guest and then terminates - exit() resolves to the PAL's
+    // __wrap_exit, the target's real halt sequence, so control never comes
+    // back.
+    assigns \nothing;
+    ensures \false;
+*/
 __attribute__((noreturn))
 void
 noos_start_main(int argc, char *argv[])
