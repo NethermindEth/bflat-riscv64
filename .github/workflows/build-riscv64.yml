@@ -183,11 +183,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # perf blobs are not published for .NET 11 yet (see ValidateVariant in
-          # bflat.csproj), so the perf leg stays on .NET 10; .NET 11 ships as
-          # the separate -11-min image. sdk is the SDK baked into the image and
-          # must match the leg's dotnet major (an SDK only carries its own
-          # major's runtime).
+          # sdk is the SDK baked into the image and must match the leg's
+          # dotnet major (an SDK only carries its own major's runtime). The
+          # runtime release each leg bundles is picked in bflat.variant.props.
           - variant: perf
             dotnet: "10"
             sdk: 10.0.302
@@ -196,6 +194,10 @@ jobs:
             dotnet: "10"
             sdk: 10.0.302
             image: nethermindeth/bflat-riscv64-min
+          - variant: perf
+            dotnet: "11"
+            sdk: 11.0.100-preview.6.26359.118
+            image: nethermindeth/bflat-riscv64-11
           - variant: min
             dotnet: "11"
             sdk: 11.0.100-preview.6.26359.118

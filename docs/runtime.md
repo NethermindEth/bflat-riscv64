@@ -130,12 +130,14 @@ from two properties in
 
 - **`DotnetVersion`** (`10` or `11`) selects the .NET line;
 - **`Variant`** (`perf` or `min`) selects which runtime build gets bundled —
-  the performance-oriented one or the minimal one, mirroring the fixup
-  profiles of the same names.
+  `min` is the upstream series alone (the `upstream` fixup profile), `perf`
+  adds the zkVM code-quality patches on top (`upstream-perf`).
 
-Together they form the release tag (`v10.0.0.p3`, `v11.0.0.x8`, …). Tags
-move as releases are cut and the blob cache is keyed by them, so switching
-variant or .NET version re-downloads.
+Together they resolve to a release tag — the SDK version of the VMR the
+runtime was built from plus the profile (`10.0.113-upstream-perf`,
+`11.0.100-rc.2.26460.199-upstream`, …). Tags move as releases are cut and
+the blob cache is keyed by them, so switching variant or .NET version
+re-downloads.
 
 At build time the archives land in `lib/<os>/<arch>/<libc>` next to the
 bflat binary; when you run `bflat build`, those files are what the driver

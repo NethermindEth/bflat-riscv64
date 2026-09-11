@@ -40,15 +40,11 @@ case $dotnet_version in
 esac
 
 # Compiler variant: which runtime blob release gets bundled.
-#   perf -> performance-oriented runtime
-#   min  -> minimal runtime
-# Default: perf, except .NET 11 where only min blobs are published so far.
+#   perf -> the upstream series plus the zkVM code-quality patches (upstream-perf)
+#   min  -> the upstream series only (upstream)
+# Default: perf. The release tag each resolves to lives in bflat.variant.props.
 if [ "$variant" == "" ] ; then
-	if [ "$dotnet_version" == "11" ] ; then
-		variant="min"
-	else
-		variant="perf"
-	fi
+	variant="perf"
 fi
 case $variant in
 	perf|min) ;;

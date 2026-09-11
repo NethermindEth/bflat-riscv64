@@ -6,10 +6,8 @@
   </PropertyGroup>
 
   <!-- Compiler build variants: which runtime/blob release gets bundled.
-       Select with -p:Variant=perf|min. Default: perf, except .NET 11 where
-       only min blobs are published so far. -->
+       Select with -p:Variant=perf|min. Default: perf. -->
   <PropertyGroup>
-    <Variant Condition="'$(Variant)' == '' and '$(DotnetVersion)' == '11'">min</Variant>
     <Variant Condition="'$(Variant)' == ''">perf</Variant>
   </PropertyGroup>
 
@@ -37,18 +35,21 @@
     <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
     <RuntimeVersion Condition="'$(DotnetVersion)' == '11'">10.0.0</RuntimeVersion>
 
-    <!-- Base of the release tag (v$(RuntimeReleaseVersion)$(postfix)). -->
-    <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeReleaseVersion>
-    <RuntimeReleaseVersion Condition="'$(DotnetVersion)' == '11'">11.0.0</RuntimeReleaseVersion>
+    <!-- dotnet-riscv release tag per .NET line and variant. The tag is the
+         SDK version of the VMR the runtime was built from plus the fixup
+         profile: "upstream" is the soft-float (lp64/rv64im) series meant for
+         dotnet/runtime, "upstream-perf" adds the zkVM code-quality patches
+         on top. min -> upstream, perf -> upstream-perf. -->
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.113-upstream-perf.r301</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">10.0.113-upstream</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rc.2.26461.199-upstream-perf.r307</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rc.2.26459.199-upstream</RuntimeReleaseTag>
 
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">.p4</RuntimeVersionPostfix>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">.x10</RuntimeVersionPostfix>
-    <RuntimeVersionPostfix Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">.x9</RuntimeVersionPostfix>
-
-    <!-- Full runtime release tag. RuntimeVersion stays the plain NuGet
-         version: every release ships bflat.compiler.$(RuntimeVersion).nupkg,
-         so anything cached per-release must be keyed by BlobsVersion. -->
-    <BlobsVersion>$(RuntimeReleaseVersion)$(RuntimeVersionPostfix)</BlobsVersion>
+    <!-- Cache key for everything fetched per release. RuntimeVersion stays
+         the plain NuGet version: every release ships
+         bflat.compiler.$(RuntimeVersion).nupkg, so anything cached
+         per-release must be keyed by BlobsVersion, not RuntimeVersion. -->
+    <BlobsVersion>$(RuntimeReleaseTag)</BlobsVersion>
     <MicrosoftCodeAnalysisCSharpVersion>4.8.0-3.final</MicrosoftCodeAnalysisCSharpVersion>
   </PropertyGroup>
 
