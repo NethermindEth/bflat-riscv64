@@ -183,17 +183,27 @@ prepare_zkvm_obj()
 
 # _start for every zkvm target: the linker-script symbols it dereferences
 # (_init_stack_top, _global_pointer) are pointed at real arrays in the test.
-# The halt sequence after __libc_start_main is never reached - the stub exits
+# The halt sequence after the start-up call is never reached - the stub exits
 # first - so the targets' differing exit protocols do not need emulating.
+#
+# The three targets hand off differently, and the test needs to know which
+# stub to expect: zisk/zisk_sim call __libc_start_main, openvm calls
+# noos_start_main, sp1 calls sp1-zkvm's __start (and reaches the .NET side
+# later, through __wrap_main -> noos_main).
 STACK_TOP="zkvm_test_stack+65536"
 for m in zkvm_zisk zkvm_zisk_sim zkvm_sp1 zkvm_openvm ; do
+	case "${m}" in
+	zkvm_sp1)    entry="-DZKVM_ENTRY_SP1=1"  ;;
+	zkvm_openvm) entry="-DZKVM_ENTRY_NOOS=1" ;;
+	*)           entry="-DZKVM_ENTRY_LIBC=1" ;;
+	esac
 	if ! obj="$(prepare_zkvm_obj "${m}")" ; then
 		echo "BUILD FAIL: ${m} asm"
 		failures=$((failures + 1))
 		continue
 	fi
 	run_one "test_start_${m}" \
-		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" \
+		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" ${entry} \
 		"${TESTS_DIR}/test_zkvm_start.c" "${obj}" \
 		-Wl,--defsym,_init_stack_top=${STACK_TOP} \
 		-Wl,--defsym,_global_pointer=zkvm_test_gp
