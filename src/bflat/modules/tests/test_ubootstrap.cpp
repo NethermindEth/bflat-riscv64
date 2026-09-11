@@ -74,12 +74,22 @@ extern "C" void InitializeModules(void *osModule, void **modules, int count,
 }
 
 static char fake_module_handle;
-/* C++ linkage: the module declares this one WITHOUT extern "C". */
+/* C++ linkage: the module declares this one WITHOUT extern "C". The
+ * signature follows the .NET line (see module.cpp). */
+#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+void *PalGetModuleHandleFromPointer(void *pointer, bool pinModule)
+{
+    (void)pointer;
+    (void)pinModule;
+    return &fake_module_handle;
+}
+#else
 void *PalGetModuleHandleFromPointer(void *pointer)
 {
     (void)pointer;
     return &fake_module_handle;
 }
+#endif
 
 /* The classlib exports whose addresses the module tables up. */
 #define STUB(n) \
