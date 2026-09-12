@@ -310,7 +310,7 @@ internal static class IsaVerifier
                     ReadSleb(elf, ref p); // data alignment
                     if (version == 1) p++; else ReadUleb(elf, ref p); // return register
                     byte fdeEnc = 0; // DW_EH_PE_absptr
-                    bool z = aug.StartsWith("z");
+                    bool z = aug.StartsWith('z');
                     if (z)
                     {
                         ReadUleb(elf, ref p); // augmentation data length
