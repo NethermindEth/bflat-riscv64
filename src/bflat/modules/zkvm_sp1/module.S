@@ -33,6 +33,13 @@ argv_vec:
     .dword app_str
     .dword 0
 
+/* sp1-zkvm's runtime entry, or 0 when no bindings library is linked. See the
+ * note in _start for why the address is materialised from .data. */
+.weak __start
+    .balign 8
+sp1_start_ptr:
+    .dword __start
+
 /* Nethermind's KeccakHash reaches the permutation through
  * Accelerators.KeccakF, whose binding is named for ziskos: syscall_keccak_f.
  * SP1 spells the same operation zkvm_keccak_permute and OpenVM zkvm_keccakf -
@@ -72,14 +79,34 @@ _start:
      * public-values hasher that syscall_write / syscall_halt depend on, calls
      * main() and halts with main's return value through the full commit
      * protocol. Bypassing it left both uninitialised: the first Rust
-     * allocation in the bindings failed and write_output faulted. */
-    call    __start
+     * allocation in the bindings failed and write_output faulted.
+     *
+     * WEAK, because a guest built without --extlib links no bindings library
+     * and has no __start at all - the sample guests in CI are exactly that.
+     * There is nothing to initialise in that case (the Rust allocator and the
+     * public-values stream both live in the bindings), so the fallback enters
+     * the .NET start-up directly and lets pal's zkvm_raw_exit issue the
+     * open-coded commit-and-halt sequence it keeps for this case.
+     *
+     * The address is taken through a word in .data rather than `la`: a
+     * PC-relative reference to an undefined weak symbol resolves to absolute
+     * 0 and overflows the auipc/addi pair. */
+    la      t0, sp1_start_ptr
+    ld      t0, 0(t0)
+    beqz    t0, 2f
+    jalr    t0
     # Unreachable: __start never returns. Kept as a backstop - a bare HALT
     # ecall (syscall id in t0, exit code in a0).
     li      t0, 0            # SP1 HALT
     li      a0, 0
     ecall
 1:  j       1b               # loop forever
+2:  /* No bindings library: uBootstrap_main is reached the way OpenVM reaches
+     * it, and termination goes through pal. */
+    li      a0, 1            # argc = 1
+    la      a1, argv_vec     # argv = &argv_vec[0]
+    call    noos_start_main
+3:  j       3b               # noos_start_main never returns
     .cfi_endproc
     .size   _start, .-_start
 

@@ -149,7 +149,14 @@ void noos_start_main(int argc, char *argv[])
  * with no arguments. It is the allocator/hasher set-up that the guest
  * must not bypass; all the test can check is that _start handed it a
  * working sp/gp. The real one calls main(); the __wrap_main leg below
- * covers that half. */
+ * covers that half.
+ *
+ * Left UNDEFINED in the ZKVM_ENTRY_SP1_NOBIND build, which is the guest
+ * built without --extlib: __start lives in the bindings library, so the
+ * module's reference to it is weak and _start must fall back to
+ * noos_start_main rather than fail the link. That fallback is what this
+ * second binary exercises. */
+#ifndef ZKVM_ENTRY_SP1_NOBIND
 void __start(void)
 {
     if (!gp_ok(read_gp()))
@@ -159,6 +166,7 @@ void __start(void)
 
     _exit(OK);
 }
+#endif /* !ZKVM_ENTRY_SP1_NOBIND */
 
 /* Stand-in for noos_main (sp1): the RETURNING half of the .NET start-up.
  * Called from the module's __wrap_main, in-process, so it records rather
