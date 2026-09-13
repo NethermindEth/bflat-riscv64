@@ -40,7 +40,7 @@
          profile: "upstream" is the soft-float (lp64/rv64im) series meant for
          dotnet/runtime, "upstream-perf" adds the zkVM code-quality patches
          on top. min -> upstream, perf -> upstream-perf. -->
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.113-upstream-perf.r316</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.113-upstream-perf.r318</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">10.0.113-upstream.r311</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rc.2.26461.199-upstream-perf.r310</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rc.2.26461.199-upstream</RuntimeReleaseTag>
