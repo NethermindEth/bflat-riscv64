@@ -154,13 +154,11 @@ typedef struct
 #define RHP_S_IFCHR 0020000 /* character device, per <sys/stat.h> */
 
 /*@ // Answers for the three standard descriptors and fails for everything
-    // else. The guest has no file system, so any other descriptor is a bug in
-    // the caller rather than a question worth answering.
-    requires alid((char *)output + (0 .. sizeof(rhp_file_status) - 1));
-    assigns *(rhp_file_status *)output;
-    ensures 
-esult == 0 || 
-esult == -1;
+    // else. The guest has no file system, so any other descriptor is a bug
+    // in the caller rather than a question worth answering.
+    requires \valid(((char *)output) + (0 .. sizeof(rhp_file_status) - 1));
+    assigns ((char *)output)[0 .. sizeof(rhp_file_status) - 1];
+    ensures \result == 0 || \result == -1;
 */
 int32_t __wrap_SystemNative_FStat(intptr_t fd, void *output)
 {
