@@ -50,17 +50,38 @@ extern void exit(int status) __attribute__((noreturn));
  * 253 is this one (asked the operating system for something). */
 #define NOOS_EXIT_STATUS 253
 
-/*@ // Single abort policy for every unsupported operation: terminate with
-    // status 253, never return. exit() resolves to the PAL's __wrap_exit -
-    // the target's real termination sequence - in the zkVM link.
+/* pal's guest console, when the target has one. Weak: noos.o is linked and
+ * unit tested without pal, and ZisK's console is a no-op device. */
+extern int zkvm_console_write(int fd, const char *buf, int len) __attribute__((weak));
+
+/*@ // Single abort policy for every unsupported operation: name the call,
+    // then terminate with status 253, never return. exit() resolves to the
+    // PAL's __wrap_exit - the target's real termination sequence - in the
+    // zkVM link.
     assigns \nothing;
     ensures \false;
     exits \exit_status == NOOS_EXIT_STATUS;
 */
 __attribute__((noreturn, noinline, cold))
 static void
-noos_trap(void)
+noos_trap(const char *what)
 {
+    /* Worth the handful of instructions on a cold path: without it the guest
+     * dies with a bare 253 and finding which of ~150 calls it was means
+     * bisecting the program. OpenVM makes that worse - its TERMINATE takes an
+     * immediate, so every non-zero status arrives at the host as 1. */
+    if (zkvm_console_write && what != 0)
+    {
+        int len = 0;
+
+        while (what[len] != '\0')
+            len++;
+
+        zkvm_console_write(2, "noos: unsupported OS call: ", 27);
+        zkvm_console_write(2, what, len);
+        zkvm_console_write(2, "\n", 1);
+    }
+
     exit(NOOS_EXIT_STATUS);
 }
 
@@ -78,7 +99,7 @@ noos_trap(void)
     /*@ assigns \nothing; ensures \false; \
         exits \exit_status == NOOS_EXIT_STATUS; */ \
     long name(void *a, void *b, void *c, void *d, void *e, void *f) \
-    { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; noos_trap(); }
+    { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; noos_trap(#name); }
 
 /* --- processes (PalCreateDump: crash dumps) ------------------------------ */
 NOOS_TRAP(fork)
@@ -183,15 +204,15 @@ void *fopen(const char *path, const char *mode)
 
 /*@ assigns \nothing; ensures \false; exits \exit_status == NOOS_EXIT_STATUS; */
 int fprintf(void *stream, const char *fmt, ...)
-{ (void)stream; (void)fmt; noos_trap(); }
+{ (void)stream; (void)fmt; noos_trap(__func__); }
 
 /*@ assigns \nothing; ensures \false; exits \exit_status == NOOS_EXIT_STATUS; */
 int fscanf(void *stream, const char *fmt, ...)
-{ (void)stream; (void)fmt; noos_trap(); }
+{ (void)stream; (void)fmt; noos_trap(__func__); }
 
 /*@ assigns \nothing; ensures \false; exits \exit_status == NOOS_EXIT_STATUS; */
 char *strerror(int errnum)
-{ (void)errnum; noos_trap(); }
+{ (void)errnum; noos_trap(__func__); }
 
 #pragma clang diagnostic pop
 

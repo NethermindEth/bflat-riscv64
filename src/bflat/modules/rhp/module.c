@@ -8,6 +8,7 @@
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -128,6 +129,91 @@ int __wrap_SystemNative_Write(int fd, const void* buffer, int bufferSize)
     if (zkvm_console_write && bufferSize > 0)
         zkvm_console_write(fd, buffer, bufferSize);
     return bufferSize;
+}
+
+/* FileStatus as libSystem.Native defines it (src/native/libs/System.Native/
+ * pal_io.h). Only Flags and Mode are read on the path this wrapper exists for,
+ * but the whole struct is written so no field is left holding stack garbage. */
+typedef struct
+{
+    int32_t  Flags;
+    int32_t  Mode;
+    uint32_t Uid;
+    uint32_t Gid;
+    int64_t  Size;
+    int64_t  ATime, ATimeNsec;
+    int64_t  MTime, MTimeNsec;
+    int64_t  CTime, CTimeNsec;
+    int64_t  BirthTime, BirthTimeNsec;
+    int64_t  Dev;
+    int64_t  RDev;
+    int64_t  Ino;
+    uint32_t UserFlags;
+} rhp_file_status;
+
+#define RHP_S_IFCHR 0020000 /* character device, per <sys/stat.h> */
+
+/*@ // Answers for the three standard descriptors and fails for everything
+    // else. The guest has no file system, so any other descriptor is a bug in
+    // the caller rather than a question worth answering.
+    requires alid((char *)output + (0 .. sizeof(rhp_file_status) - 1));
+    assigns *(rhp_file_status *)output;
+    ensures 
+esult == 0 || 
+esult == -1;
+*/
+int32_t __wrap_SystemNative_FStat(intptr_t fd, void *output)
+{
+    rhp_file_status *st = (rhp_file_status *)output;
+
+    /* Console.OpenStandardOutput() asks what kind of thing stdout is before it
+     * will hand back a stream: UnixConsoleStream's constructor calls FStat and
+     * compares the mode against S_IFCHR. Left to noos, the libc fstat under
+     * this is an unserviceable OS call and terminates the guest with 253 - so
+     * the first Console.Write in a guest killed it, on every target that links
+     * noos. A character device is also the honest answer: the zkVM console is
+     * a stream of bytes with no size, no seek and no inode.
+     *
+     * Deliberately NOT delegating to the real SystemNative_FStat for other
+     * descriptors: there is nothing underneath it here. */
+    if (st == 0)
+        return -1;
+
+    for (unsigned i = 0; i < sizeof(rhp_file_status); i++)
+        ((char *)st)[i] = 0;
+
+    if (fd != 0 && fd != 1 && fd != 2)
+        return -1;
+
+    st->Mode = RHP_S_IFCHR | 0666;
+    return 0;
+}
+
+/*@ // The zkVM console is never a terminal: saying otherwise sends .NET down
+    // the termios and terminfo paths, which are far more OS than this guest
+    // has. Answering "redirected" keeps it on the plain-stream path.
+    assigns \nothing;
+    ensures \result == 0;
+*/
+int32_t __wrap_SystemNative_IsATty(intptr_t fd)
+{
+    (void)fd;
+    return 0;
+}
+
+/*@ // Hands back the descriptor it was given.
+    assigns \nothing;
+    ensures \result == oldfd;
+*/
+intptr_t __wrap_SystemNative_Dup(intptr_t oldfd)
+{
+    /* The real one is fcntl(oldfd, F_DUPFD_CLOEXEC, 0), and fcntl is an
+     * unserviceable OS call here - which is what killed the guest on the first
+     * Console.OpenStandardOutput(). There is nothing a duplicate would buy in a
+     * single-process guest with three fixed descriptors and no exec to survive,
+     * so return the same one. .NET itself takes exactly this fallback where
+     * F_DUPFD is unavailable (pal_io.c SystemNative_Dup, the WASI branch). */
+    return oldfd;
 }
 
 /* Reverse P/Invoke transition. The real CoreLib RhpReversePInvoke attaches the
