@@ -43,3 +43,14 @@ options:
       libc: [zisk, sp1, openvm]
     - value: --wrap=SystemNative_Write
       libc: [zisk, sp1, openvm]
+    # Console.OpenStandardOutput() fstats the descriptor before handing back a
+    # stream. Unwrapped, that reaches noos, which terminates the guest with 253
+    # on an OS call it cannot service - so any Console use killed the guest.
+    - value: --wrap=SystemNative_FStat
+      libc: [zisk, sp1, openvm]
+    # Dup is fcntl(F_DUPFD_CLOEXEC) underneath, and IsATty would send .NET into
+    # termios; both are answered here rather than trapped in noos.
+    - value: --wrap=SystemNative_Dup
+      libc: [zisk, sp1, openvm]
+    - value: --wrap=SystemNative_IsATty
+      libc: [zisk, sp1, openvm]
