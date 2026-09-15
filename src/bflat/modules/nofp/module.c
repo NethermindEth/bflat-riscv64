@@ -47,7 +47,7 @@ nofp_trap(void)
  * runtime's FP helpers are C compiled for an ABI without an FPU, so the
  * compiler lowers every double add in them to a call to one of these, and
  * bflat's own libgcc.a (share/bflat/lib/linux/riscv64/musl) provides all 52 of
- * them for riscv64.
+ * them for riscv64 - BuildCommand puts it on the zkVM link line after libc.a.
  *
  * They used to be trapped here, which made any guest that does arithmetic on a
  * double die with status 255 on its first operation - the module was written
