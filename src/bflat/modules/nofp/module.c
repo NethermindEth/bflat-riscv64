@@ -69,6 +69,11 @@ nofp_trap(void)
  * Each function is diverted at link time with --wrap=<fn> (see BuildCommand)
  * to a trap stub here, so the musl archive member is never extracted and a
  * stray runtime call fails loudly instead of computing garbage.
+ *
+ * fmod and fmodf are not in this list. They are not a library the guest may
+ * or may not use: they are the % operator on double and float, and the JIT
+ * lowers every such expression into a call to one. musl computes both with
+ * integer arithmetic alone, so the real implementations link and run here.
  */
 /* Same contract-in-macro arrangement as NOFP_STUB above (needs -CC). */
 #define NOFP_WRAP_STUB(name) \
@@ -103,8 +108,6 @@ NOFP_WRAP_STUB(floor)
 NOFP_WRAP_STUB(floorf)
 NOFP_WRAP_STUB(fma)
 NOFP_WRAP_STUB(fmaf)
-NOFP_WRAP_STUB(fmod)
-NOFP_WRAP_STUB(fmodf)
 NOFP_WRAP_STUB(log)
 NOFP_WRAP_STUB(logf)
 NOFP_WRAP_STUB(log10)
