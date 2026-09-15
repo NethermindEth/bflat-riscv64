@@ -42,7 +42,7 @@
          on top. min -> upstream, perf -> upstream-perf. -->
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.113-upstream-perf.r318</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">10.0.113-upstream.r311</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rc.2.26463.199-upstream-perf</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rc.2.26465.199-upstream-perf</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rc.2.26461.199-upstream</RuntimeReleaseTag>
 
     <!-- Cache key for everything fetched per release. RuntimeVersion stays
