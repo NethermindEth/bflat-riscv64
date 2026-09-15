@@ -55,12 +55,13 @@ the `net10.0` build where only the .NET 11 runtime is installed, set
 
 Two variants differ in which runtime release gets bundled:
 
-- `perf` — performance-oriented runtime
-- `min` — minimal runtime
+- `perf` — the upstream series plus the zkVM code-quality patches
+  (dotnet-riscv `*-upstream-perf` releases)
+- `min` — the upstream series only (`*-upstream` releases)
 
 The mapping lives in `src/bflat/bflat.variant.props`, and `bflat --info`
 prints the bundled version. Select with the `Variant` property (default:
-`perf` for .NET 10, `min` for .NET 11):
+`perf`):
 
 ```bash
 $ dotnet build src/bflat/bflat.csproj -p:Variant=min
@@ -117,9 +118,15 @@ The assembly modules are covered too. `rhp_native` is exercised through a
 shim that marshals the t3/t4/t5 register convention the C ABI cannot
 express, built twice — once per `BFLAT_DOTNET` contract — so the
 version-dependent write-barrier behaviour is pinned from both sides.
-`zkvm_zisk` / `zkvm_zisk_sim` `_start` is checked for its handoff to
-`__libc_start_main`: managed entry point, `argc == 1`, `argv[0] == "app"`,
-NULL terminator, and sp inside the guest stack.
+Every zkVM entry module — `zkvm_zisk`, `zkvm_zisk_sim`, `zkvm_sp1`,
+`zkvm_openvm` — has its `_start` checked for the handoff it actually makes:
+`__libc_start_main` for the Zisk pair, `noos_start_main` for OpenVM, and
+sp1-zkvm's `__start` for SP1, whose .NET side is then reached through
+`__wrap_main` → `noos_main`. Each build checks the managed entry point,
+`argc == 1`, `argv[0] == "app"`, the NULL terminator, and that sp and gp
+point at the linker-script symbols; the SP1 and OpenVM builds additionally
+check that `__wrap_main` returns `noos_main`'s value (SP1 halts with it) and
+that `syscall_keccak_f` tail-calls the target's own permutation name.
 
 **Fuzzing.** pal's hand-written `vfprintf` parser and the bump-allocator
 family are fuzzed on the host with ASan+UBSan; the allocator target drives

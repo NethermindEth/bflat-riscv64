@@ -124,6 +124,14 @@ run_one test_pal \
 run_one test_nofp \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_nofp.c" "${MOD_DIR}/nofp/module.c"
 
+# nothread: the module defines pthread_mutex_lock and friends, which glibc
+# also defines. --allow-multiple-definition lets the host link pick ours (it
+# comes first); on the guest there is no competing definition, because keeping
+# musl's members out of the link is the entire point of the module.
+run_one test_nothread \
+	${CC} ${CFLAGS} "${TESTS_DIR}/test_nothread.c" "${MOD_DIR}/nothread/module.c" \
+	-Wl,--allow-multiple-definition
+
 # stdcppshim: --wrap=malloc makes the OOM path reachable on demand.
 run_one test_stdcppshim \
 	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_stdcppshim.cpp" \
@@ -173,17 +181,39 @@ prepare_zkvm_obj()
 	echo "${obj}"
 }
 
-# _start for both zkvm flavours: the linker-script symbols it dereferences
+# _start for every zkvm target: the linker-script symbols it dereferences
 # (_init_stack_top, _global_pointer) are pointed at real arrays in the test.
+# The halt sequence after the start-up call is never reached - the stub exits
+# first - so the targets' differing exit protocols do not need emulating.
+#
+# The three targets hand off differently, and the test needs to know which
+# stub to expect: zisk/zisk_sim call __libc_start_main, openvm calls
+# noos_start_main, sp1 calls sp1-zkvm's __start (and reaches the .NET side
+# later, through __wrap_main -> noos_main).
+#
+# zkvm_sp1 is built TWICE. sp1-zkvm's __start comes from the bindings
+# library, which a guest built without --extlib does not link, so the
+# module's reference to it is weak and _start falls back to
+# noos_start_main. The nobind binary simply leaves __start undefined and
+# expects that fallback - the case that broke the CI sample guests when the
+# reference was still strong.
 STACK_TOP="zkvm_test_stack+65536"
-for m in zkvm_zisk zkvm_zisk_sim ; do
-	if ! obj="$(prepare_zkvm_obj "${m}")" ; then
+for m in zkvm_zisk zkvm_zisk_sim zkvm_sp1 zkvm_sp1_nobind zkvm_openvm ; do
+	src="${m}"
+	case "${m}" in
+	zkvm_sp1)        entry="-DZKVM_ENTRY_SP1=1" ;;
+	zkvm_sp1_nobind) entry="-DZKVM_ENTRY_SP1=1 -DZKVM_ENTRY_SP1_NOBIND=1"
+	                 src="zkvm_sp1" ;;
+	zkvm_openvm)     entry="-DZKVM_ENTRY_NOOS=1" ;;
+	*)               entry="-DZKVM_ENTRY_LIBC=1" ;;
+	esac
+	if ! obj="$(prepare_zkvm_obj "${src}")" ; then
 		echo "BUILD FAIL: ${m} asm"
 		failures=$((failures + 1))
 		continue
 	fi
 	run_one "test_start_${m}" \
-		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" \
+		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" ${entry} \
 		"${TESTS_DIR}/test_zkvm_start.c" "${obj}" \
 		-Wl,--defsym,_init_stack_top=${STACK_TOP} \
 		-Wl,--defsym,_global_pointer=zkvm_test_gp

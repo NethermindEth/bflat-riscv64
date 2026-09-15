@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -68,6 +69,19 @@ namespace System.CommandLine
                 {
                     instructionSetSupportBuilder.AddSupportedInstructionSet("neon"); // Lower baselines included by implication
                 }
+            }
+            else if (targetArchitecture == TargetArchitecture.RiscV64
+                && Environment.GetEnvironmentVariable("BFLAT_NO_RISCV_BASELINE") != "1")
+            {
+                // The rv64gc baseline: "d" implies "f" and "base"; "c" and "a"
+                // complete the G+C set. Reduced-ISA targets opt out with
+                // --targetisa negation (e.g. -f,-d) - an unsupported F extension
+                // switches ilc and the JIT to the lp64 soft-float ABI and
+                // soft-float lowering.
+                instructionSetSupportBuilder.AddSupportedInstructionSet("base");
+                instructionSetSupportBuilder.AddSupportedInstructionSet("d");
+                instructionSetSupportBuilder.AddSupportedInstructionSet("c");
+                instructionSetSupportBuilder.AddSupportedInstructionSet("a");
             }
 
             // Whether to allow optimistically expanding the instruction sets beyond what was specified.

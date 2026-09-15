@@ -51,7 +51,16 @@ extern "C" bool RhRegisterOSModule(void * pModule,
     void * pvUnboxingStubsStartRange, uint32_t cbUnboxingStubsRange,
     void ** pClasslibFunctions, uint32_t nClasslibFunctions);
 
+/* .NET 11 (rc.2+) grew a pinModule parameter; the C++ mangled name follows
+ * it, so the declaration has to match the runtime the module links against.
+ * Undefined BFLAT_DOTNET defaults to the newest line, like the other guards. */
+#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+void* PalGetModuleHandleFromPointer(void* pointer, bool pinModule);
+#define BFLAT_PAL_GET_MODULE_HANDLE(p) PalGetModuleHandleFromPointer((p), false)
+#else
 void* PalGetModuleHandleFromPointer(void* pointer);
+#define BFLAT_PAL_GET_MODULE_HANDLE(p) PalGetModuleHandleFromPointer((p))
+#endif
 
 #if defined(HOST_X86) && defined(HOST_WINDOWS)
 #define STRINGIFY(s) #s
@@ -146,7 +155,7 @@ uBootstrap_InitializeRuntime()
         return -1;
     }
 
-    void * osModule = PalGetModuleHandleFromPointer(
+    void * osModule = BFLAT_PAL_GET_MODULE_HANDLE(
         (void*)&NATIVEAOT_ENTRYPOINT);
 
     // TODO: pass struct with parameters instead of the large signature of

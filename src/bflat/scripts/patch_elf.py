@@ -35,6 +35,22 @@ def prepare_parser():
         default=False,
     )
     parser.add_argument(
+        "--nop-fences",
+        help="Rewrite every FENCE/FENCE.I (opcode 0x0f) word in .text to NOP. Single-hart "
+             "zkVMs have no memory ordering to enforce, and SP1's transpiler maps FENCE to an "
+             "illegal instruction that faults when executed",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--nop-zero-words",
+        help="Rewrite every all-zero word in .text to NOP. Zero is not an encoding; it only "
+             "appears as alignment padding between functions, which SP1 rejects when it "
+             "transpiles the whole segment up front",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--split-code-data",
         help="Nullify all data in .text section, make a cloned .text_overlay with data+code",
         action="store_true",
@@ -451,6 +467,59 @@ if args.split_code_data:
 elif args.print_fn_boundaries:
     # still allow printing boundaries without modifying the binary
     _ = find_fn_boundaries(args, print_report=True)
+if args.nop_fences or args.nop_zero_words:
+    text, text_data = get_text_data(args, elf)
+    text_va = int(text.virtual_address or 0)
+    NOP = (0x13).to_bytes(4, "little")
+
+    # Only the bytes that belong to a function are code. ILC also parks data
+    # in .text (per-method read-only data, jump tables), and rewriting a word
+    # there would silently change what the program computes - a zero word is a
+    # perfectly ordinary constant. So the rewrites are confined to the function
+    # ranges the unwind tables and the symbol table agree on, and the padding
+    # between them is handled separately: a gap is only rewritten when it is
+    # ENTIRELY zero and no longer than the maximum code alignment, which is what
+    # alignment padding looks like and what a data blob does not.
+    MAX_ALIGN_PAD = 16
+    fn_ranges = find_gaps(text, find_fn_boundaries(args))
+    in_fn = [(a - text_va, b - text_va) for a, b in fn_ranges]
+
+    fences = zeros = skipped = 0
+
+    def rewrite_code(lo, hi):
+        global fences, zeros
+        for off in range(lo, min(hi, len(text_data)) - 3, 4):
+            word = text_data[off:off + 4]
+            if args.nop_fences and (word[0] & 0x7F) == 0x0F:
+                text_data[off:off + 4] = NOP
+                fences += 1
+            elif args.nop_zero_words and word == b"\0\0\0\0":
+                text_data[off:off + 4] = NOP
+                zeros += 1
+
+    prev_end = 0
+    for lo, hi in in_fn:
+        # The gap before this function: alignment padding, or data.
+        gap = text_data[prev_end:lo]
+        if args.nop_zero_words and gap and len(gap) <= MAX_ALIGN_PAD and not any(gap):
+            for off in range(prev_end, lo - 3, 4):
+                text_data[off:off + 4] = NOP
+                zeros += 1
+        elif gap:
+            skipped += len(gap)
+        rewrite_code(lo, hi)
+        prev_end = max(prev_end, hi)
+    tail = text_data[prev_end:]
+    if args.nop_zero_words and tail and len(tail) <= MAX_ALIGN_PAD and not any(tail):
+        for off in range(prev_end, len(text_data) - 3, 4):
+            text_data[off:off + 4] = NOP
+            zeros += 1
+    elif tail:
+        skipped += len(tail)
+
+    text.content = list(text_data)
+    print(f"nop-rewrites: {fences} fence(s), {zeros} zero word(s); "
+          f"{skipped} byte(s) outside any function left untouched")
 if args.remove_eh:
     elf.remove_section(".dotnet_eh_table", clear=False)
     elf.remove_section(".eh_frame_hdr", clear=False)

@@ -1,13 +1,16 @@
 # Linker options owned by the nofp module (packed as nofp.params.yml).
-# Applied only for the zisk/zisk_sim targets; the musl target links nofp.o
-# without these wraps.
+# Applied only for the zkVM targets; the musl target links nofp.o without
+# these wraps.
 options:
   ld:
     # libm: divert the math surface referenced by the runtime
     # (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling) to the nofp
-    # trap stubs. Keeps hard-float musl members out of the link entirely:
-    # their F/D instructions would poison the rv64ima .text, and these
-    # paths must never execute on the zkVM anyway.
+    # trap stubs. The bundled musl is built rv64im, so its implementations
+    # would link and run correctly - the point is that a transcendental has
+    # no business inside a proof, and a guest that reaches one is a bug
+    # worth hearing about. fmod and fmodf are deliberately NOT here: they
+    # are the C# % operator on double and float, ordinary arithmetic the
+    # language defines, and musl's are integer-only.
     - value: --wrap=acos
     - value: --wrap=acosf
     - value: --wrap=acosh
@@ -36,8 +39,6 @@ options:
     - value: --wrap=floorf
     - value: --wrap=fma
     - value: --wrap=fmaf
-    - value: --wrap=fmod
-    - value: --wrap=fmodf
     - value: --wrap=log
     - value: --wrap=logf
     - value: --wrap=log10

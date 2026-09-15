@@ -74,7 +74,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> ErrorOnFloatBinaryOption = new Option<bool>("--error-on-float-binary", "Scan the LINKED binary's code and fail the build if any RISC-V floating-point (F/D) instruction is present. Exact whole-image check, complements the IL-level --error-on-float.");
     private static Option<bool> ErrorOnCompressedOption = new Option<bool>("--error-on-compressed", "Scan the linked binary's code and fail the build if any RISC-V compressed (C-extension, 16-bit) instruction is present. Intended for targets that only decode the base 32-bit encoding, such as zisk.");
     private static Option<bool> ErrorOnAtomicOption = new Option<bool>("--error-on-atomic", "Scan the linked binary's code and fail the build if any RISC-V atomic (A-extension: lr/sc/amo*) instruction is present.");
-    private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zisk image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
+    private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zkVM image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
@@ -105,7 +105,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim|sp1|openvm)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -480,6 +480,26 @@ internal class BuildCommand : CommandBase
     /// </summary>
     private bool _removeEh;
 
+    /// <summary>
+    /// The zkVM targets: OS-less guests linked from the modules in
+    /// src/bflat/modules against a prover's fixed memory map instead of
+    /// against a kernel. They share the entire zkVM link - the same native
+    /// modules, the same soft-float musl, the same ISA gates and managed
+    /// substitutions - and differ only in the entry point and linker script,
+    /// which live in the target's own layout directory (see ZkvmLibPath).
+    /// </summary>
+    private static bool IsZkvm(string libc) =>
+        libc == "zisk" || libc == "zisk_sim" || libc == "sp1" || libc == "openvm";
+
+    /// <summary>
+    /// Layout directory holding a zkVM target's own script.ld and
+    /// entrypoint.o. Named after the libc, so lib/linux/riscv64/&lt;libc&gt;.
+    /// Everything else the target links comes from the ZisK directory, which
+    /// is where bflat.csproj lays the shared module objects down.
+    /// </summary>
+    private static string ZkvmLibPath(string homePath, string libc) =>
+        Path.Combine(homePath, "lib", "linux", "riscv64", libc);
+
     public override int Handle(ParseResult result)
     {
         _removeEh = result.GetValueForOption(RemoveEhOption);
@@ -506,10 +526,25 @@ internal class BuildCommand : CommandBase
         string[] inputFiles = CommonOptions.GetInputFiles(userSpecifiedInputFiles);
         string[] defines = result.GetValueForOption(CommonOptions.DefinedSymbolsOption);
         string libc = result.GetValueForOption(TargetLibcOption);
+        // Guest-visible compilation symbol, so user code and the module
+        // snippets can tell the targets apart. zisk_sim deliberately gets
+        // none, as before: it is a debugging layout, not a proof target.
+        //
+        // Spelled as an if-chain rather than a switch expression on purpose:
+        // CA1508 mis-reads a switch expression over string constants as
+        // proving the subject non-null, and then calls every later null check
+        // on libc dead code.
+        string zkvmDefine = null;
         if (libc == "zisk")
+            zkvmDefine = "ZKVM_ZISK";
+        else if (libc == "sp1")
+            zkvmDefine = "ZKVM_SP1";
+        else if (libc == "openvm")
+            zkvmDefine = "ZKVM_OPENVM";
+        if (zkvmDefine != null)
         {
             var definesList = new List<string>(defines ?? Array.Empty<string>());
-            definesList.Add("ZKVM_ZISK");
+            definesList.Add(zkvmDefine);
             defines = definesList.ToArray();
         }
         string[] references = CommonOptions.GetReferencePaths(result.GetValueForOption(CommonOptions.ReferencesOption), stdlib,
@@ -656,12 +691,71 @@ internal class BuildCommand : CommandBase
         bool supportsReflection = !disableReflection && systemModuleName == DefaultSystemModule;
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
+
+        // Whether the compiler package models the RISC-V extensions as
+        // instruction sets (the soft-float dotnet-riscv line does; older
+        // packages know only base/zba/zbb). Probed on a throwaway builder so
+        // the same bflat sources serve both runtime generations.
+        bool riscvIsaAware = targetArchitecture == TargetArchitecture.RiscV64
+            && new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet("f");
+
+        if (riscvIsaAware && IsZkvm(libc))
+        {
+            // zkVM guests target rv64im: drop the C, A, F and D extensions at
+            // the instruction-set level. Losing F/D flips ilc and the JIT into
+            // the lp64 soft-float ABI + soft-float lowering; C and A stop
+            // compressed/atomic emission through the same instruction-set
+            // mechanism as the EnableRiscV64* knobs passed below.
+            if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
+            {
+                // Only the extensions this compiler package models can be
+                // negated (.NET 10 knows no Zbs/Zicond); probe each one.
+                var reduced = new List<string>();
+                foreach (string ext in new[] { "c", "a", "f", "d", "zba", "zbb", "zbs", "zicond" })
+                {
+                    if (new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet(ext))
+                        reduced.Add("-" + ext);
+                }
+                string reducedIsa = string.Join(",", reduced);
+                isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
+            }
+        }
+
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
 
+        // Soft-float mode: a riscv64 target without the F or D extension.
+        // Resolved reflectively: the enum members only exist in compiler
+        // packages that model F/D/C/A (see riscvIsaAware); on older packages
+        // this stays false and the ISA-derived behaviour of that package applies.
+        bool zkSoftFloat = false;
+        if (riscvIsaAware)
+        {
+            foreach (var extName in new[] { "RiscV64_F", "RiscV64_D" })
+            {
+                var extField = typeof(Internal.JitInterface.InstructionSet).GetField(extName);
+                if (extField != null)
+                {
+                    var extSet = (Internal.JitInterface.InstructionSet)extField.GetValue(null);
+                    zkSoftFloat |= !instructionSetSupport.IsInstructionSetSupported(extSet);
+                }
+            }
+        }
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
+        if (zkSoftFloat)
+        {
+            // The ABI is a property of the target, not of the instruction set: the
+            // compiler selects the lp64 (soft-float) calling convention, the JIT flag
+            // and the ELF float-ABI marker from TargetAbi, which the runtime, libm and
+            // compiler-rt of the zkVM toolchains (all built with -mabi=lp64) match.
+            // Resolved reflectively like the instruction sets above; on packages
+            // without the member the ISA-derived flag of that package applies.
+            if (Enum.TryParse(typeof(TargetAbi), "NativeAotRiscV64SoftFloat", out object softAbi))
+                targetAbi = (TargetAbi)softAbi;
+        }
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         var ms = new MemoryStream();
 
@@ -769,7 +863,7 @@ internal class BuildCommand : CommandBase
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
         CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
-            isZkvmTarget: libc == "zisk" || libc == "zisk_sim");
+            isZkvmTarget: IsZkvm(libc));
         ILProvider ilProvider = customIlProvider;
 
         var referenceFilePaths = new Dictionary<string, string>();
@@ -816,7 +910,7 @@ internal class BuildCommand : CommandBase
             if (targetOS == TargetOS.Linux)
             {
                 var tmpLibc = libc;
-                if (libc == "zisk" || libc == "zisk_sim")
+                if (IsZkvm(libc))
                     tmpLibc = "musl";
                 currentLibPath = Path.Combine(currentLibPath, tmpLibc ?? "glibc");
                 libPath = currentLibPath + separator + libPath;
@@ -860,7 +954,7 @@ internal class BuildCommand : CommandBase
         const string snippetsModuleName = "__ZiskSnippets";
         string snippetsModulePath = null;
         List<string> moduleSubstitutionFiles = new List<string>();
-        if (libc == "zisk" || libc == "zisk_sim")
+        if (IsZkvm(libc))
         {
             (moduleSubstitutionFiles, List<string> snippetFiles) =
                 CollectModuleIlcFiles(ziskLibPath, libc, targetArchitecture, targetOS);
@@ -908,7 +1002,8 @@ internal class BuildCommand : CommandBase
             // to check - otherwise a typo in the verification step's arguments
             // would look like a passing check.
             Console.Error.WriteLine(
-                $"Error: --verify-substitutions requires --libc zisk or zisk_sim (got '{libc ?? "none"}')");
+                $"Error: --verify-substitutions requires a zkVM --libc " +
+                $"(zisk, zisk_sim, sp1 or openvm; got '{libc ?? "none"}')");
             return 1;
         }
 
@@ -1035,7 +1130,11 @@ internal class BuildCommand : CommandBase
             directPinvokes.Add("libsokol");
         }
 
-        if (libc == "zisk")
+        // Bindings packages (--extlib: libziskos, libsp1, libopenvm) declare their
+        // precompiles as [DllImport("__Internal")]. Direct P/Invoke turns those
+        // into ordinary calls to the statically linked symbols instead of a
+        // lookup through a loader the guest does not have.
+        if (IsZkvm(libc))
         {
             directPinvokes.Add("__Internal");
         }
@@ -1083,13 +1182,13 @@ internal class BuildCommand : CommandBase
             featureSwitches.Add("System.Resources.UseSystemResourceKeys", true);
         }
 
-        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || libc == "zisk" || libc == "zisk_sim";
+        bool disableGlobalization = result.GetValueForOption(NoGlobalizationOption) || libc == "bionic" || libc == "musl" || IsZkvm(libc);
         if (disableGlobalization)
         {
             featureSwitches.Add("System.Globalization.Invariant", true);
         }
 
-        if (libc == "zisk" || libc == "zisk_sim")
+        if (IsZkvm(libc))
         {
             // Invariant timezone (UTC only): the deterministic zkVM guest has no
             // timezone database, and the [FeatureSwitchDefinition] on
@@ -1304,51 +1403,110 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitExtDefaultPolicyMaxIL=200"); // 0x200 = 512 (default 0x80 = 128) max inlinee IL
             backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
 
-            // Lower constant-size SpanHelpers.SequenceEqual to the inline
-            // `csrrs rd, 0x814, src ; addi x0, dst, count` idiom that the ZisK
-            // transpiler folds into one dma_xmemcmp step. ZisK-only (a plain
-            // riscv64 CPU would mis-execute the addi). Needs runtime patch
-            // 30_dma_memcmp_inline_riscv64.
-            backendOptions.Add("JitRiscV64DmaCompare=1");
-
             // Elide RA spill/reload + frame in leaf methods. RyuJIT riscv64 uses
             // REG_RA as a hardcoded scratch for branch/compare constants, far-jump
             // targets and 64-bit mul-high, so patch 31 refuses to elide methods
             // whose LIR contains those shapes (GT_JCMP / GT_LT/LE/GT/GE / GT_MULHI)
             // or use FP. Needs runtime patches 23+31.
-            backendOptions.Add("RiscV64ElideLeafRaSave=1");
+            //
+            // zkVM targets only. Patch 23 states the precondition: sound on a
+            // single-threaded deterministic guest with no GC thread suspension and
+            // no return-address hijacking. A riscv64+musl/glibc process is neither,
+            // so it keeps the standard prologue.
+            if (IsZkvm(libc))
+            {
+                backendOptions.Add("RiscV64ElideLeafRaSave=1");
+            }
+        }
+
+        // Lower constant-size SpanHelpers.SequenceEqual to the inline
+        // `csrrs rd, 0x814, src ; addi x0, dst, count` idiom that the ZisK ROM
+        // transpiler folds into one dma_xmemcmp step (patch 30).
+        //
+        // REAL ZISK ONLY - not the zkVM family. Nothing else understands the pair:
+        // a real riscv64 CPU (so also zisk_sim, which runs under QEMU or on
+        // hardware) executes a CSR access to 0x814 followed by an addi to x0, and
+        // SP1 and OpenVM do not know the idiom either. The knob defaults to 0 in
+        // the JIT, so every other target simply keeps the call.
+        if (libc == "zisk" && optimizationMode != OptimizationMode.None)
+        {
+            backendOptions.Add("JitRiscV64DmaCompare=1");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
         // extension, and a single-threaded guest needs no hardware atomics. Turn
         // the JIT off both so the whole managed .text stays 32-bit and lock-free
         // (RyuJIT otherwise emits c.add/c.mv in switch dispatch, and lr/sc + amo*
-        // for Interlocked). Only for zisk/zisk_sim - a real riscv64+musl target
-        // wants C and A. Requires the cross-JIT built with dotnet-riscv fixup
-        // 24/25 (EnableRiscV64Compressed / EnableRiscV64Atomic); an unpatched JIT
-        // ignores unknown knobs. Verified whole-image with --error-on-compressed
-        // / --error-on-atomic.
-        if (libc == "zisk" || libc == "zisk_sim")
+        // for Interlocked). Only for the zkVM targets - a real riscv64+musl
+        // target wants C and A. ZisK decodes rv64imafd, SP1 riscv64im and
+        // OpenVM rv64im, so none of them needs either extension. Requires the
+        // cross-JIT built with dotnet-riscv fixup 24/25 (EnableRiscV64Compressed
+        // / EnableRiscV64Atomic); an unpatched JIT ignores unknown knobs.
+        // Verified whole-image with --error-on-compressed / --error-on-atomic.
+        if (IsZkvm(libc))
         {
             backendOptions.Add("EnableRiscV64Compressed=0");
             backendOptions.Add("EnableRiscV64Atomic=0");
+        }
+
+        // zkVM per-site inline allocation (dotnet-riscv fixup 26). The JIT
+        // replaces the object-allocation helper call with an inline bump on a
+        // cell at a FIXED address, emitted as a bare constant with no
+        // relocation, and bounds-checks it against the heap floor in the cell 8
+        // bytes below. The address is this knob: it MUST equal g_zk_bump_ptr in
+        // the target's script.ld, and it is the only thing that turns the
+        // transform on - fixup 26 defaults it to 0 and then inlines nothing, so
+        // a plain riscv64+musl/glibc build is never given an absolute guest
+        // address to write to. Hex, no 0x prefix (ILC's JitConfigProvider parses
+        // with NumberStyles.AllowHexSpecifier); the JIT reads the low 32 bits
+        // zero-extended, so a value above int.MaxValue round-trips. A JIT
+        // without fixup 26 ignores the unknown knob and keeps the helper call.
+        // Top of the ZisK RAM window (0xa0020000 + 0x1FFD0000 - 8). Every zkVM
+        // target mirrors that map, so they all share one address: the ZisK
+        // simulator by construction, SP1 because its space runs to 2^48, and
+        // OpenVM since its guest memory became the full 4 GiB u32 range
+        // (MEM_BITS 29 -> 32 on the develop-v2.1.0 line). While OpenVM capped
+        // out at 512 MiB it needed an address of its own.
+        string zkBumpAddr = IsZkvm(libc) ? "bffefff8" : null;
+        if (zkBumpAddr != null)
+        {
+            backendOptions.Add($"JitZkBumpAddr={zkBumpAddr}");
         }
 
         // Unaligned access. dotnet-riscv fixup 35 (JitNoUnalignedAccess) defaults the
         // knob ON, expanding every access the front end flagged unaligned
         // (Unsafe.Read/WriteUnaligned, the `unaligned.` IL prefix, unrolled
         // cpblk/initblk) into a byte-wise lbu/slli/or - sb/srli sequence. That is only
-        // needed by an executor that asserts addr % width == 0; ZisK is not one (its
-        // emulator runs and its prover verifies wide unaligned accesses), and the
-        // expansion costs roughly a quarter of the executed instructions on a guest.
-        // So the value is always passed explicitly and defaults to wide accesses;
-        // --no-unaligned-access opts back in. A JIT built without fixup 35 ignores the
-        // unknown knob.
+        // needed by an executor that asserts addr % width == 0, and it costs roughly
+        // a quarter of the executed instructions on a guest, so the value is always
+        // passed explicitly rather than left to the knob's default.
+        //
+        // ZisK does not assert alignment (its emulator runs and its prover verifies
+        // wide unaligned accesses), so it gets wide accesses unless
+        // --no-unaligned-access asks otherwise. SP1 and OpenVM DO assert it and fail
+        // the execution on a violation - SP1 raises InvalidMemoryAccess for any LH/LW/
+        // LD/SH/SW/SD off its natural boundary (crates/core/executor/src/vm.rs), and
+        // OpenVM's load/store chip only accepts the aligned shift amounts
+        // (extensions/riscv/circuit/src/loadstore/execution.rs) - so they are always
+        // built byte-wise. A JIT built without fixup 35 ignores the unknown knob.
         if (targetArchitecture == TargetArchitecture.RiscV64)
         {
-            backendOptions.Add(result.GetValueForOption(NoUnalignedAccessOption)
+            bool noUnaligned = result.GetValueForOption(NoUnalignedAccessOption)
+                || libc == "sp1" || libc == "openvm";
+            backendOptions.Add(noUnaligned
                 ? "JitNoUnalignedAccess=1"
                 : "JitNoUnalignedAccess=0");
+            // Strict alignment (dotnet-riscv fixup: JitRiscV64StrictAlign) goes one step
+            // further for the executors that reject any misaligned access: every scalar
+            // load/store and unrolled block copy whose address the JIT cannot prove
+            // aligned (byrefs into spans, Unsafe.As reinterpretation, pointer arithmetic)
+            // gets an inline alignment test with a wide fast path and a byte-wise slow
+            // path. Accesses through object references, array elements, stack locals and
+            // statics are provably aligned and stay single instructions. A JIT built
+            // without the fixup ignores the unknown knob.
+            backendOptions.Add((libc == "sp1" || libc == "openvm")
+                ? "JitRiscV64StrictAlign=1"
+                : "JitRiscV64StrictAlign=0");
         }
 
         builder
@@ -1380,7 +1538,7 @@ internal class BuildCommand : CommandBase
 
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
 
-            if (libc == "zisk" || libc == "zisk_sim")
+            if (IsZkvm(libc))
             {
                 // Codegen-only: rewrite the ConcurrentUnifier growth ratio to
                 // integer math AFTER scanning. Relies on RewrittenMethodIL
@@ -1663,8 +1821,6 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append("--lto=full --lto-O3 ");
             }
 
-            string ziskSimLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk_sim");
-
             string firstLib = null;
             foreach (var lpath in libPath.Split(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':'))
             {
@@ -1688,10 +1844,10 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append("-dynamic-linker /system/bin/linker64 ");
                     ldArgs.Append($"\"{firstLib}/crtbegin_dynamic.o\" ");
                 }
-                else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+                else if (libc == "musl" || IsZkvm(libc))
                 {
                     ldArgs.Append("-static ");
-                    if (libc == "zisk" || libc == "zisk_sim")
+                    if (IsZkvm(libc))
                     {
                         ldArgs.Append($"\"{ziskLibPath}/crt1.o\" ");
                         PatchRiscvAbi(ziskLibPath + "/crt1.o");
@@ -1699,7 +1855,7 @@ internal class BuildCommand : CommandBase
                     else
                         ldArgs.Append($"\"{firstLib}/crt1.o\" ");
                     ldArgs.Append($"\"{firstLib}/crti.o\" ");
-                    if (libc == "zisk" || libc == "zisk_sim")
+                    if (IsZkvm(libc))
                     {
                         PatchRiscvAbi(firstLib + "/crti.o");
                     }
@@ -1727,8 +1883,7 @@ internal class BuildCommand : CommandBase
 
             ldArgs.AppendFormat("-o \"{0}\" ", outputFilePath);
 
-            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
-                libc != "zisk_sim")
+            if (libc != "bionic" && libc != "musl" && !IsZkvm(libc))
             {
                 ldArgs.Append($"\"{firstLib}/crti.o\" ");
                 ldArgs.Append($"\"{firstLib}/crtbeginS.o\" ");
@@ -1772,7 +1927,7 @@ internal class BuildCommand : CommandBase
                     // PAL, minipal, libatomic, ...) can ship with the hard-float
                     // (lp64d) marker; normalize them all to soft-float so ld.lld
                     // accepts them against the soft-float crt1.o.
-                    if (libc == "zisk" || libc == "zisk_sim")
+                    if (IsZkvm(libc))
                         PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
@@ -1788,28 +1943,67 @@ internal class BuildCommand : CommandBase
             }
 
             ldArgs.Append("--as-needed -ldl -lm -lz -z relro -z now --discard-all --gc-sections ");
-            if (libc != "musl" && libc != "zisk" && libc != "zisk_sim")
+            if (libc != "musl" && !IsZkvm(libc))
             {
                 ldArgs.Append("-lc -lgcc ");
             }
 
-            if (libc != "bionic" && libc != "musl" && libc != "zisk" &&
-                libc != "zisk_sim")
+            if (libc != "bionic" && libc != "musl" && !IsZkvm(libc))
             {
                 ldArgs.Append("-lrt --as-needed -lgcc_s --no-as-needed ");
                 if (!result.GetValueForOption(CommonOptions.NoPthreadOption))
                     ldArgs.Append("-lpthread ");
             }
-            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+            else if (libc == "musl" || IsZkvm(libc))
             {
+                /* nothread: single-hart replacements for musl's locking and
+                 * thread primitives, which are where its lr/sc/amo* live. The
+                 * bundled musl is built rv64ima, which is right for ZisK
+                 * (rv64imafd) and wrong for SP1 and OpenVM (rv64im): SP1's
+                 * loader panics on the first instruction it cannot decode, and
+                 * OpenVM turns it into a trap.
+                 *
+                 * This works by DEFINITION, not by --wrap: a wrap would leave
+                 * musl's members - and their atomics - in the image. So the
+                 * object MUST precede libc.a here. The linker extracts an
+                 * archive member only to resolve a symbol that is still
+                 * undefined at the point it reaches the archive, so with these
+                 * definitions already in hand it never takes musl's.
+                 *
+                 * ZisK is deliberately excluded and keeps musl's real
+                 * primitives: its decoder is happy with the A extension. */
+                if (libc == "sp1" || libc == "openvm")
+                {
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nothread.o")}\" ");
+                    /* noos: the OS surface the runtime's Unix PAL reaches for.
+                     * PalUnix.cpp.o is linked whole because RhFailFast pulls
+                     * it, and libSystem.Native's pal_io comes with it, so 150
+                     * libc entry points go live and drag 96 members of musl in
+                     * - crash dumps, dlopen, CPU counting, directory walking.
+                     * None can be serviced here. Same rule as nothread: this
+                     * works by definition, so it must precede libc.a. */
+                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "noos.o")}\" ");
+                }
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
-                // The zisk/zisk_sim stack is linked with the soft-float (lp64)
-                // ABI marker (see PatchRiscvAbi on crt1.o/crti.o above). The
+                // The zkVM stack is linked with the soft-float (lp64) ABI
+                // marker (see PatchRiscvAbi on crt1.o/crti.o above). The
                 // bundled musl libc.a still carries the hard-float (lp64d)
                 // marker, so normalize it too or ld.lld rejects every member
                 // with "different floating-point ABI from crt1.o".
-                if (libc == "zisk" || libc == "zisk_sim")
+                if (IsZkvm(libc))
                     PatchRiscvAbiStaticLib(firstLib + "/libc.a", verbose);
+
+                /* The soft-float builtins. Without an FPU the compiler lowers
+                 * every double operation to a call to __adddf3 and its 51
+                 * siblings, and on riscv64 nothing else here defines them:
+                 * the runtime's own C++ (the GC's cgroup limits, the yield
+                 * normalization) calls them, and so does anything the guest
+                 * does with a double. The bundled libgcc.a is already built
+                 * lp64, so it needs no ABI patching, and it comes last
+                 * because these are the leaves - nothing it pulls in refers
+                 * back to libc. */
+                if (IsZkvm(libc))
+                    ldArgs.Append($"\"{firstLib}/libgcc.a\" ");
             }
 
             if (libc == "bionic")
@@ -1823,11 +2017,11 @@ internal class BuildCommand : CommandBase
                     ldArgs.Append($"\"{firstLib}/crtend_android.o\" ");
                 }
             }
-            else if (libc == "musl" || libc == "zisk" || libc == "zisk_sim")
+            else if (libc == "musl" || IsZkvm(libc))
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
                 // Same soft-float marker normalization as crt1.o/crti.o.
-                if (libc == "zisk" || libc == "zisk_sim")
+                if (IsZkvm(libc))
                     PatchRiscvAbi(firstLib + "/crtn.o");
             }
             else
@@ -1860,18 +2054,19 @@ internal class BuildCommand : CommandBase
             }
 
 
-            if (libc == "zisk" || libc == "zisk_sim")
+            if (IsZkvm(libc))
             {
-                /* Zisk */
-                if (libc == "zisk")
-                {
-                    ldArgs.Append($"-T\"{Path.Combine(ziskLibPath, "script.ld")}\" ");
-                }
-                else
-                {
-                    ldArgs.Append($"-T\"{Path.Combine(ziskSimLibPath, "script.ld")}\" ");
-                }
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "entrypoint.o")}\" ");
+                /* Entry point + linker script for the target being built;
+                 * everything below comes from the shared ZisK directory. */
+                string zkvmLibPath = ZkvmLibPath(homePath, libc);
+                /* Memory map: one linker script per zkVM target, each
+                 * describing that prover's fixed address space. */
+                ldArgs.Append($"-T\"{Path.Combine(zkvmLibPath, "script.ld")}\" ");
+                /* Entry point. zisk_sim reuses ZisK's - it differs only in
+                 * the memory map - while every other target brings its own,
+                 * because _start has to speak that VM's halt protocol. */
+                string entryLibPath = libc == "zisk_sim" ? ziskLibPath : zkvmLibPath;
+                ldArgs.Append($"\"{Path.Combine(entryLibPath, "entrypoint.o")}\" ");
                 /* nofp: FP trap stubs; the math-symbol wrap surface is
                  * declared in nofp.params.yml. (The musl target links the
                  * object without these wraps.) */
@@ -1983,6 +2178,30 @@ internal class BuildCommand : CommandBase
                 outputFilePath + " " + patchedFilePath +
                 patchElfArgs,
                 printCommands);
+        }
+
+        if (libc == "sp1" && exitCode == 0)
+        {
+            /* SP1 transpiles every word of every executable segment before it
+             * runs anything and faults on the first one it cannot decode.
+             * Two encodings the toolchain leaves behind are unreachable but
+             * fatal there: FENCE (maps to an illegal instruction in SP1's
+             * transpiler; a single-hart guest has nothing to order anyway)
+             * and the all-zero alignment padding ILC puts between methods.
+             * Rewrite both to NOP, in place: the sp1 artifact keeps its name. */
+            string sp1PatchedPath = outputFilePath + ".sp1patched";
+            int patchExitCode = RunCommand(patchElfPath,
+                outputFilePath + " " + sp1PatchedPath + " --nop-fences --nop-zero-words ",
+                printCommands);
+            if (patchExitCode == 0 && File.Exists(sp1PatchedPath))
+            {
+                File.Move(sp1PatchedPath, outputFilePath, true);
+            }
+            else
+            {
+                Console.Error.WriteLine("error: patch_elf --nop-fences --nop-zero-words failed for the sp1 image");
+                exitCode = patchExitCode != 0 ? patchExitCode : 1;
+            }
         }
 
         // Exact whole-image ISA verification: decode the linked binary and fail

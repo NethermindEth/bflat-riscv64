@@ -25,7 +25,9 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | Module | What it provides | Constraint it answers |
 |--------|------------------|-----------------------|
 | [ubootstrap](#ubootstrap) | Runtime entry point — brings .NET up and calls `Main` | No glibc-style startup / OS loader |
+| [noos](#noos) | Displaces the musl members the runtime's Unix PAL drags in | No kernel, no processes, no filesystem, no loader |
 | [zkvm_zisk · zkvm_zisk_sim](#zkvm-zisk) | `_start` + the memory layout the prover expects | No kernel; fixed prover memory map |
+| [zkvm_sp1 · zkvm_openvm](#zkvm-sp1) | The same, for SP1 and OpenVM | Each VM's own map and halt protocol |
 | [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
 | [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
@@ -85,6 +87,50 @@ A minimal re-implementation of the .NET NativeAOT bootstrap. It owns
 The argv it passes is a fake `["app"]` because there is no real
 command-line on a zkVM.
 
+## noos — cutting the OS surface the PAL reaches for
+{: #noos }
+
+**File:** `modules/noos/module.c`
+
+A guest links one object it never asked for: the runtime's Unix PAL. The
+chain is short and unavoidable — `RhpEHEnumInitFromStackFrameIterator` pulls
+in `EHHelpers.cpp.o`, whose `RhFailFast` pulls in `PalUnix.cpp.o` — and
+`PalUnix` comes in whole, so every libc call anywhere inside it goes live,
+together with `libSystem.Native`'s `pal_io`/`pal_threading`. Between them
+they reach about 150 libc entry points and drag 96 members of musl's
+`libc.a` into the image: crash dumps (`fork`, `execv`, `pipe`, `waitpid`),
+dynamic loading, CPU counting (`fopen` → `fscanf` → `__intscan`), cgroup
+probing, directory walking, signals. None of it can be serviced on one hart
+with no processes, no filesystem and no loader. It is dead weight in a proof
+on its own terms, and it became load-bearing once the `p4` blob set started
+shipping musl built with the `C` extension, which none of these VMs decode.
+
+**Two behaviours, and the split is the design.** Operations that cannot be
+honoured terminate with status **253** — the way `nofp` uses 255 and
+`nothread` 254 — because returning a plausible-looking failure would let the
+guest carry on and produce a wrong answer, which is the worst outcome for a
+proving system. The string helpers those same objects call *are* serviced,
+as ordinary small implementations, because they sit on live paths. A handful
+of calls in between are serviced honestly where the answer is knowable and
+harmless: `sigemptyset`/`sigaddset` on a 128-byte mask,
+`__libc_current_sigrtmin`, `__sched_cpucount`, `mprotect` returning success
+(nothing to protect), `statfs`/`dladdr`/`fopen` returning failure.
+
+**It takes effect by definition, not by `--wrap`.** A wrap redirects the
+call but leaves musl's member, and its instructions, in the image. The
+linker extracts an archive member only for a symbol still undefined when it
+reaches the archive, so this object is linked ahead of `libc.a` and the
+members never come in. Where `pal` already wraps a name the two coexist: the
+call goes to `pal`'s `__wrap_`, and the definition here is what keeps musl
+out.
+
+**It also owns the .NET start-up for the non-Zisk targets**, in two halves
+that share one body: `noos_start_main(argc, argv)` is the `noreturn`
+replacement for musl's `__libc_start_main`, used by OpenVM's `_start`, and
+`noos_main(argc, argv)` is the returning half, used by SP1 through
+`__wrap_main` because SP1 halts with `main`'s return value. Both set the
+thread pointer, run `.init_array` and enter `uBootstrap_main`.
+
 ## zkvm_zisk / zkvm_zisk_sim — entry point and memory map
 {: #zkvm-zisk }
 
@@ -126,6 +172,135 @@ by placing text in ROM at `0x80000000`. The `.heap` is declared `NOLOAD`
 so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
 zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
 lazily initialised exactly as on real zisk, and the binary stays small.
+
+## zkvm_sp1 / zkvm_openvm — entry point and memory map
+{: #zkvm-sp1 }
+
+**Files:** `modules/zkvm_sp1/{module.S,script.ld}`, `modules/zkvm_openvm/{module.S,script.ld}`
+
+A `_start` that sets `gp`/`sp`, plus a linker script describing the prover's
+address space. Neither VM sets `sp` for the guest, so `_start` has to,
+exactly as their own Rust entry points do.
+
+Where the two diverge from the Zisk pair is what `_start` calls next.
+
+*OpenVM* skips musl's start-up entirely and calls **`noos_start_main`**
+(`modules/noos`), which sets the thread pointer, runs `.init_array` and
+enters `uBootstrap_main`. musl's `__libc_start_main` exists to parse an
+auxv this guest does not have, and costs 126 instructions the transpiler
+has to accept.
+
+*SP1* must not bypass its own runtime entry: `sp1-zkvm`'s **`__start`**
+initialises the Rust allocator and the public-values hasher that
+`syscall_write` and `syscall_halt` depend on, and halts through the full
+commit protocol with `main`'s return value. So `_start` calls `__start`,
+and the .NET side is reached from there through `main` — the module's
+`__wrap_main`, which calls `noos_main` (the returning half of
+`noos_start_main`) and passes its result back. The `--wrap` is needed
+because `libbootstrapper.o` also defines a `main`, the desktop runtime's,
+which a zkVM guest never enters.
+
+**The keccak permutation is named three times.** Nethermind's `KeccakHash`
+reaches it through `Accelerators.KeccakF`, whose binding carries the ziskos
+name `syscall_keccak_f`; SP1 spells the same operation `zkvm_keccak_permute`
+and OpenVM `zkvm_keccakf`, and the eth-act standard covers `zkvm_keccak256`
+without defining a permutation at all. Rather than make the managed side
+target-aware, each entry module carries a one-instruction tail call under the
+binding's name, in its own section so `--gc-sections` drops it — and with it
+the reference to the bindings library — in a guest built without `--extlib`.
+
+What differs between all four targets is the exit protocol, and that is not
+in the entry point: `pal`'s `zkvm_raw_exit` owns it, because `exit`,
+`_Exit` and `abort` all funnel through there. `pal.o` is built once and
+shared, so each of these modules exports an absolute marker symbol
+(`__zkvm_target_sp1`, `__zkvm_target_openvm`) that `pal` and `rhp` pick up
+through **weak references**: non-`NULL` only in that target's link, absent
+everywhere else, which is why Zisk keeps its original `a7 = 93` path
+untouched.
+
+| Aspect | `sp1` | `openvm` |
+|--------|-------|----------|
+| ISA | RV64IM, lp64 (no A, no C) | RV64IM, lp64 (no A, no C) |
+| Image base | ROM `0x7a000000` (length `0x06000000`), RAM `0xa0020000` — see below | ROM `0x80000000`, RAM `0xa0020000` — the Zisk map |
+| Address ceiling | 2^48 | 2^48 |
+| Stack | `_init_stack_top = 0x78000000`; the whole range below it is reserved for the stack | `_init_stack_top` is placed `0x400000` above `.bss`, so `_end` sits above the stack — OpenVM's bump allocator starts at `_end` and would otherwise hand out stack |
+| Bump-pointer cell | `0xbffefff8` — identical to Zisk | `0xbffefff8` — identical to Zisk |
+| Exit | `ecall` with the syscall id in **`t0`**: `COMMIT` ×8, `COMMIT_DEFERRED_PROOFS` ×8, then `HALT` with the code in `a0` | `TERMINATE`, a custom-0 instruction (`0x0b`, funct3 0) whose exit code is an **immediate**, so a runtime code collapses to 0 or 1 |
+| Console | `WRITE` syscall, caller's descriptor passed through (1 and 2 both reach the host) | `PrintStr` phantom instruction (`0x0b`, funct3 3, imm 1) — one channel, so the descriptor is ignored |
+| Post-link | `patch_elf --nop-fences --nop-zero-words` (see below) | none |
+
+**Why SP1's ROM sits at `0x7a000000` and not `0x80000000`.** SP1's native
+x86 executor JITs the guest, and `sp1-jit`'s `jump_to_pc`
+(`crates/core/jit/src/backends/x86/mod.rs`) narrows the code base with
+`self.pc_base as i32`. A base of exactly `0x80000000` wraps negative there,
+the jump-table index subtraction turns into an addition, and the first
+indirect jump reads far past the table — reported as `invalid memory access
+for opcode ld and address 0`, with no hint of the cause. The image therefore
+lives below 2^31, and above SP1's `STACK_TOP` (`0x78000000`). Worth reporting
+upstream: SP1 silently miscompiles any program based at or above 2^31.
+
+**SP1 also needs a post-link pass.** `patch_elf --nop-fences
+--nop-zero-words` rewrites the fences musl emits (SP1 has no `A` extension
+and rejects the encoding) and any zero word left in `.text` into `NOP`. Both
+rewrites are confined to function bodies taken from the symbol table, and
+zero words only in gaps of at most 16 bytes that are entirely zero — that is,
+alignment padding. Anything outside a function is counted, reported and left
+alone, so a constant the compiler parked in `.text` is never touched.
+
+**Segment flags matter on SP1.** Its loader rejects a segment without
+`PF_R` and a segment that is both writable and executable, and it records
+`p_flags` as the initial per-page protection. The three loadable segments
+are therefore `R+X` / `R` / `R+W`, and the read-only segment is page-aligned
+so a page shared with `.text` cannot lose its execute bit.
+
+**Both eagerly decode `.text`.** SP1 transpiles every word of every `PF_X`
+segment when the ELF is loaded and panics on one it cannot decode; OpenVM
+does the same and fails with `TranspilerError::ParseError`. A zero-filled
+alignment gap is an illegal encoding, so both scripts fill `.text` padding
+with `NOP` (`=0x13000000`) and keep `.rodata` and the unwind tables in a
+separate, non-executable segment.
+
+**Both require natural alignment.** SP1 raises `InvalidMemoryAccess` for any
+`LH`/`LW`/`LD`/`SH`/`SW`/`SD` off its boundary, and OpenVM's load/store chip
+only accepts aligned shift amounts. `BuildCommand` therefore forces
+`JitNoUnalignedAccess=1` for both, the same expansion `--no-unaligned-access`
+asks for by hand, **and** `JitRiscV64StrictAlign=1`. The first covers the
+accesses the JIT knows are unaligned; the second covers the ones it cannot
+know about, where the address is a byref whose alignment is only established
+at run time. Lowering proves what it can structurally and leaves the rest
+flagged, and codegen emits an `andi`/`bnez` check with the wide access on the
+fast path and a byte-wise expansion on the slow one. Without it a mainnet
+block took more than 200k misaligned accesses across 44 sites.
+
+**The inline allocator, and why each target names its own cell.** dotnet-riscv
+fixup 26 replaces the object-allocation helper call with an inline bump on the
+cell, emitted as a bare constant with no relocation. The address is not baked
+into the JIT: it comes from `JitZkBumpAddr`, which `BuildCommand` sets per
+target. All four currently use `bffefff8`; the knob exists because a VM whose
+guest memory ends lower (OpenVM's rv32 line, at `0x20000000`) needs
+`1ffefff8` instead.
+The knob defaults to 0 and then nothing is inlined, so a plain riscv64 target
+(`musl`, `glibc`) is never handed an absolute guest address to write to.
+
+The value must equal `g_zk_bump_ptr` in the target's `script.ld`. The cell 8
+bytes below it, `g_zk_heap_floor`, holds the lowest address the heap may reach;
+the inline sequence loads it and fail-fasts rather than bumping down into
+`.bss`, `.data` and the stack when the heap is exhausted. That guard is a single
+`bgeu` to the method's one shared fail-fast block, and the floor load is marked
+invariant so it is hoisted out of loops and shared between allocation sites —
+one instruction more than an unchecked bump.
+
+`pal` publishes the floor from an `.init_array` constructor, before the runtime
+entry point, and never rewrites it. That ordering is what makes the load
+invariant; publishing it lazily, or moving the heap floor at runtime, would
+break every inline allocation site.
+
+**Status.** Both targets run end to end in their provers. Nethermind's
+stateless guest executes all nine mainnet blocks of the `stateless-tests`
+suite on each of SP1, OpenVM and Zisk, with matching output; SP1 reports zero
+misaligned accesses. `pal`'s `__wrap_syscall` returns `-1` on both targets
+rather than issuing an `ecall`, because unlike Zisk, SP1 treats an unknown
+syscall id as a hard error and OpenVM has no `ecall` handler at all.
 
 ## pal — platform abstraction layer
 {: #pal }
