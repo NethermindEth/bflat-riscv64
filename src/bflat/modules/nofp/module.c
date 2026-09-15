@@ -40,72 +40,24 @@ nofp_trap(void)
 }
 
 /*
- * Each soft-float builtin is declared with its real (void) placeholder
- * prototype, exactly as before, and routed to nofp_trap(). The argument and
- * return registers are irrelevant: the function never returns.
+ * SOFT-FLOAT BUILTINS ARE NOT STUBBED, AND MUST NOT BE.
+ *
+ * __adddf3, __muldf3, __fixdfsi and the rest of that family are not "floating
+ * point reached by mistake" - they ARE the soft-float implementation. The
+ * runtime's FP helpers are C compiled for an ABI without an FPU, so the
+ * compiler lowers every double add in them to a call to one of these, and
+ * bflat's own libgcc.a (share/bflat/lib/linux/riscv64/musl) provides all 52 of
+ * them for riscv64.
+ *
+ * They used to be trapped here, which made any guest that does arithmetic on a
+ * double die with status 255 on its first operation - the module was written
+ * for a guest that touches no floating point at all, and nothing did until the
+ * soft-float test group. Because nofp.o is linked ahead of libgcc.a, those
+ * stubs also kept the real implementations out of the image entirely.
+ *
+ * What still traps is the libm surface below: sin, pow and friends genuinely
+ * have no business running inside a proof.
  */
-/*
- * The ACSL contract is embedded in the macro so every expansion carries it.
- * NOTE: to make Frama-C see annotations inside macro bodies, preprocess with
- * comments preserved through expansion (GCC/Clang: -CC), e.g.
- *   frama-c -cpp-extra-args="-CC" module.c
- */
-#define NOFP_STUB(name) \
-    /*@ assigns \nothing; ensures \false; exits \exit_status == 255; */ \
-    void name(void) { nofp_trap(); }
-
-NOFP_STUB(__extenddftf2)
-NOFP_STUB(__addtf3)
-NOFP_STUB(__netf2)
-NOFP_STUB(__multf3)
-NOFP_STUB(__fixunstfsi)
-NOFP_STUB(__floatunsitf)
-NOFP_STUB(__subtf3)
-NOFP_STUB(__fixtfsi)
-NOFP_STUB(__floatsitf)
-NOFP_STUB(__eqtf2)
-NOFP_STUB(__divtf3)
-NOFP_STUB(__letf2)
-NOFP_STUB(__trunctfsf2)
-NOFP_STUB(__trunctfdf2)
-NOFP_STUB(__getf2)
-NOFP_STUB(__floatdidf)
-NOFP_STUB(__floatunsisf)
-NOFP_STUB(__ltdf2)
-NOFP_STUB(__gedf2)
-NOFP_STUB(__fixdfsi)
-NOFP_STUB(__gtdf2)
-NOFP_STUB(__floatsisf)
-NOFP_STUB(__floatsidf)
-NOFP_STUB(__floatunsidf)
-NOFP_STUB(__floatundisf)
-NOFP_STUB(__muldf3)
-NOFP_STUB(__mulsf3)
-NOFP_STUB(__floatundidf)
-NOFP_STUB(__divdf3)
-NOFP_STUB(__subdf3)
-NOFP_STUB(__adddf3)
-NOFP_STUB(__extendsftf2)
-NOFP_STUB(__extendsfdf2)
-NOFP_STUB(__eqdf2)
-NOFP_STUB(__fixunsdfsi)
-NOFP_STUB(__fixunsdfdi)
-NOFP_STUB(__divsf3)
-NOFP_STUB(__truncdfsf2)
-NOFP_STUB(__fixdfdi)
-NOFP_STUB(__gtsf2)
-NOFP_STUB(__fixunssfsi)
-NOFP_STUB(__addsf3)
-NOFP_STUB(__nedf2)
-NOFP_STUB(__floatdisf)
-NOFP_STUB(__fixsfsi)
-NOFP_STUB(__fixunssfdi)
-NOFP_STUB(__gesf2)
-NOFP_STUB(__ledf2)
-NOFP_STUB(__ltsf2)
-NOFP_STUB(__subsf3)
-NOFP_STUB(__eqsf2)
-NOFP_STUB(__lesf2)
 
 /*
  * libm surface. The runtime's math helpers (RhpDblPow, RhpDblLog, ... in
