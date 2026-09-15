@@ -1992,6 +1992,18 @@ internal class BuildCommand : CommandBase
                 // with "different floating-point ABI from crt1.o".
                 if (IsZkvm(libc))
                     PatchRiscvAbiStaticLib(firstLib + "/libc.a", verbose);
+
+                /* The soft-float builtins. Without an FPU the compiler lowers
+                 * every double operation to a call to __adddf3 and its 51
+                 * siblings, and on riscv64 nothing else here defines them:
+                 * the runtime's own C++ (the GC's cgroup limits, the yield
+                 * normalization) calls them, and so does anything the guest
+                 * does with a double. The bundled libgcc.a is already built
+                 * lp64, so it needs no ABI patching, and it comes last
+                 * because these are the leaves - nothing it pulls in refers
+                 * back to libc. */
+                if (IsZkvm(libc))
+                    ldArgs.Append($"\"{firstLib}/libgcc.a\" ");
             }
 
             if (libc == "bionic")
