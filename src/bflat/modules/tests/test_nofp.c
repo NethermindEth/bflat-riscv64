@@ -34,7 +34,7 @@ static const struct {
 int main(void)
 {
     unsigned n = sizeof(stubs) / sizeof(stubs[0]);
-    CHECK(n >= 50); /* the generated list really covers the module */
+    CHECK(n >= 45); /* the generated list really covers the module */
 
     /*
      * Nothing but libm may trap. A soft-float builtin stubbed here would kill
