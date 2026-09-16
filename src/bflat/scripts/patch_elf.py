@@ -44,9 +44,10 @@ def prepare_parser():
     )
     parser.add_argument(
         "--nop-zero-words",
-        help="Rewrite every all-zero word in .text to NOP. Zero is not an encoding; it only "
-             "appears as alignment padding between functions, which SP1 rejects when it "
-             "transpiles the whole segment up front",
+        help="Rewrite the alignment padding between functions in .text to NOP. ILC pads with "
+             "either an all-zero word, which is not an encoding at all, or c.nop, which is one "
+             "the no-C targets cannot decode; SP1 rejects both when it transpiles the whole "
+             "segment up front",
         action="store_true",
         default=False,
     )
@@ -486,6 +487,15 @@ if args.nop_fences or args.nop_zero_words:
 
     fences = zeros = skipped = 0
 
+    # What alignment padding looks like: ILC writes a repeated pattern, zero on
+    # the targets that have no NOP byte and c.nop (0001) on RISC-V. Neither is
+    # something a no-C decoder will accept, and neither can be a data blob of
+    # any use, so a gap made entirely of one of them is padding.
+    C_NOP = b"\x01\x00"
+
+    def is_padding(gap):
+        return not any(gap) or gap == C_NOP * (len(gap) // 2)
+
     def rewrite_code(lo, hi):
         global fences, zeros
         for off in range(lo, min(hi, len(text_data)) - 3, 4):
@@ -493,7 +503,7 @@ if args.nop_fences or args.nop_zero_words:
             if args.nop_fences and (word[0] & 0x7F) == 0x0F:
                 text_data[off:off + 4] = NOP
                 fences += 1
-            elif args.nop_zero_words and word == b"\0\0\0\0":
+            elif args.nop_zero_words and word in (b"\0\0\0\0", C_NOP * 2):
                 text_data[off:off + 4] = NOP
                 zeros += 1
 
@@ -501,7 +511,8 @@ if args.nop_fences or args.nop_zero_words:
     for lo, hi in in_fn:
         # The gap before this function: alignment padding, or data.
         gap = text_data[prev_end:lo]
-        if args.nop_zero_words and gap and len(gap) <= MAX_ALIGN_PAD and not any(gap):
+        if (args.nop_zero_words and gap and len(gap) <= MAX_ALIGN_PAD
+                and len(gap) % 4 == 0 and is_padding(gap)):
             for off in range(prev_end, lo - 3, 4):
                 text_data[off:off + 4] = NOP
                 zeros += 1
@@ -510,7 +521,8 @@ if args.nop_fences or args.nop_zero_words:
         rewrite_code(lo, hi)
         prev_end = max(prev_end, hi)
     tail = text_data[prev_end:]
-    if args.nop_zero_words and tail and len(tail) <= MAX_ALIGN_PAD and not any(tail):
+    if (args.nop_zero_words and tail and len(tail) <= MAX_ALIGN_PAD
+            and len(tail) % 4 == 0 and is_padding(tail)):
         for off in range(prev_end, len(text_data) - 3, 4):
             text_data[off:off + 4] = NOP
             zeros += 1
