@@ -1612,7 +1612,6 @@ internal class BuildCommand : CommandBase
             dumpers.Add(new MstatObjectDumper(mstatFileName, typeSystemContext));
 
         string objectFilePath = Path.ChangeExtension(outputFilePath, targetOS is TargetOS.Windows or TargetOS.UEFI ? ".obj" : ".o");
-        string patchedFilePath = Path.ChangeExtension(outputFilePath, ".patched");
 
         PerfWatch compileWatch = new PerfWatch("Native compile");
         CompilationResults compilationResults = compilation.Compile(objectFilePath, ObjectDumper.Compose(dumpers));
@@ -2174,10 +2173,27 @@ internal class BuildCommand : CommandBase
             if (verbose)
                 patchElfArgs += "--print-fn-boundaries ";
 
+            /* In place, like sp1 below: what -o names is what the zkVM runs.
+             * This used to leave the rewritten image beside the output as
+             * <name>.patched, and every consumer had to know which of the two
+             * files was the real one - a guest Makefile, a test suite copying
+             * binaries between agents, a person at a prompt. Getting it wrong
+             * ran the unpatched image, which starts and then misbehaves in
+             * ways that look like a compiler bug. */
+            string ziskPatchedPath = outputFilePath + ".ziskpatched";
             int patchExitCode = RunCommand(patchElfPath,
-                outputFilePath + " " + patchedFilePath +
+                outputFilePath + " " + ziskPatchedPath +
                 patchElfArgs,
                 printCommands);
+            if (patchExitCode == 0 && File.Exists(ziskPatchedPath))
+            {
+                File.Move(ziskPatchedPath, outputFilePath, true);
+            }
+            else
+            {
+                Console.Error.WriteLine("error: patch_elf failed for the zisk image");
+                exitCode = patchExitCode != 0 ? patchExitCode : 1;
+            }
         }
 
         if (libc == "sp1" && exitCode == 0)
@@ -2206,8 +2222,8 @@ internal class BuildCommand : CommandBase
 
         // Exact whole-image ISA verification: decode the linked binary and fail
         // the build if it carries an instruction class the target cannot run.
-        // patch_elf (zisk) does not touch .text, so outputFilePath's code is the
-        // same the guest executes.
+        // Both patch_elf passes above have already run and rewritten the output
+        // in place, so this is the image the guest executes.
         if (exitCode == 0
             && (result.GetValueForOption(ErrorOnFloatBinaryOption)
                 || result.GetValueForOption(ErrorOnCompressedOption)
