@@ -21,8 +21,11 @@
  * The image is not position independent, so dlpi_addr is 0 and the vaddrs
  * are already absolute.
  *
- * Not linked when the build drops its EH data (--remove-eh, module_params.yml):
- * musl's stub stays and the runtime fails fast on throw.
+ * Linked under --remove-eh too: the runtime asks for module headers during
+ * start-up (RhRegisterOSModule), and on a target that links noos the
+ * unwrapped symbol is a trap, so the guest would die there instead of failing
+ * fast on a throw. With the tables stripped this reports the load segment
+ * alone and the lookup fails, which is what the policy wants.
  *
  * Verified by verify/run_wp.sh: WP proves the contracts below (functional
  * properties plus RTE) for everything that builds the answer, and Eva

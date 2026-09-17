@@ -8,7 +8,12 @@ options:
     # Synthetic program headers for libunwind: musl's dl_iterate_phdr walks
     # an empty dso list in a statically linked guest with no loader, so the
     # runtime would never find .eh_frame_hdr and every throw would fail fast.
-    # Dropped under --remove-eh, where the unwind tables do not survive the
-    # link and there is nothing left to point at (see module.c).
+    #
+    # Applied under --remove-eh as well, even though there is then no unwind
+    # index to point at. Dropping it does not leave musl's harmless stub: the
+    # zkVM targets link noos, whose dl_iterate_phdr is a trap, and the runtime
+    # asks for module headers from RhRegisterOSModule during start-up - so the
+    # guest died with 253 before reaching Main, rather than failing fast on a
+    # throw the way the policy says. The module answers the no-index case by
+    # reporting the load segment alone (see module.c).
     - value: --wrap=dl_iterate_phdr
-      eh: unwind
