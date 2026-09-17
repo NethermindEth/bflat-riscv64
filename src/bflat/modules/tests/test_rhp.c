@@ -26,6 +26,9 @@ __wrap_System_Console_Interop_Sys__InitializeTerminalAndSignalHandling(void);
 extern void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param);
 extern int __wrap_SystemNative_Write(int fd, const void *buffer,
                                      int bufferSize);
+extern int __wrap_SystemNative_FStat(long fd, void *output);
+extern int __wrap_SystemNative_IsATty(long fd);
+extern long __wrap_SystemNative_Dup(long oldfd);
 extern void __wrap_RhpReversePInvoke(void *pFrame);
 extern void __wrap_RhpReversePInvokeReturn(void *pFrame);
 extern void __wrap_RhpThrowEx(void *exceptionObj);
@@ -55,6 +58,28 @@ __wrap_System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__C
 static void *thrown_obj;
 void ZkvmThrow(void *exceptionObj) { thrown_obj = exceptionObj; }
 #endif
+
+/* FileStatus as libSystem.Native lays it out (pal_io.h). The module keeps its
+ * own copy of this; the test carries a second one on purpose, so a field
+ * added on one side without the other is a failing test rather than a silent
+ * write past the end of the caller's struct. */
+typedef struct {
+    int      Flags;
+    int      Mode;
+    unsigned Uid;
+    unsigned Gid;
+    long     Size;
+    long     ATime, ATimeNsec;
+    long     MTime, MTimeNsec;
+    long     CTime, CTimeNsec;
+    long     BirthTime, BirthTimeNsec;
+    long     Dev;
+    long     RDev;
+    long     Ino;
+    unsigned UserFlags;
+} test_file_status;
+
+#define TEST_S_IFCHR 0020000
 
 /* Reference model: the managed HashHelpers.IsPrime, quirks included
  * (1 reports prime; even prime is only 2). */
@@ -86,6 +111,49 @@ int main(void)
         == 1);
     CHECK(__wrap_SystemNative_Write(1, "abc", 3) == 3); /* swallowed fully */
     CHECK(__wrap_SystemNative_Write(1, NULL, 0) == 0);
+
+    /* --- the three answers Console.OpenStandardOutput() needs ---
+     * UnixConsoleStream's constructor fstats the descriptor and refuses to
+     * hand back a stream unless it is a character device; the stream then
+     * asks whether it is a terminal, and Console dups the descriptor. Each
+     * of those is an unserviceable OS call under noos, which is what killed
+     * a guest on its first Console.Write. */
+    {
+        test_file_status st;
+        for (long fd = 0; fd <= 2; fd++) {
+            memset(&st, 0xEE, sizeof(st));
+            CHECK(__wrap_SystemNative_FStat(fd, &st) == 0);
+            CHECK(st.Mode == (TEST_S_IFCHR | 0666));
+            /* the rest of the struct is written, not left as stack garbage:
+             * .NET reads Flags and Size off this too */
+            CHECK(st.Flags == 0 && st.Size == 0 && st.Ino == 0
+                  && st.Dev == 0 && st.UserFlags == 0);
+        }
+
+        /* Any other descriptor fails: there is no file system here, so a
+         * plausible-looking answer would be a lie the caller acts on. */
+        for (long fd = 3; fd <= 5; fd++) {
+            memset(&st, 0xEE, sizeof(st));
+            CHECK(__wrap_SystemNative_FStat(fd, &st) == -1);
+            CHECK(st.Mode == 0 && st.Size == 0); /* cleared even on failure */
+        }
+        memset(&st, 0xEE, sizeof(st));
+        CHECK(__wrap_SystemNative_FStat(-1, &st) == -1);
+    }
+
+    /* Never a terminal: the termios and terminfo paths behind a "yes" are
+     * far more OS than the guest has. */
+    CHECK(__wrap_SystemNative_IsATty(0) == 0);
+    CHECK(__wrap_SystemNative_IsATty(1) == 0);
+    CHECK(__wrap_SystemNative_IsATty(2) == 0);
+    CHECK(__wrap_SystemNative_IsATty(4242) == 0);
+
+    /* Dup hands back what it was given: one process, three fixed
+     * descriptors, no exec for a duplicate to survive. */
+    CHECK(__wrap_SystemNative_Dup(0) == 0);
+    CHECK(__wrap_SystemNative_Dup(1) == 1);
+    CHECK(__wrap_SystemNative_Dup(2) == 2);
+    CHECK(__wrap_SystemNative_Dup(99) == 99);
 
     /* --- bulk move: plain memmove semantics, overlaps included --- */
     {

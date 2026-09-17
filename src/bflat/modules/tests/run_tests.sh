@@ -23,6 +23,9 @@ OUT_DIR="${TESTS_DIR}/out"
 
 CC="${CC:-riscv64-linux-gnu-gcc}"
 CXX="${CXX:-riscv64-linux-gnu-g++}"
+# Same toolchain prefix as CC; used to rename noos's symbols (see below).
+NM="${NM:-${CC%gcc}nm}"
+OBJCOPY="${OBJCOPY:-${CC%gcc}objcopy}"
 
 # Native riscv64 needs no emulator; anywhere else pick a qemu-user binary.
 if [ "$(uname -m)" = "riscv64" ] ; then
@@ -123,6 +126,29 @@ run_one test_pal \
 
 run_one test_nofp \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_nofp.c" "${MOD_DIR}/nofp/module.c"
+
+# noos: the module defines plain libc names - strlen, fork, fprintf - because
+# displacing musl's is its whole job. Linking it into a host test displaces the
+# harness's libc too, and noos's fprintf is a trap, so a failing CHECK would
+# terminate the process instead of printing which check failed (and the trap
+# tests could not fork, because fork is trapped as well).
+#
+# Rename every symbol the module DEFINES to noos_t_*, leaving its undefined
+# references (exit, zkvm_console_write) alone so the test can still satisfy
+# them; the test calls the renamed copies. --allow-multiple-definition, the
+# trick nothread uses below, cannot help here for the same reason.
+if ${CC} ${CFLAGS} -c "${MOD_DIR}/noos/module.c" -o "${OUT_DIR}/noos_raw.o" ; then
+	"${NM}" -g --defined-only "${OUT_DIR}/noos_raw.o" \
+		| awk '$2 ~ /^[TtDdBbRr]$/ { print $3 " noos_t_" $3 }' \
+		> "${OUT_DIR}/noos_syms.txt"
+	"${OBJCOPY}" --redefine-syms="${OUT_DIR}/noos_syms.txt" \
+		"${OUT_DIR}/noos_raw.o" "${OUT_DIR}/noos_renamed.o"
+	run_one test_noos \
+		${CC} ${CFLAGS} "${TESTS_DIR}/test_noos.c" "${OUT_DIR}/noos_renamed.o"
+else
+	echo "BUILD FAIL: test_noos (module.c)"
+	failures=$((failures + 1))
+fi
 
 # nothread: the module defines pthread_mutex_lock and friends, which glibc
 # also defines. --allow-multiple-definition lets the host link pick ours (it

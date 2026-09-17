@@ -11,6 +11,9 @@
 extern int
 __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer,
                                                          int bufferLength);
+extern void
+__wrap_minipal_get_non_cryptographically_secure_random_bytes(
+    unsigned char *buffer, int bufferLength);
 extern int __wrap_CryptoNative_EnsureOpenSslInitialized(void);
 extern int __wrap_CryptoNative_GetRandomBytes(unsigned char *buffer,
                                               int length);
@@ -50,6 +53,40 @@ int main(void)
         CHECK(match);
     }
 
+    /* The non-cryptographic entry point is the one that matters most for a
+     * proof: upstream XORs srand48(time(NULL)) into it, and it feeds
+     * Marvin.GenerateSeed and HashCode.s_seed, so a stray wall-clock byte
+     * there reorders every hash-ordered collection. It must be the same
+     * deterministic stream, taken from the same shared state. */
+    {
+        unsigned char buf[48];
+        memset(buf, 0xEE, sizeof(buf));
+        __wrap_minipal_get_non_cryptographically_secure_random_bytes(
+            buf, sizeof(buf));
+        int match = 1;
+        for (unsigned i = 0; i < sizeof(buf); i++)
+            match &= (buf[i] == ref_byte());
+        CHECK(match);
+    }
+
+    /* Two runs from the same point in the stream agree with each other -
+     * the property a guest replaying the same proof depends on. */
+    {
+        unsigned char a[16], b[16];
+        __wrap_minipal_get_non_cryptographically_secure_random_bytes(
+            a, sizeof(a));
+        for (unsigned i = 0; i < sizeof(a); i++)
+            CHECK(a[i] == ref_byte());
+        __wrap_minipal_get_non_cryptographically_secure_random_bytes(
+            b, sizeof(b));
+        int differs = 0;
+        for (unsigned i = 0; i < sizeof(b); i++) {
+            differs |= (b[i] != a[i]);
+            CHECK(b[i] == ref_byte());
+        }
+        CHECK(differs); /* the stream advances rather than repeating */
+    }
+
     /* Zero-length requests succeed and write nothing. */
     {
         unsigned char guard[4] = { 1, 2, 3, 4 };
@@ -57,6 +94,7 @@ int main(void)
                                                                        0)
               == 0);
         CHECK(__wrap_CryptoNative_GetRandomBytes(guard, 0) == 1);
+        __wrap_minipal_get_non_cryptographically_secure_random_bytes(guard, 0);
         CHECK(guard[0] == 1 && guard[3] == 4);
     }
 
