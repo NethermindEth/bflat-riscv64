@@ -125,12 +125,13 @@ Optional but useful flags:
 | `--substitution <file>` | Apply an extra ILLink substitutions file on top of the built-in zkVM set. |
 | `-x` | Print the ILC and linker commands as they run. |
 
-For `--libc zisk` the link produces `<output>` and the postprocessor then
-writes `<output>.patched` beside it — **`.patched` is the file Zisk runs**,
-and the one to ship; the unpatched ELF is kept because it is the more
-convenient thing to disassemble. For `--libc zisk_sim` there is no
-postprocessing step and the single output runs under `qemu-riscv64` or
-natively on RISC-V64 Linux.
+For `--libc zisk`, `sp1` and `openvm` the link is followed by a postprocessing
+pass that rewrites the ELF **in place**: what `-o` names is what the zkVM runs,
+and there is no second file to choose between. ZisK's pass fixes the init
+array and TLS template and trims `.bss`; SP1's rewrites the encodings its
+transpiler rejects (FENCE and alignment padding). For `--libc zisk_sim` there
+is no postprocessing and the output runs under `qemu-riscv64` or natively on
+RISC-V64 Linux.
 
 ## Run a built binary
 
@@ -141,9 +142,9 @@ $ ./hello
 # x86 host with QEMU user-mode
 $ qemu-riscv64 ./hello
 
-# Inside Zisk's emulator — note it is the postprocessed ELF, passed with -e
+# Inside Zisk's emulator, passed with -e
 # (--rom takes an already-converted ROM, not an ELF)
-$ ziskemu -e ./hello.patched
+$ ziskemu -e ./hello
 ```
 
 ## Linking external libraries via NuGet
