@@ -155,13 +155,30 @@ __wrap___init_tls(size_t *aux)
     complete behaviors;
     disjoint behaviors;
 */
+/* The first lookup, which may precede __init_tls: initialise, then answer. Kept
+ * out of line and reached by a tail call so that __tls_get_addr itself is a leaf -
+ * inlined, the initialisation's memcpy/memset calls made every lookup save six
+ * registers, and the runtime looks up its allocation context on every array
+ * allocation. */
+static __attribute__((noinline, cold))
 void *
-__wrap___tls_get_addr(size_t *v)
+tls_get_addr_first(size_t *v)
 {
-    if (tls_base == NULL)
-        ensure_tls_initialized();
+    ensure_tls_initialized();
 
     if (v != NULL)
         return (void*)(tls_base + v[1]);
     return tls_base;
+}
+
+void *
+__wrap___tls_get_addr(size_t *v)
+{
+    uint8_t *base = tls_base;
+    if (__builtin_expect(base == NULL, 0))
+        return tls_get_addr_first(v);
+
+    if (v != NULL)
+        return (void*)(base + v[1]);
+    return base;
 }
