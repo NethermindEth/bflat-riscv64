@@ -37,6 +37,30 @@ extern void *__wrap___tls_get_addr(size_t *v);
 
 int main(void)
 {
+    /* Fork before startup so each first-use path sees an uninitialized block. */
+    for (int indexed = 0; indexed <= 1; indexed++)
+    {
+        EXPECT_EXIT(0, {
+            size_t v[2];
+            v[0] = 77;
+            v[1] = 5;
+            uint8_t *first = __wrap___tls_get_addr(indexed ? v : NULL);
+            uint8_t *base = indexed ? first - v[1] : first;
+            CHECK(base != NULL);
+            CHECK(memcmp(base, __tdata_load, TDATA_LEN) == 0);
+            for (int i = 0; i < 32; i++)
+                CHECK(base[TDATA_LEN + i] == 0);
+            CHECK(set_thread_area_calls == 0);
+            base[3] = 0x77;
+            __wrap___init_tls(NULL);
+            CHECK(set_thread_area_arg == base);
+            CHECK(set_thread_area_calls == 1);
+            CHECK(base[3] == 0x77);
+            CHECK(__wrap___tls_get_addr(v) == base + 5);
+            _exit(t_fail ? 1 : 0);
+        });
+    }
+
     /* Full startup path first: sets up the block and installs tp. */
     __wrap___init_tls(NULL);
     CHECK(set_thread_area_calls == 1);
