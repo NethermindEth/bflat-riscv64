@@ -45,6 +45,9 @@
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rtm.26502.199-upstream-perf</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rtm.26502.199-upstream</RuntimeReleaseTag>
 
+    <!-- Only this package carries the widening-cast and Zb lowering fixes from dotnet-riscv#9. -->
+    <DefineConstants Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">$(DefineConstants);ZISK_BITMANIP_SUPPORTED</DefineConstants>
+
     <!-- Cache key for everything fetched per release. RuntimeVersion stays
          the plain NuGet version: every release ships
          bflat.compiler.$(RuntimeVersion).nupkg, so anything cached

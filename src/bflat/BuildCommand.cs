@@ -706,15 +706,26 @@ internal class BuildCommand : CommandBase
             // the lp64 soft-float ABI + soft-float lowering; C and A stop
             // compressed/atomic emission through the same instruction-set
             // mechanism as the EnableRiscV64* knobs passed below.
+            // The one exception is ZisK proper, whose transpiler implements
+            // Zba, Zbb and Zbs natively (sh*add, rev8, andn, clz, bset, ...),
+            // so its guests get them with a fixed compiler. SP1, OpenVM and
+            // zisk_sim (which may run on hardware or QEMU without them) stay
+            // on rv64im. Zicond waits
+            // for a ZisK release that decodes czero.
             if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
             {
                 // Only the extensions this compiler package models can be
-                // negated (.NET 10 knows no Zbs/Zicond); probe each one.
+                // named (.NET 10 knows no Zbs/Zicond); probe each one.
+#if ZISK_BITMANIP_SUPPORTED
+                bool zisk = libc == "zisk";
+#else
+                bool zisk = false;
+#endif
                 var reduced = new List<string>();
                 foreach (string ext in new[] { "c", "a", "f", "d", "zba", "zbb", "zbs", "zicond" })
                 {
                     if (new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet(ext))
-                        reduced.Add("-" + ext);
+                        reduced.Add(zisk && ext is "zba" or "zbb" or "zbs" ? ext : "-" + ext);
                 }
                 string reducedIsa = string.Join(",", reduced);
                 isaArg = string.IsNullOrEmpty(isaArg) ? reducedIsa : isaArg + "," + reducedIsa;
