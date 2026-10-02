@@ -136,6 +136,26 @@ __wrap___init_tls(size_t *aux)
     __wrap___init_tp(__wrap___copy_tls(tp));
 }
 
+/* The first lookup may precede __init_tls. Keeping initialization out of line
+ * lets subsequent lookups avoid saving registers for memcpy/memset. */
+/*@
+    requires v == \null || \valid_read(v + (0 .. 1));
+    assigns tls_initialized, tp, tls_base,
+            tls_storage_static[0 .. (100 * 1024) - 1];
+    ensures tls_initialized == 1;
+    ensures \result == (v == \null ? (void *)tls_base : (void *)(tls_base + v[1]));
+*/
+static __attribute__((noinline, cold))
+void *
+tls_get_addr_first(size_t *v)
+{
+    ensure_tls_initialized();
+
+    if (v != NULL)
+        return (void*)(tls_base + v[1]);
+    return tls_base;
+}
+
 /*@ // v = {module id, offset}; with one module and one thread the module
     // id is irrelevant and the answer is always tls_base + offset. A null
     // v yields the TLS base itself (non-standard convenience used by the
@@ -158,10 +178,11 @@ __wrap___init_tls(size_t *aux)
 void *
 __wrap___tls_get_addr(size_t *v)
 {
-    if (tls_base == NULL)
-        ensure_tls_initialized();
+    uint8_t *base = tls_base;
+    if (__builtin_expect(base == NULL, 0))
+        return tls_get_addr_first(v);
 
     if (v != NULL)
-        return (void*)(tls_base + v[1]);
-    return tls_base;
+        return (void*)(base + v[1]);
+    return base;
 }
