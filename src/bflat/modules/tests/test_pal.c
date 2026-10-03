@@ -253,6 +253,27 @@ int main(void)
         CHECK(all_zero);
         CHECK(__wrap_calloc(0x8000000000000000UL, 3) == NULL); /* overflow */
         CHECK(__wrap_calloc(0, 8) != NULL);
+
+        /* A warmup reset may recycle written memory. calloc must still zero it. */
+        const unsigned long sizes[] = {1, 7, 8, 9, 64, 65};
+        for (unsigned j = 0; j < sizeof(sizes) / sizeof(sizes[0]); j++)
+        {
+            unsigned long size = sizes[j];
+            void *mark = zk_heap_mark();
+            unsigned char *dirty = __wrap___libc_malloc_impl(size);
+            CHECK(dirty != NULL);
+            memset(dirty, 0xA5, size);
+            zk_heap_reset(mark);
+            unsigned char *reused = __wrap_calloc(size, 1);
+            CHECK(reused == dirty);
+            all_zero = 1;
+            for (unsigned long i = 0; i < size; i++)
+                all_zero &= (reused[i] == 0);
+            CHECK(all_zero);
+        }
+        void *mark = zk_heap_mark();
+        CHECK(__wrap_calloc(2 * HEAP_SIZE, 1) == NULL);
+        CHECK(zk_heap_mark() == mark);
     }
 
     MARK("mmap");
