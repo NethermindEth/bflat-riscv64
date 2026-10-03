@@ -184,6 +184,8 @@ zk_heap_mark(void)
 }
 
 /*@ assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
 
     behavior restore:
       assumes m != \null;
@@ -200,7 +202,13 @@ void
 zk_heap_reset(void *m)
 {
     if (m != 0)
+    {
+        uint8_t *target = (uint8_t *)m;
+        if (mem >= (uint8_t *)_kernel_heap_bottom && target > mem &&
+            target <= (uint8_t *)_kernel_heap_top)
+            memset(mem, 0, (size_t)(target - mem));
         mem = (uint8_t *)m;
+    }
 }
 
 /*@ // Downward bump allocation. On success the returned block is 8-byte
@@ -324,8 +332,8 @@ __wrap___libc_realloc(void *p, unsigned long n)
 /*
  * Optimized calloc
  */
-/*@ // Zeroing is free: zkVM RAM is zero at boot and the heap never reuses
-    // memory, so every block from the bump allocator is already all-zero.
+/*@ // Zeroing is free: zkVM RAM starts zero and reset clears released memory,
+    // so every block from the bump allocator is already all-zero.
     assigns g_zk_bump_ptr;
     assigns ((uint8_t *)_kernel_heap_bottom)
         [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
@@ -349,7 +357,7 @@ __wrap_calloc(unsigned long nmemb, unsigned long size)
     if (nmemb != 0 && total / nmemb != size)
         return NULL;
 
-    /* No memset: the bump allocator hands out fresh zero RAM. */
+    /* No memset: fresh RAM and reset-released RAM are both zeroed. */
     return __wrap___libc_malloc_impl((unsigned long)total);
 }
 
