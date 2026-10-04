@@ -1460,6 +1460,12 @@ internal class BuildCommand : CommandBase
 
             // dotnet-riscv fixup perf-61: the uGC never moves objects, so `fixed` locals need no pinning.
             backendOptions.Add("JitZkNoPinning=1");
+
+            // dotnet-riscv fixup perf-62/perf-63: synthesized block weights; locals live only across
+            // cold calls stay in caller-saved registers and are spilled at the call (values in hex).
+            backendOptions.Add("JitZkSynthesizeCounts=1");
+            backendOptions.Add("JitZkSpillKeepReg=1");
+            backendOptions.Add("JitZkColdCallSpill=7d");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
