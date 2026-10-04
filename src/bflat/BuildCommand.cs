@@ -1457,6 +1457,9 @@ internal class BuildCommand : CommandBase
             // +3 measured -2.2% steps for +3% code on mainnet blocks, +8 only -2.24% for +13%
             // code. Hex, like every JIT integer knob; ignored by a JIT without the fixup.
             backendOptions.Add("JitInlineAdditionalMultiplier=3");
+
+            // dotnet-riscv fixup perf-61: the uGC never moves objects, so `fixed` locals need no pinning.
+            backendOptions.Add("JitZkNoPinning=1");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
