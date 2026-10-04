@@ -1450,7 +1450,7 @@ internal class BuildCommand : CommandBase
             // dotnet-riscv fixup perf-56 (JitZkCsrPInvokes) emits the listed P/Invokes as
             // the single csrrs instead of a call, with no register kills. A JIT without
             // the fixup ignores the unknown knob. CSR numbers in hex.
-            backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_sha256_f:805");
+            backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_sha256_f:805,memmove:813,memcpy:813");
 
             // dotnet-riscv fixup perf-57: raise the inliner's profitability multiplier. On the
             // zkVM code size is free and every avoided call saves its executed ABI overhead;
