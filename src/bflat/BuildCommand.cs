@@ -2089,7 +2089,8 @@ internal class BuildCommand : CommandBase
                  * module_params.yml (packed as rhp.params.yml). What is NOT
                  * wrapped anymore, and why the originals work on .NET 10 +
                  * uGC alloc-context budgets: allocation helpers (upstream
-                 * riscv64 AllocFast.S + GcAllocInternal), thread statics
+                 * riscv64 AllocFast.S + GcAllocInternal; only their bump
+                 * fast paths are wrapped, to skip the TLS lookup), thread statics
                  * (plain TLS field + managed jagged arrays), the Lock family
                  * incl. DeadlockAwareAcquire (truthful IsHeldByCurrentThread
                  * breaks recursive cctor cycles), CheckCastAny, cgroup

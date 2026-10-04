@@ -53,6 +53,51 @@ __wrap_System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__C
 #define CalcNumBuckets \
     __wrap_System_Collections_Immutable_System_Collections_Frozen_FrozenHashTable__CalcNumBuckets
 
+extern void *__wrap_RhpNewFast(const void *pEEType);
+extern void *__wrap_RhpNewArrayFast(const void *pEEType,
+                                    unsigned long numElements);
+extern void *__wrap_RhpNewPtrArrayFast(const void *pEEType,
+                                       unsigned long numElements);
+
+/* The runtime side of the allocation wrappers: the thread's allocation
+ * context (combined_limit, alloc_ptr) and the original helpers, which only
+ * record that the wrapper handed the call on. */
+static struct {
+    unsigned char *combined_limit;
+    unsigned char *alloc_ptr;
+} test_thread;
+static int get_thread_calls;
+static const void *real_type;
+static unsigned long real_count;
+static int real_calls;
+static void *const real_result = (void *)0x5a5a;
+
+void *RhpGetThread(void)
+{
+    get_thread_calls++;
+    return &test_thread;
+}
+void *__real_RhpNewFast(const void *pEEType)
+{
+    real_calls++;
+    real_type = pEEType;
+    return real_result;
+}
+void *__real_RhpNewArrayFast(const void *pEEType, unsigned long numElements)
+{
+    real_calls++;
+    real_type = pEEType;
+    real_count = numElements;
+    return real_result;
+}
+void *__real_RhpNewPtrArrayFast(const void *pEEType, unsigned long numElements)
+{
+    real_calls++;
+    real_type = pEEType;
+    real_count = numElements;
+    return real_result;
+}
+
 #ifdef WITH_ZKVM_THROW
 /* Strong definition resolving rhp's weak reference. */
 static void *thrown_obj;
@@ -206,6 +251,65 @@ int main(void)
         CHECK(CalcNumBuckets(NULL, 4, 1) == 7);   /* next prime >= 4 */
         CHECK(CalcNumBuckets(NULL, 8000001, 0) == 8000001); /* beyond table:
                                                                len | 1 */
+    }
+
+    /* --- allocation fast paths: bump the thread's context, else hand the
+     * untouched arguments to the original helper --- */
+    {
+        /* MethodTable head: m_usComponentSize, m_usFlags, m_uBaseSize. */
+        static const struct { unsigned short cs, flags; unsigned base; }
+            obj_type = { 0, 0, 0x28 }, arr_type = { 2, 0, 0x18 };
+        static unsigned long heap[64];
+        unsigned char *start = (unsigned char *)heap;
+        unsigned long *obj;
+
+        test_thread.alloc_ptr = start;
+        test_thread.combined_limit = start + sizeof(heap);
+
+        /* The first call binds the context and leaves the work to the
+         * original helper. */
+        CHECK(__wrap_RhpNewFast(&obj_type) == real_result);
+        CHECK(get_thread_calls == 1 && real_calls == 1);
+        CHECK(real_type == &obj_type);
+        CHECK(test_thread.alloc_ptr == start);
+
+        obj = __wrap_RhpNewFast(&obj_type);
+        CHECK((unsigned char *)obj == start);
+        CHECK(obj[0] == (unsigned long)&obj_type);
+        CHECK(test_thread.alloc_ptr == start + 0x28);
+
+        /* 3 chars: 0x18 + 6, rounded up to 0x20. */
+        obj = __wrap_RhpNewArrayFast(&arr_type, 3);
+        CHECK((unsigned char *)obj == start + 0x28);
+        CHECK(obj[0] == (unsigned long)&arr_type && obj[1] == 3);
+        CHECK(test_thread.alloc_ptr == start + 0x48);
+
+        obj = __wrap_RhpNewPtrArrayFast(&arr_type, 2);
+        CHECK((unsigned char *)obj == start + 0x48);
+        CHECK(obj[0] == (unsigned long)&arr_type && obj[1] == 2);
+        CHECK(test_thread.alloc_ptr == start + 0x70);
+        CHECK(get_thread_calls == 1 && real_calls == 1);
+
+        /* Exactly the remaining budget still fits; one byte more does not. */
+        test_thread.combined_limit = test_thread.alloc_ptr + 0x28;
+        CHECK(__wrap_RhpNewFast(&obj_type) == (void *)(start + 0x70));
+        CHECK(__wrap_RhpNewFast(&obj_type) == real_result);
+        CHECK(__wrap_RhpNewArrayFast(&arr_type, 0) == real_result);
+        CHECK(real_count == 0);
+        CHECK(__wrap_RhpNewPtrArrayFast(&arr_type, 1) == real_result);
+        CHECK(real_count == 1 && real_calls == 4);
+        CHECK(test_thread.alloc_ptr == start + 0x98);
+
+        /* Lengths the helpers reject go to them, whatever the budget. */
+        test_thread.combined_limit = start + sizeof(heap);
+        CHECK(__wrap_RhpNewArrayFast(&arr_type, 0x80000000UL) == real_result);
+        CHECK(real_count == 0x80000000UL);
+        CHECK(__wrap_RhpNewArrayFast(&arr_type, ~0UL) == real_result);
+        CHECK(real_count == ~0UL);
+        CHECK(__wrap_RhpNewPtrArrayFast(&arr_type, 0x8000000) == real_result);
+        CHECK(real_count == 0x8000000);
+        CHECK(real_calls == 7 && get_thread_calls == 1);
+        CHECK(test_thread.alloc_ptr == start + 0x98);
     }
 
     /* --- throw/fail-fast --- */
