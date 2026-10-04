@@ -1451,6 +1451,12 @@ internal class BuildCommand : CommandBase
             // the single csrrs instead of a call, with no register kills. A JIT without
             // the fixup ignores the unknown knob. CSR numbers in hex.
             backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_sha256_f:805");
+
+            // dotnet-riscv fixup perf-57: raise the inliner's profitability multiplier. On the
+            // zkVM code size is free and every avoided call saves its executed ABI overhead;
+            // +3 measured -2.2% steps for +3% code on mainnet blocks, +8 only -2.24% for +13%
+            // code. Hex, like every JIT integer knob; ignored by a JIT without the fixup.
+            backendOptions.Add("JitInlineAdditionalMultiplier=3");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
