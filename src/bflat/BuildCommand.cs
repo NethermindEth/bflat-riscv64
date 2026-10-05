@@ -1469,6 +1469,8 @@ internal class BuildCommand : CommandBase
 
             // dotnet-riscv fixup perf-64: zero fills of 24+ bytes as the ZisK memset precompile idiom.
             backendOptions.Add("JitZkMemsetCsr=18");
+            // dotnet-riscv fixup perf-65: unrolled block copies of 16+ bytes as the ZisK DMA memcpy idiom.
+            backendOptions.Add("JitZkMemcpyCsr=10");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
