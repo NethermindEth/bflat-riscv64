@@ -76,6 +76,7 @@ extern void *__real_RhpNewPtrArrayFast(const void *pEEType,
 
 static ee_alloc_context *alloc_context;
 
+/*@ assigns alloc_context; */
 static __attribute__((noinline, cold)) void
 bind_alloc_context(void)
 {
@@ -83,6 +84,24 @@ bind_alloc_context(void)
 }
 
 /* Takes size bytes from the budget into *obj; 0 when they do not fit. */
+/*@ requires \valid(ctx) && \valid(obj);
+    requires ctx->alloc_ptr <= ctx->combined_limit;
+
+    behavior fits:
+      assumes size <= ctx->combined_limit - ctx->alloc_ptr;
+      assigns ctx->alloc_ptr, *obj;
+      ensures \result == 1;
+      ensures *obj == \old(ctx->alloc_ptr);
+      ensures ctx->alloc_ptr == \old(ctx->alloc_ptr) + size;
+
+    behavior exhausted:
+      assumes size > ctx->combined_limit - ctx->alloc_ptr;
+      assigns \nothing;
+      ensures \result == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
 static inline int
 bump_alloc(ee_alloc_context *ctx, uintptr_t size, uint8_t **obj)
 {
@@ -94,6 +113,12 @@ bump_alloc(ee_alloc_context *ctx, uintptr_t size, uint8_t **obj)
     return 1;
 }
 
+/*@ // Off the bump path the original helper runs; its effects (refills,
+    // exceptions) are the runtime's and are not specified here. Either way
+    // the object comes back stamped with its MethodTable.
+    requires \valid_read((const uint32_t *)((const uint8_t *)pEEType + 4));
+    ensures *(const void **)\result == pEEType;
+*/
 void *
 __wrap_RhpNewFast(const void *pEEType)
 {
@@ -108,6 +133,10 @@ __wrap_RhpNewFast(const void *pEEType)
     return __real_RhpNewFast(pEEType);
 }
 
+/*@ // Same split as __wrap_RhpNewFast.
+    requires \valid_read((const uint16_t *)pEEType);
+    ensures *(const void **)\result == pEEType;
+*/
 void *
 __wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
 {
@@ -124,6 +153,9 @@ __wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
     return __real_RhpNewArrayFast(pEEType, numElements);
 }
 
+/*@ // Same split as __wrap_RhpNewFast.
+    ensures *(const void **)\result == pEEType;
+*/
 void *
 __wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
 {
