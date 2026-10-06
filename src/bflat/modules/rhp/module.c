@@ -47,14 +47,130 @@ __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
     memmove(dest, src, len);
 }
 
-/* Allocation helpers (RhpNewFast, RhpNewObject, RhpNewPtrArrayFast,
- * RhpNewArrayFast, RhNewString) are no longer wrapped: upstream .NET 10
- * ships riscv64 AllocFast.S whose inline bump on the thread's
- * ee_alloc_context works once uGC hands out an allocation budget
- * (uGCHeap::Alloc refill quantum), and the native slow path
- * (GCHelpers.cpp: GcAllocInternal) already performs the Array.MaxLength
- * and overflow checks the old wraps reimplemented - with the MethodTable
- * layout owned by the runtime instead of hand-copied offsets here. */
+/* Allocation fast paths without the TLS lookup. Upstream riscv64
+ * AllocFast.S finds the thread's ee_alloc_context through __tls_get_addr on
+ * every allocation, which also costs each helper a stack frame. The guest
+ * has exactly one thread and the tls module keeps one static TLS block, so
+ * the context's address never changes: it is looked up once, through the
+ * same TLS variable the helpers use (RhpGetThread), and each wrapper then
+ * performs the helper's bump with it. Everything off the bump path - no
+ * context yet, a length the helper rejects, an exhausted budget - is handed
+ * to the original helper with its arguments untouched, so refills (uGCHeap::
+ * Alloc), the Array.MaxLength and overflow checks (GcAllocInternal) and the
+ * exceptions stay the runtime's.
+ *
+ * The offsets are AllocFast.S's (AsmOffsets): MethodTable m_usComponentSize
+ * at 0 and m_uBaseSize at 4, the ee_alloc_context at the start of the thread
+ * with combined_limit at 0 and alloc_ptr at 8, an array's length right after
+ * its MethodTable pointer, and SZARRAY_BASE_SIZE 0x18. */
+typedef struct {
+    uint8_t *combined_limit;
+    uint8_t *alloc_ptr;
+} ee_alloc_context;
+
+extern ee_alloc_context *RhpGetThread(void);
+extern void *__real_RhpNewFast(const void *pEEType);
+extern void *__real_RhpNewArrayFast(const void *pEEType, uintptr_t numElements);
+extern void *__real_RhpNewPtrArrayFast(const void *pEEType,
+                                       uintptr_t numElements);
+
+static ee_alloc_context *alloc_context;
+
+/*@ assigns alloc_context; */
+static __attribute__((noinline, cold)) void
+bind_alloc_context(void)
+{
+    alloc_context = RhpGetThread();
+}
+
+/* Takes size bytes from the budget into *obj; 0 when they do not fit. */
+/*@ requires \valid(ctx) && \valid(obj);
+    requires ctx->alloc_ptr <= ctx->combined_limit;
+
+    behavior fits:
+      assumes size <= ctx->combined_limit - ctx->alloc_ptr;
+      assigns ctx->alloc_ptr, *obj;
+      ensures \result == 1;
+      ensures *obj == \old(ctx->alloc_ptr);
+      ensures ctx->alloc_ptr == \old(ctx->alloc_ptr) + size;
+
+    behavior exhausted:
+      assumes size > ctx->combined_limit - ctx->alloc_ptr;
+      assigns \nothing;
+      ensures \result == 0;
+
+    complete behaviors;
+    disjoint behaviors;
+*/
+static inline int
+bump_alloc(ee_alloc_context *ctx, uintptr_t size, uint8_t **obj)
+{
+    uint8_t *ptr = ctx->alloc_ptr;
+    if (size > (uintptr_t)(ctx->combined_limit - ptr))
+        return 0;
+    ctx->alloc_ptr = ptr + size;
+    *obj = ptr;
+    return 1;
+}
+
+/*@ // Off the bump path the original helper runs; its effects (refills,
+    // exceptions) are the runtime's and are not specified here. Either way
+    // the object comes back stamped with its MethodTable.
+    requires \valid_read((const uint32_t *)((const uint8_t *)pEEType + 4));
+    ensures *(const void **)\result == pEEType;
+*/
+void *
+__wrap_RhpNewFast(const void *pEEType)
+{
+    ee_alloc_context *ctx = alloc_context;
+    uint8_t *obj;
+    if (__builtin_expect(ctx == NULL, 0))
+        bind_alloc_context();
+    else if (bump_alloc(ctx, *(const uint32_t *)((const uint8_t *)pEEType + 4), &obj)) {
+        *(const void **)obj = pEEType;
+        return obj;
+    }
+    return __real_RhpNewFast(pEEType);
+}
+
+/*@ // Same split as __wrap_RhpNewFast.
+    requires \valid_read((const uint16_t *)pEEType);
+    ensures *(const void **)\result == pEEType;
+*/
+void *
+__wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
+{
+    ee_alloc_context *ctx = alloc_context;
+    uint8_t *obj;
+    if (__builtin_expect(ctx == NULL, 0))
+        bind_alloc_context();
+    else if (numElements <= 0x7fffffff &&
+             bump_alloc(ctx, (*(const uint16_t *)pEEType * numElements + 0x18 + 7) & ~(uintptr_t)7, &obj)) {
+        ((const void **)obj)[0] = pEEType;
+        ((uintptr_t *)obj)[1] = numElements;
+        return obj;
+    }
+    return __real_RhpNewArrayFast(pEEType, numElements);
+}
+
+/*@ // Same split as __wrap_RhpNewFast.
+    ensures *(const void **)\result == pEEType;
+*/
+void *
+__wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
+{
+    ee_alloc_context *ctx = alloc_context;
+    uint8_t *obj;
+    if (__builtin_expect(ctx == NULL, 0))
+        bind_alloc_context();
+    /* AllocFast.S's bound, below which the size cannot overflow. */
+    else if (numElements < 0x8000000 && bump_alloc(ctx, numElements * 8 + 0x18, &obj)) {
+        ((const void **)obj)[0] = pEEType;
+        ((uintptr_t *)obj)[1] = numElements;
+        return obj;
+    }
+    return __real_RhpNewPtrArrayFast(pEEType, numElements);
+}
 
 /* No CheckCastAny cache-bypass anymore: the cast cache runs on Interlocked
  * ops and statics, both functional now. Likewise UInt32ToDecStr's
