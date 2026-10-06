@@ -77,6 +77,7 @@ internal class BuildCommand : CommandBase
     private static Option<bool> RemoveEhOption = new Option<bool>("--remove-eh", "Strip the DWARF unwind tables (.eh_frame, .eh_frame_hdr, .dotnet_eh_table) from the linked zkVM image and fail fast on throw instead of dispatching the exception: a throw exits the guest, no catch or finally runs. Saves image size. By default the tables are kept and managed exception handling works.");
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
+    private static Option<string[]> CodegenOptOption = new Option<string[]>("--codegenopt", "Define a RyuJIT codegen option (Name=Value, integers in hex)");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
 
@@ -139,6 +140,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.OutputOption,
             NoLinkOption,
             LdFlagsOption,
+            CodegenOptOption,
             MibcOption,
             PrintCommandsOption,
             TargetArchitectureOption,
@@ -1442,6 +1444,33 @@ internal class BuildCommand : CommandBase
         if (libc == "zisk" && optimizationMode != OptimizationMode.None)
         {
             backendOptions.Add("JitRiscV64DmaCompare=1");
+
+            // ZisK precompiles are a CSR write with the operand address; libziskos wraps
+            // keccak-f and sha256-f in two-instruction stubs reached through a P/Invoke.
+            // dotnet-riscv fixup perf-56 (JitZkCsrPInvokes) emits the listed P/Invokes as
+            // the single csrrs instead of a call, with no register kills. A JIT without
+            // the fixup ignores the unknown knob. CSR numbers in hex.
+            backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_sha256_f:805,memmove:813,memcpy:813");
+
+            // dotnet-riscv fixup perf-57: raise the inliner's profitability multiplier. On the
+            // zkVM code size is free and every avoided call saves its executed ABI overhead;
+            // +3 measured -2.2% steps for +3% code on mainnet blocks, +8 only -2.24% for +13%
+            // code. Hex, like every JIT integer knob; ignored by a JIT without the fixup.
+            backendOptions.Add("JitInlineAdditionalMultiplier=3");
+
+            // dotnet-riscv fixup perf-61: the uGC never moves objects, so `fixed` locals need no pinning.
+            backendOptions.Add("JitZkNoPinning=1");
+
+            // dotnet-riscv fixup perf-62/perf-63: synthesized block weights; locals live only across
+            // cold calls stay in caller-saved registers and are spilled at the call (values in hex).
+            backendOptions.Add("JitZkSynthesizeCounts=1");
+            backendOptions.Add("JitZkSpillKeepReg=1");
+            backendOptions.Add("JitZkColdCallSpill=7d");
+
+            // dotnet-riscv fixup perf-64: zero fills of 24+ bytes as the ZisK memset precompile idiom.
+            backendOptions.Add("JitZkMemsetCsr=18");
+            // dotnet-riscv fixup perf-65: unrolled block copies of 16+ bytes as the ZisK DMA memcpy idiom.
+            backendOptions.Add("JitZkMemcpyCsr=10");
         }
 
         // zkVM ISA gate: the ZisK proof target is rv64ima with NO compressed (C)
@@ -1519,6 +1548,8 @@ internal class BuildCommand : CommandBase
                 ? "JitRiscV64StrictAlign=1"
                 : "JitRiscV64StrictAlign=0");
         }
+
+        backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
 
         builder
             .UseInstructionSetSupport(instructionSetSupport)

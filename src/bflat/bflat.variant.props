@@ -42,7 +42,7 @@
          on top. min -> upstream, perf -> upstream-perf. -->
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.114-upstream-perf</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">10.0.114-upstream</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rtm.26502.199-upstream-perf</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-rtm.26506.199-upstream-perf</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rtm.26502.199-upstream</RuntimeReleaseTag>
 
     <!-- Only this package carries the widening-cast and Zb lowering fixes from dotnet-riscv#9. -->
