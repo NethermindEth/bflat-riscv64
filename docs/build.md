@@ -207,9 +207,10 @@ $ bflat build app.cs --os linux --libc openvm
 Same modules, allocator and substitutions again; what changes is the entry
 point, the memory map and the halt protocol, all described in
 [modules.md](modules.md#zkvm-sp1). Neither runs the ELF postprocessor —
-both provers load from program headers. Both also assert naturally aligned
-memory accesses, so these two targets always build with the byte-wise
-expansion `--no-unaligned-access` asks for by hand.
+both provers load from program headers. SP1 also asserts naturally aligned
+memory accesses, so it always builds with the byte-wise expansion
+`--no-unaligned-access` asks for by hand; OpenVM executes misaligned accesses
+natively and gets wide ones.
 
 Neither has been run end to end in its prover yet, and neither has a
 bindings package for hint/public-value I/O; see

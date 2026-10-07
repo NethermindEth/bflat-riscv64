@@ -325,6 +325,19 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Check unaligned-access codegen per zkVM target
+        # The min runtime lacks the JitNoUnalignedAccess fixup, so SP1 gets wide accesses there too.
+        # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
+        if: matrix.variant == 'perf'
+        run: |
+          set -e
+          id=$(docker create --platform linux/amd64 ${{ matrix.image }}:test bash /t/run-unaligned-access.sh)
+          docker cp tests/. "$id:/t"
+          rc=0
+          docker start -a "$id" || rc=$?
+          docker rm "$id" > /dev/null
+          exit "$rc"
+
       - name: Log in to Docker Hub
         if: inputs.publish
         uses: docker/login-action@v3
