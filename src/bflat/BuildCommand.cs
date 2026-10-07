@@ -1521,30 +1521,31 @@ internal class BuildCommand : CommandBase
         // a quarter of the executed instructions on a guest, so the value is always
         // passed explicitly rather than left to the knob's default.
         //
-        // ZisK does not assert alignment (its emulator runs and its prover verifies
-        // wide unaligned accesses), so it gets wide accesses unless
-        // --no-unaligned-access asks otherwise. SP1 and OpenVM DO assert it and fail
-        // the execution on a violation - SP1 raises InvalidMemoryAccess for any LH/LW/
-        // LD/SH/SW/SD off its natural boundary (crates/core/executor/src/vm.rs), and
-        // OpenVM's load/store chip only accepts the aligned shift amounts
-        // (extensions/riscv/circuit/src/loadstore/execution.rs) - so they are always
-        // built byte-wise. A JIT built without fixup 35 ignores the unknown knob.
+        // ZisK and OpenVM do not assert alignment, so they get wide accesses unless
+        // --no-unaligned-access asks otherwise: ZisK's emulator runs and its prover
+        // verifies wide unaligned accesses, and OpenVM's rv64 load/store adapters
+        // read or write a second memory block when an access straddles one
+        // (extensions/riscv/circuit/src/adapters/{load,store}/multi_byte.rs). SP1 DOES
+        // assert it and fails the execution on a violation - it raises
+        // InvalidMemoryAccess for any LH/LW/LD/SH/SW/SD off its natural boundary
+        // (crates/core/executor/src/vm.rs) - so it is always built byte-wise. A JIT
+        // built without fixup 35 ignores the unknown knob.
         if (targetArchitecture == TargetArchitecture.RiscV64)
         {
             bool noUnaligned = result.GetValueForOption(NoUnalignedAccessOption)
-                || libc == "sp1" || libc == "openvm";
+                || libc == "sp1";
             backendOptions.Add(noUnaligned
                 ? "JitNoUnalignedAccess=1"
                 : "JitNoUnalignedAccess=0");
             // Strict alignment (dotnet-riscv fixup: JitRiscV64StrictAlign) goes one step
-            // further for the executors that reject any misaligned access: every scalar
+            // further for the executor that rejects any misaligned access: every scalar
             // load/store and unrolled block copy whose address the JIT cannot prove
             // aligned (byrefs into spans, Unsafe.As reinterpretation, pointer arithmetic)
             // gets an inline alignment test with a wide fast path and a byte-wise slow
             // path. Accesses through object references, array elements, stack locals and
             // statics are provably aligned and stay single instructions. A JIT built
             // without the fixup ignores the unknown knob.
-            backendOptions.Add((libc == "sp1" || libc == "openvm")
+            backendOptions.Add(libc == "sp1"
                 ? "JitRiscV64StrictAlign=1"
                 : "JitRiscV64StrictAlign=0");
         }

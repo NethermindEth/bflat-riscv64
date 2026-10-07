@@ -260,10 +260,12 @@ alignment gap is an illegal encoding, so both scripts fill `.text` padding
 with `NOP` (`=0x13000000`) and keep `.rodata` and the unwind tables in a
 separate, non-executable segment.
 
-**Both require natural alignment.** SP1 raises `InvalidMemoryAccess` for any
-`LH`/`LW`/`LD`/`SH`/`SW`/`SD` off its boundary, and OpenVM's load/store chip
-only accepts aligned shift amounts. `BuildCommand` therefore forces
-`JitNoUnalignedAccess=1` for both, the same expansion `--no-unaligned-access`
+**SP1 requires natural alignment; OpenVM does not.** SP1 raises
+`InvalidMemoryAccess` for any `LH`/`LW`/`LD`/`SH`/`SW`/`SD` off its boundary.
+OpenVM's rv64 load/store adapters accept any address and read or write a
+second memory block when an access straddles one, so `--libc openvm` gets
+wide unaligned accesses like ZisK. For SP1 `BuildCommand` forces
+`JitNoUnalignedAccess=1`, the same expansion `--no-unaligned-access`
 asks for by hand, **and** `JitRiscV64StrictAlign=1`. The first covers the
 accesses the JIT knows are unaligned; the second covers the ones it cannot
 know about, where the address is a byref whose alignment is only established
