@@ -65,6 +65,25 @@ options:
     # symbol comes from libziskos, which no other target links.
     - value: --wrap=inline_bump_alloc_aligned
       libc: zisk
+    # Per-call heap arena around the libziskos accelerators that allocate,
+    # which would otherwise leak their scratch memory into the never-freeing
+    # heap. Keep in step with the ZK_ACCEL_ARENA list in module.c.
+    - value: --wrap=zkvm_bls12_g1_msm
+      libc: zisk
+    - value: --wrap=zkvm_bls12_g2_msm
+      libc: zisk
+    - value: --wrap=zkvm_bls12_pairing
+      libc: zisk
+    - value: --wrap=zkvm_bn254_pairing
+      libc: zisk
+    - value: --wrap=zkvm_keccak256
+      libc: zisk
+    - value: --wrap=zkvm_kzg_point_eval
+      libc: zisk
+    - value: --wrap=zkvm_modexp
+      libc: zisk
+    - value: --wrap=zkvm_secp256k1_verify
+      libc: zisk
     # Hide musl's stdio write path on the real zkVMs; the sim keeps host
     # stdio. The unwrapped one issues a raw writev - harmless on ZisK, which
     # emulates Linux syscalls, but a hard error on SP1 (unknown syscall id)
