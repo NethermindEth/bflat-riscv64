@@ -65,27 +65,14 @@ options:
     # symbol comes from libziskos, which no other target links.
     - value: --wrap=inline_bump_alloc_aligned
       libc: zisk
-    # Per-call heap arena around the libziskos accelerator API, which would
-    # otherwise leak its scratch memory into the never-freeing heap.
-    - value: --wrap=zkvm_blake2f
-      libc: zisk
-    - value: --wrap=zkvm_bls12_g1_add
-      libc: zisk
+    # Per-call heap arena around the libziskos accelerators that allocate,
+    # which would otherwise leak their scratch memory into the never-freeing
+    # heap. Keep in step with the ZK_ACCEL_ARENA list in module.c.
     - value: --wrap=zkvm_bls12_g1_msm
-      libc: zisk
-    - value: --wrap=zkvm_bls12_g2_add
       libc: zisk
     - value: --wrap=zkvm_bls12_g2_msm
       libc: zisk
-    - value: --wrap=zkvm_bls12_map_fp2_to_g2
-      libc: zisk
-    - value: --wrap=zkvm_bls12_map_fp_to_g1
-      libc: zisk
     - value: --wrap=zkvm_bls12_pairing
-      libc: zisk
-    - value: --wrap=zkvm_bn254_g1_add
-      libc: zisk
-    - value: --wrap=zkvm_bn254_g1_mul
       libc: zisk
     - value: --wrap=zkvm_bn254_pairing
       libc: zisk
@@ -95,15 +82,7 @@ options:
       libc: zisk
     - value: --wrap=zkvm_modexp
       libc: zisk
-    - value: --wrap=zkvm_ripemd160
-      libc: zisk
-    - value: --wrap=zkvm_secp256k1_ecrecover
-      libc: zisk
     - value: --wrap=zkvm_secp256k1_verify
-      libc: zisk
-    - value: --wrap=zkvm_secp256r1_verify
-      libc: zisk
-    - value: --wrap=zkvm_sha256
       libc: zisk
     # Hide musl's stdio write path on the real zkVMs; the sim keeps host
     # stdio. The unwrapped one issues a raw writev - harmless on ZisK, which
