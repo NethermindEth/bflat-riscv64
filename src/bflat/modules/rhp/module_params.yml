@@ -20,6 +20,10 @@ options:
     - value: --wrap=RhpNewFast
     - value: --wrap=RhpNewArrayFast
     - value: --wrap=RhpNewPtrArrayFast
+    # GC static bases and uninitialized/pinned arrays: the same bump, past the
+    # QCall slow path (mode switch, TLS, RhpGcAlloc, uGCHeap::Alloc).
+    - value: --wrap=RhAllocateNewObject
+    - value: --wrap=RhAllocateNewArray
     # Event tracing is meaningless in the guest; candidates for replacement
     # by the EventSourceSupport=false ILC feature switch.
     - value: --wrap=S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register

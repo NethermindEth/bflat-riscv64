@@ -172,6 +172,82 @@ __wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
     return __real_RhpNewPtrArrayFast(pEEType, numElements);
 }
 
+/* The QCalls behind GC static bases (StartupCodeHelpers.InitializeStatics,
+ * GC_ALLOC_PINNED_OBJECT_HEAP) and GC.AllocateUninitializedArray
+ * (GC_ALLOC_ZEROING_OPTIONAL) reach the GC through the full slow path - mode
+ * switch, TLS lookup, RhpGcAlloc, uGCHeap::Alloc - for what is a bump under
+ * uGC: it never moves or collects, so a pinned object needs no separate
+ * heap, and the context's memory is zeroed already. Other flags, a
+ * finalizer or a length past Array.MaxLength take the original path
+ * untouched; a request the budget cannot take goes to it without those two
+ * flags, so uGC serves it from the context and refills it. */
+#define GC_ALLOC_ZEROING_OPTIONAL 16
+#define GC_ALLOC_PINNED_OBJECT_HEAP 64
+#define MT_HAS_FINALIZER 0x00100000
+
+extern void __real_RhAllocateNewObject(const void *pEEType, uint32_t flags,
+                                       void **pResult);
+extern void __real_RhAllocateNewArray(const void *pEEType, uint32_t numElements,
+                                      uint32_t flags, void **pResult);
+
+/*@ // Off the bump path the original QCall runs, as for __wrap_RhpNewFast.
+    requires \valid_read((const uint32_t *)pEEType + (0 .. 1));
+    requires \valid(pResult);
+    ensures *(const void **)*pResult == pEEType;
+*/
+void
+__wrap_RhAllocateNewObject(const void *pEEType, uint32_t flags, void **pResult)
+{
+    ee_alloc_context *ctx = alloc_context;
+    uint8_t *obj;
+    if ((flags & ~(uint32_t)GC_ALLOC_PINNED_OBJECT_HEAP) == 0 &&
+        (*(const uint32_t *)pEEType & MT_HAS_FINALIZER) == 0) {
+        if (__builtin_expect(ctx == NULL, 0)) {
+            /* InitializeStatics runs before any fast-path allocation. */
+            bind_alloc_context();
+            ctx = alloc_context;
+        }
+        if (bump_alloc(ctx, *(const uint32_t *)((const uint8_t *)pEEType + 4), &obj)) {
+            *(const void **)obj = pEEType;
+            *pResult = obj;
+            return;
+        }
+        /* A pinned request would bypass the context and leave the next
+         * one no budget. */
+        flags = 0;
+    }
+    __real_RhAllocateNewObject(pEEType, flags, pResult);
+}
+
+/*@ // Same split as __wrap_RhAllocateNewObject.
+    requires \valid_read((const uint32_t *)pEEType + (0 .. 1));
+    requires \valid(pResult);
+    ensures *(const void **)*pResult == pEEType;
+*/
+void
+__wrap_RhAllocateNewArray(const void *pEEType, uint32_t numElements,
+                          uint32_t flags, void **pResult)
+{
+    ee_alloc_context *ctx = alloc_context;
+    uint8_t *obj;
+    if ((flags & ~(uint32_t)(GC_ALLOC_ZEROING_OPTIONAL | GC_ALLOC_PINNED_OBJECT_HEAP)) == 0 &&
+        numElements <= 0x7FFFFFC7) {
+        if (__builtin_expect(ctx == NULL, 0)) {
+            bind_alloc_context();
+            ctx = alloc_context;
+        }
+        if (bump_alloc(ctx, (*(const uint16_t *)pEEType * (uintptr_t)numElements +
+                             *(const uint32_t *)((const uint8_t *)pEEType + 4) + 7) & ~(uintptr_t)7, &obj)) {
+            ((const void **)obj)[0] = pEEType;
+            ((uintptr_t *)obj)[1] = numElements;
+            *pResult = obj;
+            return;
+        }
+        flags = 0;
+    }
+    __real_RhAllocateNewArray(pEEType, numElements, flags, pResult);
+}
+
 /* No CheckCastAny cache-bypass anymore: the cast cache runs on Interlocked
  * ops and statics, both functional now. Likewise UInt32ToDecStr's
  * small-number string cache (lazy statics), Thread::IsDetached (trivial
