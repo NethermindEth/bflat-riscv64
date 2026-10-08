@@ -1102,9 +1102,10 @@ __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
 /*
  * Per-call heap arena for the zkVM accelerator API (zkvm_accelerators.h).
  *
- * The ziskos Rust code behind these functions allocates scratch memory - the
- * modexp limb vectors, the MSM and pairing buffers - from the bump heap above,
- * which never frees. A block calling an accelerator tens of thousands of times
+ * The ziskos Rust code behind some of these functions allocates scratch
+ * memory - the modexp limb vectors, the MSM and pairing buffers - from the
+ * bump heap above, which never frees. A block calling an accelerator tens of
+ * thousands of times
  * exhausts the heap: a 200M-gas block of minimum-cost MODEXP calls runs out
  * after ~72k calls. Upstream ziskos solves the same problem in its staticlib
  * build by rewinding its heap on every host-facing call (reset_sys_alloc);
@@ -1170,25 +1171,22 @@ zk_accel_leave(uint8_t *mark)
         return status;                                                         \
     }
 
-ZK_ACCEL_ARENA(zkvm_blake2f)
-ZK_ACCEL_ARENA(zkvm_bls12_g1_add)
+/* Only the functions that allocate are wrapped: for the rest the arena is pure
+ * overhead, up to 0.7% of a block made of cheap SHA-256 calls. Measured with
+ * ziskemu execution counts (libziskos 1.3.1-alpha), counting entries into the
+ * allocator bridge per call: modexp ~22, the two pairings 7, KZG 3, the MSMs
+ * 2. sha256, ripemd160, blake2f, both ECDSA checks, the curve additions and
+ * multiplications and the map-to-curve functions never allocate. keccak256
+ * and secp256k1_verify could not be measured - no guest calls them - so they
+ * stay wrapped. A libziskos upgrade has to repeat the measurement. */
 ZK_ACCEL_ARENA(zkvm_bls12_g1_msm)
-ZK_ACCEL_ARENA(zkvm_bls12_g2_add)
 ZK_ACCEL_ARENA(zkvm_bls12_g2_msm)
-ZK_ACCEL_ARENA(zkvm_bls12_map_fp2_to_g2)
-ZK_ACCEL_ARENA(zkvm_bls12_map_fp_to_g1)
 ZK_ACCEL_ARENA(zkvm_bls12_pairing)
-ZK_ACCEL_ARENA(zkvm_bn254_g1_add)
-ZK_ACCEL_ARENA(zkvm_bn254_g1_mul)
 ZK_ACCEL_ARENA(zkvm_bn254_pairing)
 ZK_ACCEL_ARENA(zkvm_keccak256)
 ZK_ACCEL_ARENA(zkvm_kzg_point_eval)
 ZK_ACCEL_ARENA(zkvm_modexp)
-ZK_ACCEL_ARENA(zkvm_ripemd160)
-ZK_ACCEL_ARENA(zkvm_secp256k1_ecrecover)
 ZK_ACCEL_ARENA(zkvm_secp256k1_verify)
-ZK_ACCEL_ARENA(zkvm_secp256r1_verify)
-ZK_ACCEL_ARENA(zkvm_sha256)
 
 /*
  * musl's scanf/float-parsing cluster (vfscanf.o -> floatscan.o -> fmodl.o)
