@@ -1151,12 +1151,16 @@ zk_accel_leave(uint8_t *mark)
 
 /* The __real_ references are weak so that a ZisK guest linking no bindings
  * library, which leaves them undefined, still links. The wrappers are only
- * reached through --wrap, which requires the bindings library. */
+ * reached through --wrap, which requires the bindings library.
+ *
+ * The contract has no assigns clause because the forwarded call writes the
+ * caller's output buffers, which the wrapper knows nothing about; it states
+ * only what the wrapper itself guarantees. */
 #define ZK_ACCEL_ARENA(name)                                                   \
     extern long __real_##name(uintptr_t, uintptr_t, uintptr_t, uintptr_t,      \
                               uintptr_t, uintptr_t, uintptr_t, uintptr_t)      \
         __attribute__((weak));                                                 \
-    /*@ assigns g_zk_bump_ptr; ensures g_zk_bump_ptr == \old(g_zk_bump_ptr); */ \
+    /*@ ensures g_zk_bump_ptr == \old(g_zk_bump_ptr); */                        \
     long __wrap_##name(uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3, \
                        uintptr_t a4, uintptr_t a5, uintptr_t a6, uintptr_t a7) \
     {                                                                          \
