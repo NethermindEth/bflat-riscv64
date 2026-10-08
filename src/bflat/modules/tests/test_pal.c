@@ -40,6 +40,27 @@ long __real_syscall(long number, ...)
     return 4242;
 }
 
+/* __real_zkvm_modexp stand-in: allocates scratch memory through the ziskos
+ * allocator bridge and dirties it, as the Rust accelerator does, then writes
+ * its result through the caller's buffer (a6). Returns a0 + a7 to prove the
+ * first and last registers are forwarded. */
+static uint8_t *accel_scratch_low;
+long __real_zkvm_modexp(uintptr_t a0, uintptr_t a1, uintptr_t a2,
+                        uintptr_t a3, uintptr_t a4, uintptr_t a5,
+                        uintptr_t a6, uintptr_t a7)
+{
+    extern void *__wrap_inline_bump_alloc_aligned(uint32_t bytes,
+                                                  uint32_t align);
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    for (int i = 0; i < 3; i++) {
+        uint8_t *p = __wrap_inline_bump_alloc_aligned(1000, 32);
+        memset(p, 0xAB, 1000);
+        accel_scratch_low = p;
+    }
+    *(uint64_t *)a6 = 0x1122334455667788ULL;
+    return (long)(a0 + a7);
+}
+
 /* --- module under test ------------------------------------------------ */
 extern char *__wrap_getenv(char *var);
 extern char *__wrap_getcwd(char *buf, int size);
@@ -84,6 +105,9 @@ extern int __wrap_posix_memalign(void **out, unsigned long align,
                                  unsigned long size);
 extern void *__wrap_memalign(unsigned long align, unsigned long size);
 extern void *__wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align);
+extern long __wrap_zkvm_modexp(uintptr_t a0, uintptr_t a1, uintptr_t a2,
+                               uintptr_t a3, uintptr_t a4, uintptr_t a5,
+                               uintptr_t a6, uintptr_t a7);
 extern int __wrap_vfscanf(void *stream, const char *fmt, void *ap);
 extern int __wrap___isoc99_vfscanf(void *stream, const char *fmt, void *ap);
 extern long double __wrap___floatscan(void *f, int prec, int pok);
@@ -287,6 +311,41 @@ int main(void)
         CHECK(p != NULL && ((uintptr_t)p % 256) == 0);
         p = __wrap_inline_bump_alloc_aligned(40, 32);
         CHECK(p != NULL && ((uintptr_t)p % 32) == 0);
+
+        /* exhaustion halts instead of returning NULL into Rust */
+        EXPECT_EXIT(134, __wrap_inline_bump_alloc_aligned(2 * HEAP_SIZE, 8));
+    }
+
+    MARK("accel_arena");
+    /* --- accelerator calls rewind and zero their scratch memory --- */
+    {
+        uint64_t out = 0;
+        uint8_t *mark = g_zk_bump_ptr;
+        CHECK(mark != NULL);
+
+        long r = __wrap_zkvm_modexp(5, 0, 0, 0, 0, 0, (uintptr_t)&out, 37);
+        CHECK(r == 42);
+        CHECK(out == 0x1122334455667788ULL); /* the result survives */
+        CHECK(g_zk_bump_ptr == mark);        /* the scratch does not */
+        int all_zero = 1;
+        for (uint8_t *q = accel_scratch_low - 8; q < mark; q++)
+            all_zero &= (*q == 0);
+        CHECK(all_zero);
+
+        /* repeated calls do not grow the heap */
+        for (int i = 0; i < 1000; i++)
+            __wrap_zkvm_modexp(0, 0, 0, 0, 0, 0, (uintptr_t)&out, 0);
+        CHECK(g_zk_bump_ptr == mark);
+
+        /* a call on the never-used heap leaves it never-used, and zeroed */
+        g_zk_bump_ptr = NULL;
+        CHECK(__wrap_zkvm_modexp(1, 0, 0, 0, 0, 0, (uintptr_t)&out, 1) == 2);
+        CHECK(g_zk_bump_ptr == NULL);
+        all_zero = 1;
+        for (uint8_t *q = accel_scratch_low - 8; q < (uint8_t *)heap_top(); q++)
+            all_zero &= (*q == 0);
+        CHECK(all_zero);
+        g_zk_bump_ptr = mark;
     }
 
     MARK("stackbounds");

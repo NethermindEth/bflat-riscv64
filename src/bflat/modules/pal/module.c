@@ -1074,18 +1074,117 @@ __wrap_memalign(unsigned long align, unsigned long size)
     return __wrap_aligned_alloc(align, size);
 }
 
-/*@ requires align <= 8 || (align & (align - 1)) == 0;
+/*@ // Never returns NULL: on exhaustion it halts the guest instead.
+    requires align <= 8 || (align & (align - 1)) == 0;
     assigns g_zk_bump_ptr;
     assigns ((uint8_t *)_kernel_heap_bottom)
         [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
-    ensures \result == \null ||
-        (uintptr_t)\result % (align <= 8 ? 8 : align) == 0;
+    ensures \result != \null;
+    ensures (uintptr_t)\result % (align <= 8 ? 8 : align) == 0;
+    exits \exit_status == 134;
 */
 void *
 __wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
 {
-    return __wrap_aligned_alloc(align, bytes);
+    static const char msg[] = "ziskos: out of memory\n";
+    void *p = __wrap_aligned_alloc(align, bytes);
+
+    /* This is the ziskos Rust allocator. It hands NULL to handle_alloc_error,
+     * and the ziskos panic handler is `j .`, so the guest would spin until the
+     * emulator's step limit (2^36 steps, ~40 minutes) instead of ending. */
+    if (p == NULL) {
+        sys_write(2, (const unsigned char *)msg, sizeof(msg) - 1);
+        __wrap_abort();
+    }
+    return p;
 }
+
+/*
+ * Per-call heap arena for the zkVM accelerator API (zkvm_accelerators.h).
+ *
+ * The ziskos Rust code behind these functions allocates scratch memory - the
+ * modexp limb vectors, the MSM and pairing buffers - from the bump heap above,
+ * which never frees. A block calling an accelerator tens of thousands of times
+ * exhausts the heap: a 200M-gas block of minimum-cost MODEXP calls runs out
+ * after ~72k calls. Upstream ziskos solves the same problem in its staticlib
+ * build by rewinding its heap on every host-facing call (reset_sys_alloc);
+ * this does the same for the shared heap.
+ *
+ * Rewinding is safe because:
+ *   - every function in the API returns its results through caller-provided
+ *     buffers, so nothing allocated during the call is reachable afterwards;
+ *   - ziskos keeps no heap-allocated state across calls;
+ *   - no managed code runs inside the call, so the managed allocator, which
+ *     bumps the same pointer, cannot interleave with it.
+ * The released range is zeroed, because both the managed allocator and
+ * calloc rely on the heap handing out zeroed memory.
+ *
+ * The wrappers forward eight integer registers. Every function in the API
+ * takes at most seven integer or pointer arguments and returns an integer
+ * status, so a0-a7 carry them all and nothing is passed on the stack.
+ */
+/*@ assigns \nothing;
+    ensures \result == g_zk_bump_ptr;
+*/
+static inline uint8_t *
+zk_accel_enter(void)
+{
+    return mem;
+}
+
+/*@ assigns g_zk_bump_ptr;
+    assigns ((uint8_t *)_kernel_heap_bottom)
+        [0 .. (uint8_t *)_kernel_heap_top - (uint8_t *)_kernel_heap_bottom - 1];
+    ensures g_zk_bump_ptr == mark;
+*/
+static void
+zk_accel_leave(uint8_t *mark)
+{
+    /* A NULL mark is the never-used heap, which starts at its top. */
+    uint8_t *top = mark != NULL ? mark : (uint8_t *)_kernel_heap_top;
+    uint8_t *cur = mem;
+
+    if (cur != NULL && cur < top)
+        memset(cur, 0, (size_t)(top - cur));
+    mem = mark;
+}
+
+/* The __real_ references are weak so that a ZisK guest linking no bindings
+ * library, which leaves them undefined, still links. The wrappers are only
+ * reached through --wrap, which requires the bindings library. */
+#define ZK_ACCEL_ARENA(name)                                                   \
+    extern long __real_##name(uintptr_t, uintptr_t, uintptr_t, uintptr_t,      \
+                              uintptr_t, uintptr_t, uintptr_t, uintptr_t)      \
+        __attribute__((weak));                                                 \
+    /*@ assigns g_zk_bump_ptr; ensures g_zk_bump_ptr == \old(g_zk_bump_ptr); */ \
+    long __wrap_##name(uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3, \
+                       uintptr_t a4, uintptr_t a5, uintptr_t a6, uintptr_t a7) \
+    {                                                                          \
+        uint8_t *mark = zk_accel_enter();                                      \
+        long status = __real_##name(a0, a1, a2, a3, a4, a5, a6, a7);           \
+        zk_accel_leave(mark);                                                  \
+        return status;                                                         \
+    }
+
+ZK_ACCEL_ARENA(zkvm_blake2f)
+ZK_ACCEL_ARENA(zkvm_bls12_g1_add)
+ZK_ACCEL_ARENA(zkvm_bls12_g1_msm)
+ZK_ACCEL_ARENA(zkvm_bls12_g2_add)
+ZK_ACCEL_ARENA(zkvm_bls12_g2_msm)
+ZK_ACCEL_ARENA(zkvm_bls12_map_fp2_to_g2)
+ZK_ACCEL_ARENA(zkvm_bls12_map_fp_to_g1)
+ZK_ACCEL_ARENA(zkvm_bls12_pairing)
+ZK_ACCEL_ARENA(zkvm_bn254_g1_add)
+ZK_ACCEL_ARENA(zkvm_bn254_g1_mul)
+ZK_ACCEL_ARENA(zkvm_bn254_pairing)
+ZK_ACCEL_ARENA(zkvm_keccak256)
+ZK_ACCEL_ARENA(zkvm_kzg_point_eval)
+ZK_ACCEL_ARENA(zkvm_modexp)
+ZK_ACCEL_ARENA(zkvm_ripemd160)
+ZK_ACCEL_ARENA(zkvm_secp256k1_ecrecover)
+ZK_ACCEL_ARENA(zkvm_secp256k1_verify)
+ZK_ACCEL_ARENA(zkvm_secp256r1_verify)
+ZK_ACCEL_ARENA(zkvm_sha256)
 
 /*
  * musl's scanf/float-parsing cluster (vfscanf.o -> floatscan.o -> fmodl.o)
