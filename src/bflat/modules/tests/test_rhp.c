@@ -59,6 +59,11 @@ extern void *__wrap_RhpNewArrayFast(const void *pEEType,
 extern void *__wrap_RhpNewPtrArrayFast(const void *pEEType,
                                        unsigned long numElements);
 
+extern void __wrap_RhAllocateNewObject(const void *pEEType, unsigned flags,
+                                       void **pResult);
+extern void __wrap_RhAllocateNewArray(const void *pEEType, unsigned numElements,
+                                      unsigned flags, void **pResult);
+
 /* The runtime side of the allocation wrappers: the thread's allocation
  * context (combined_limit, alloc_ptr) and the original helpers, which only
  * record that the wrapper handed the call on. */
@@ -96,6 +101,25 @@ void *__real_RhpNewPtrArrayFast(const void *pEEType, unsigned long numElements)
     real_type = pEEType;
     real_count = numElements;
     return real_result;
+}
+
+static unsigned real_flags;
+void __real_RhAllocateNewObject(const void *pEEType, unsigned flags,
+                                void **pResult)
+{
+    real_calls++;
+    real_type = pEEType;
+    real_flags = flags;
+    *pResult = real_result;
+}
+void __real_RhAllocateNewArray(const void *pEEType, unsigned numElements,
+                               unsigned flags, void **pResult)
+{
+    real_calls++;
+    real_type = pEEType;
+    real_count = numElements;
+    real_flags = flags;
+    *pResult = real_result;
 }
 
 #ifdef WITH_ZKVM_THROW
@@ -310,6 +334,51 @@ int main(void)
         CHECK(real_count == 0x8000000);
         CHECK(real_calls == 7 && get_thread_calls == 1);
         CHECK(test_thread.alloc_ptr == start + 0x98);
+    }
+
+    /* --- allocation QCalls: the same bump for pinned objects and
+     * uninitialized arrays; an unfit request goes to the GC unpinned, any
+     * other request untouched --- */
+    {
+        static const struct { unsigned short cs, flags; unsigned base; }
+            obj_type = { 0, 0, 0x28 }, fin_type = { 0, 0x10, 0x28 },
+            arr_type = { 2, 0, 0x18 };
+        static unsigned long heap[32];
+        unsigned char *start = (unsigned char *)heap;
+        unsigned long *obj;
+        void *result;
+
+        /* The context is bound by the fast-path block above. */
+        test_thread.alloc_ptr = start;
+        test_thread.combined_limit = start + 0x48;
+        real_calls = 0;
+
+        __wrap_RhAllocateNewObject(&obj_type, 64 /* pinned */, &result);
+        obj = result;
+        CHECK((unsigned char *)obj == start && obj[0] == (unsigned long)&obj_type);
+        /* 3 chars: 0x18 + 6, rounded up to 0x20. */
+        __wrap_RhAllocateNewArray(&arr_type, 3, 16 /* zeroing optional */, &result);
+        obj = result;
+        CHECK((unsigned char *)obj == start + 0x28);
+        CHECK(obj[0] == (unsigned long)&arr_type && obj[1] == 3);
+        CHECK(test_thread.alloc_ptr == start + 0x48 && real_calls == 0);
+
+        /* Budget exhausted: the GC refills it, so the flags are dropped. */
+        __wrap_RhAllocateNewObject(&obj_type, 64, &result);
+        CHECK(result == real_result && real_calls == 1 && real_flags == 0);
+        __wrap_RhAllocateNewArray(&arr_type, 1, 64 | 16, &result);
+        CHECK(result == real_result && real_calls == 2 && real_flags == 0);
+        CHECK(real_count == 1);
+
+        /* A finalizer, another flag or an oversized length: untouched. */
+        test_thread.combined_limit = start + sizeof(heap);
+        __wrap_RhAllocateNewObject(&fin_type, 64, &result);
+        CHECK(result == real_result && real_type == &fin_type && real_flags == 64);
+        __wrap_RhAllocateNewObject(&obj_type, 32 | 64, &result);
+        CHECK(result == real_result && real_flags == (32 | 64));
+        __wrap_RhAllocateNewArray(&arr_type, 0x7FFFFFC8, 16, &result);
+        CHECK(result == real_result && real_count == 0x7FFFFFC8 && real_flags == 16);
+        CHECK(real_calls == 5 && test_thread.alloc_ptr == start + 0x48);
     }
 
     /* --- throw/fail-fast --- */
