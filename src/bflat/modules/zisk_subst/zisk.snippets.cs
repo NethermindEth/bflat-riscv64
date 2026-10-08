@@ -316,6 +316,52 @@ namespace __ZiskSnippets
         public static int[] LengthBucketsNone(string[] keys, global::System.Collections.Generic.IEqualityComparer<string> comparer, int minLength, int maxLength)
             => null;
 
+        // ---- ClassConstructorRunner.EnsureClassConstructorRun ----------------
+        // The stock runner serializes cctors across threads: a Cctor table
+        // entry, a Lock and a ManagedThreadId lookup per run, and deadlock
+        // detection between threads. The guest has one thread, so all a cctor
+        // run needs is the same-thread rules: one that is already running
+        // further up the stack is not re-entered, and one that threw keeps
+        // throwing the same TypeInitializationException. The context's address
+        // field carries that state (as Test.CoreLib's runner does): 0 = run,
+        // CctorRunning = running, CctorFailed = threw, with the exception kept
+        // in the stock Cctor table, which only this rare path touches.
+        private const nint CctorRunning = 1;
+        private const nint CctorFailed = 3;
+
+        public static unsafe void ClassConstructorRunnerEnsure(
+            corelib::System.Runtime.CompilerServices.StaticClassConstructionContext* pContext)
+        {
+            nint pfnCctor = pContext->cctorMethodAddress;
+            if (pfnCctor == 0 || pfnCctor == CctorRunning)
+                return;
+
+            if (pfnCctor == CctorFailed)
+            {
+                var failed = corelib::System.Runtime.CompilerServices.ClassConstructorRunner.Cctor.GetCctor(pContext);
+                throw failed.Array[failed.Index].Exception;
+            }
+
+            pContext->cctorMethodAddress = CctorRunning;
+            try
+            {
+                ((delegate*<void>)pfnCctor)();
+            }
+            catch (global::System.Exception e)
+            {
+                // The resource key, which is what SR returns in a guest built
+                // with UseSystemResourceKeys; naming SR here would root the
+                // resource manifest.
+                var wrapped = new corelib::System.TypeInitializationException(
+                    null, "TypeInitialization_Type_NoTypeAvailable", e);
+                var cctor = corelib::System.Runtime.CompilerServices.ClassConstructorRunner.Cctor.GetCctor(pContext);
+                cctor.Array[cctor.Index].Exception = wrapped;
+                pContext->cctorMethodAddress = CctorFailed;
+                throw wrapped;
+            }
+            pContext->cctorMethodAddress = 0;
+        }
+
         // ---- System.TimeZoneInfo..cctor -------------------------------------
         // The stock cctor computes s_daylightRuleMarker via
         // DateTime.MinValue.AddMilliseconds(2), whose inlined double scaling is
