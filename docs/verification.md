@@ -163,6 +163,46 @@ classes — dead conditions, leaked disposables, inexact reads, ignored
 results — rather than formatting preferences on code inherited from
 upstream.
 
+## Translation validation: `--proof`
+
+Everything above tests the compiler; il2rv64
+proves its output. For each compiled method it checks in Lean that the
+RISC-V code refines the method's CIL — return values, implicit exceptions,
+calls between methods, recursion — and composes the methods into one theorem
+for the program from its entry point. The compiler is not trusted: RyuJIT
+only supplies hints (where each IL variable lives at loop heads), and a wrong
+hint makes the proof fail, never pass.
+
+`bflat build --proof <dir>` writes what the checker needs:
+
+<dl class="kv">
+  <dt><code>il.json</code></dt><dd>The IL of every compiled method of the
+    program's assembly as RyuJIT received it — after bflat's substitutions
+    and IL rewrites, so the proof is about the code that was actually
+    compiled — with argument, local and return types and the callee of
+    every <code>call</code>. Bodies bflat rewrote are flagged.</dd>
+  <dt><code>jitcert.jsonl</code></dt><dd>One record per method from the
+    JIT: native offset and IL offset of each basic block, the homes of the
+    live IL variables, call return addresses, the frame shape. Written when
+    RyuJIT is built with il2rv64's <code>jit/ilrvcert.patch</code>; select
+    such a JIT with <code>--jit &lt;libclrjit_unix_riscv64_x64.so&gt;</code>
+    if the bundled one lacks it. The dump does not change the generated
+    code.</dd>
+  <dt>the object file</dt><dd>Copied before linking; the checker decodes the
+    instruction words itself.</dd>
+  <dt><code>proof.json</code></dt><dd>Entry method and file names.</dd>
+</dl>
+
+```bash
+bflat build -c Program.cs --arch riscv64 --os linux --libc zisk_sim \
+    --jit libclrjit_unix_riscv64_x64.so --proof proof
+<il2rv64>/tools/check-proof.sh proof      # exit status 0: verified
+```
+
+Today the checker covers static methods of the program's own assembly over
+integers (no heap, no `try` regions, no calls into the class libraries);
+the rest is on il2rv64's roadmap. It reports which methods it skipped and why.
+
 ## Samples and the end-to-end proof
 
 Both live in the zk-testing pipeline: nothing in `build-riscv64.yml` runs a

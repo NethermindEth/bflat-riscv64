@@ -78,6 +78,8 @@ internal class BuildCommand : CommandBase
     private static Option<bool> NoUnalignedAccessOption = new Option<bool>("--no-unaligned-access", "Expand every memory access flagged unaligned into a naturally-aligned byte-wise sequence (RISC-V 64 only). For executors that assert addr % width == 0; costs code size and speed. By default wide unaligned loads/stores are emitted.");
     private static Option<string[]> LdFlagsOption = new Option<string[]>(new string[] { "--ldflags" }, "Arguments to pass to the linker");
     private static Option<string[]> CodegenOptOption = new Option<string[]>("--codegenopt", "Define a RyuJIT codegen option (Name=Value, integers in hex)");
+    private static Option<string> ProofOption = new Option<string>("--proof", "Write the inputs of il2rv64 translation validation to this directory: the post-substitution IL of the compiled methods, the JIT's certificate records (needs a JIT with il2rv64's ilrvcert patch, see --jit) and the object file");
+    private static Option<string> JitPathOption = new Option<string>("--jit", "Path of the RyuJIT library to compile with instead of the bundled one");
     private static Option<string[]> MibcOption = new Option<string[]>(new string[] { "--mibc" }, "MIBC profile file(s) for profile-guided optimization");
     private static Option<bool> PrintCommandsOption = new Option<bool>("-x", "Print the commands");
 
@@ -176,6 +178,8 @@ internal class BuildCommand : CommandBase
             SymChartOption,
             WrapCheckOption,
             ErrorOnFloatOption,
+            ProofOption,
+            JitPathOption,
             ErrorOnFloatBinaryOption,
             ErrorOnCompressedOption,
             ErrorOnAtomicOption,
@@ -1552,6 +1556,14 @@ internal class BuildCommand : CommandBase
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
 
+        string proofDir = result.GetValueForOption(ProofOption);
+        if (proofDir != null)
+            backendOptions.Add(ProofDump.Prepare(proofDir));
+
+        string jitPath = result.GetValueForOption(JitPathOption);
+        if (jitPath != null)
+            ((RyuJitCompilationBuilder)builder).UseJitPath(Path.GetFullPath(jitPath));
+
         builder
             .UseInstructionSetSupport(instructionSetSupport)
             .UseBackendOptions(backendOptions)
@@ -1703,6 +1715,10 @@ internal class BuildCommand : CommandBase
 
             Console.WriteLine($"--error-on-float: OK (no floating point in any compiled method{(allowed > 0 ? $"; {allowed} known-dead site(s) ignored" : "")})");
         }
+
+        if (proofDir != null)
+            ProofDump.Write(proofDir, compiledAssembly, ilProvider, compilationResults.CompiledMethodBodies,
+                objectFilePath, jitPath);
 
         string exportsFile = null;
         if (nativeLib)
