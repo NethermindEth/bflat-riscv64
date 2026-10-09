@@ -300,6 +300,20 @@ class ZkvmSubstitutions
                 "LengthBuckets.CreateLengthBucketsArrayIfAppropriate");
         }
 
+        // ClassConstructorRunner.EnsureClassConstructorRun: the single-threaded
+        // runner (see the snippet). Its one parameter is a pointer type, matched
+        // by name and arity.
+        var ccrType = Type(ctx.SystemModule, "System.Runtime.CompilerServices", "ClassConstructorRunner");
+        MethodDesc ccrEnsure = null;
+        if (ccrType != null)
+        {
+            foreach (MethodDesc m in ccrType.GetMethods())
+                if (m.Name.StringEquals("EnsureClassConstructorRun") && m.Signature.Length == 1)
+                    ccrEnsure = m;
+        }
+        Add(ccrEnsure, Snippet("ClassConstructorRunnerEnsure"),
+            "ClassConstructorRunner.EnsureClassConstructorRun(StaticClassConstructionContext*)");
+
         // System.TimeZoneInfo..cctor: the donor rebuilds the whole cctor with the
         // s_daylightRuleMarker DateTime constructed tick-exactly in integers (the
         // stock body's DateTime.MinValue.AddMilliseconds(2) is its only FP).
