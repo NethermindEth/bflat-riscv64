@@ -85,6 +85,11 @@ static class ProofDump
                 ["symbol"] = mangler.GetMangledMethodName(m).ToString(),
                 ["module"] = (m.GetTypicalMethodDefinition() as EcmaMethod)?.Module.Assembly.GetName().Name,
                 ["generic"] = m.HasInstantiation || m.OwningType.HasInstantiation,
+                // shared code reads its instantiation from a generic dictionary
+                ["shared"] = m.IsSharedByGenericInstantiations,
+                // what RyuJIT's certificate records as the method's hash
+                // (CorInfoImpl.getMethodHash)
+                ["hash"] = (uint)m.GetHashCode(),
                 ["compiled"] = i < compiledCount,
             };
             methods.Add(e);
