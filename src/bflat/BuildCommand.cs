@@ -1718,7 +1718,8 @@ internal class BuildCommand : CommandBase
 
         if (proofDir != null)
             ProofDump.Write(proofDir, compiledAssembly, ilProvider, ((ILCompiler.Compilation)compilation).NameMangler,
-                compilationResults.CompiledMethodBodies, objectFilePath, jitPath);
+                compilationResults.CompiledMethodBodies, objectFilePath, jitPath,
+                ((ILCompiler.Compilation)compilation).NodeFactory);
 
         string exportsFile = null;
         if (nativeLib)
