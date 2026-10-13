@@ -362,16 +362,12 @@ Replacements for parts of the .NET runtime itself. Responsibilities:
 1. **P/Invoke transitions.** `RhpPInvoke`/`RhpReversePInvoke` and their
    return halves become no-ops: the frames they build park a thread at a GC
    rendezvous that never comes in a single-threaded, never-collecting guest.
-2. **Subsystem stubs.** EventPipe and EventSource registration, and — on
+2. **Subsystem stubs.** EventPipe registration, and — on
    the real zkVM, which has no terminal — console initialisation and
    `SystemNative_Write`.
 3. **Write barrier.** `RhBulkMoveWithWriteBarrier` is a plain `memmove`;
    uGC never scans, so there is nothing to record.
-4. **Integer replacements for FP-carrying helpers.** `HashHelpers.IsPrime`
-   (one copy per assembly that embeds the shared source) and
-   `FrozenHashTable.CalcNumBuckets`, whose managed bodies are stubbed by the
-   ILC substitutions.
-5. **Fail-fast.** `FailFast`, and under `--remove-eh` also `RhpThrowEx` —
+4. **Fail-fast.** `FailFast`, and under `--remove-eh` also `RhpThrowEx` —
    see below.
 
 ### Managed exceptions under `--remove-eh`

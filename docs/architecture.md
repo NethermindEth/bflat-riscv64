@@ -141,6 +141,13 @@ donor applies only while the original still stores exactly the fields it
 initializes. ILLink entries in the XML carry no such guarantee; the
 [ISA gates](verification.md) are the check that holds.
 
+**A constant stub cannot be redirected with `--wrap`.** ILC inlines the
+stub into its callers, so no call is left for the linker to divert to a
+native replacement and the stub's constant is what runs. A body that needs
+real logic gets a C# snippet. Optimized builds fail when a `--wrap` target
+is a managed method the scanner reached but codegen never emitted, which is
+what an inlined-everywhere method looks like.
+
 ### zkVM RyuJIT codegen knobs
 
 `BuildCommand.cs` passes RyuJIT knobs to ILC in two groups, and the
