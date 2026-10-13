@@ -23,6 +23,10 @@
 /* Linker-script symbols of the real image, provided by the test. */
 char _kernel_heap_bottom[HEAP_SIZE] __attribute__((aligned(4096)));
 
+/* Stack window; only its bounds are read. */
+char _init_stack_bottom[16];
+char _init_stack_top[16];
+
 /* Fixed bump-pointer cell (real image: top 8 bytes of RAM). */
 uint8_t *g_zk_bump_ptr = 0;
 uint8_t *g_zk_heap_floor = 0;
@@ -298,12 +302,12 @@ int main(void)
     }
 
     MARK("stackbounds");
-    /* --- stack bounds: page-aligned base, 8 MiB window, returns 1 --- */
+    /* --- stack bounds: the linker script's window, returns 1 --- */
     {
         void *base = NULL, *limit = NULL;
         CHECK(__wrap__Z24PalGetMaximumStackBoundsPPvS0_(&base, &limit) == 1);
-        CHECK(((uintptr_t)base % 4096) == 0);
-        CHECK((uintptr_t)base - (uintptr_t)limit == 8u * 1024u * 1024u);
+        CHECK(base == _init_stack_top);
+        CHECK(limit == _init_stack_bottom);
     }
 
     MARK("vfprintf");

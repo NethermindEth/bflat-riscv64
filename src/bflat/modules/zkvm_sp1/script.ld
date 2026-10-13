@@ -201,6 +201,7 @@ SECTIONS
    * the whole 0x00000000..STACK_TOP range below every loadable segment for
    * it, which is what its own guests use (sp = STACK_TOP, growing down).
    * That leaves the entire RAM window to the heap. */
+  PROVIDE(_init_stack_bottom = 0);
   PROVIDE(_init_stack_top    = 0x78000000);
   PROVIDE(_kernel_heap_bottom = .);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a

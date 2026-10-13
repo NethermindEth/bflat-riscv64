@@ -180,6 +180,7 @@ SECTIONS
    * whose bottom borders unmapped memory: an overflow faults in the emulator
    * instead of corrupting SYS, OUTPUT or .bss. 4 MiB is all ZisK reserves and
    * several times the deepest stack measured on mainnet blocks. */
+  PROVIDE(_init_stack_bottom = ORIGIN(stack));
   PROVIDE(_init_stack_top    = ORIGIN(stack) + LENGTH(stack));
   PROVIDE(_kernel_heap_bottom = .);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
