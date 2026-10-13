@@ -238,7 +238,11 @@ __wrap___libc_malloc_impl(unsigned long n)
      * Compared against the remaining space, NOT via the subtracted
      * pointer: for n larger than mem's distance to zero the subtraction
      * would wrap past the top of the address space, sail over the old
-     * `new_len < bottom` check and put the size header on a wild address. */
+     * `new_len < bottom` check and put the size header on a wild address.
+     * JIT-inlined allocation shares the bump pointer, so it may already sit
+     * below the floor; the remaining space would then wrap as well. */
+    if ((uintptr_t)mem < (uintptr_t)_kernel_heap_bottom)
+        return NULL;
     uintptr_t avail = (uintptr_t)mem - (uintptr_t)_kernel_heap_bottom;
     if (req_aligned < (size_t)n ||      /* n + 7 wrapped */
         req_aligned + 8u < req_aligned || /* + header wrapped */

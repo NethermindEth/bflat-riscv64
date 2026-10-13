@@ -227,6 +227,14 @@ int main(void)
         CHECK(__wrap___libc_malloc_impl(~0UL) == NULL);      /* n+7 wrap */
         CHECK(__wrap___libc_malloc_impl(~0UL - 8) == NULL);  /* +hdr wrap */
         CHECK(__wrap___libc_malloc_impl(64) != NULL);
+
+        /* JIT-inlined allocation already bumped below the floor: the
+         * remaining space must not wrap into a huge value. */
+        uint8_t *live = g_zk_bump_ptr;
+        g_zk_bump_ptr = (uint8_t *)heap_bottom() - 64;
+        CHECK(__wrap___libc_malloc_impl(8) == NULL);
+        CHECK(g_zk_bump_ptr == (uint8_t *)heap_bottom() - 64);
+        g_zk_bump_ptr = live;
     }
 
     MARK("realloc");
