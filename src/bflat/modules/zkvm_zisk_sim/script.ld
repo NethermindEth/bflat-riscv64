@@ -94,7 +94,7 @@ SECTIONS
 
   .stack ALIGN(16) :
   {
-      _stack_bottom = .;
+      _init_stack_bottom = .;
       . = . + (64 * 1024);
       _init_stack_top = .;
   } :data

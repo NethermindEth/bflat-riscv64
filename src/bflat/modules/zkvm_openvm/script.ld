@@ -212,6 +212,7 @@ SECTIONS
    * _end and grows upward. With _end at the top of .bss the first sizeable
    * allocation - the input buffer read_input copies - ran straight through
    * the stack. _end now sits above it. */
+  PROVIDE(_init_stack_bottom  = .);
   . = . + 0x400000;
   PROVIDE(_init_stack_top     = .);
   PROVIDE(_kernel_heap_bottom = _init_stack_top);

@@ -381,26 +381,24 @@ __wrap_pthread_sigmask(int how, void *set, void *oldset)
  * The real PalGetMaximumStackBounds() calls pthread_getattr_np() +
  * pthread_attr_getstack() to probe the main thread's stack.  Under static musl
  * that path invokes mremap(NULL, 0, 0, 0), which fails with EINVAL on RISC-V
- * Linux and aborts runtime startup before Main().  Stack bounds are not used
- * for anything meaningful in Zisk-targeted binaries, so report a synthetic
- * 8 MiB window anchored at the current frame.
+ * Linux and aborts runtime startup before Main().  The guest's only stack is
+ * the window the linker script reserves, so report that.
  */
-/*@ // Synthetic 8 MiB stack window anchored at the caller's frame: base is
-    // the frame address rounded up to a page, limit is 8 MiB below it.
+extern const char _init_stack_bottom[];
+extern const char _init_stack_top[];
+
+/*@ // The linker script's stack window: base is its top, limit its bottom.
     requires \valid(stack_base) && \valid(stack_limit);
     assigns *stack_base, *stack_limit;
     ensures \result == 1;
-    ensures (uintptr_t)*stack_base % 4096 == 0;
-    ensures (uintptr_t)*stack_limit ==
-        (uintptr_t)*stack_base - 8 * 1024 * 1024;
+    ensures *stack_base == (void *)_init_stack_top;
+    ensures *stack_limit == (void *)_init_stack_bottom;
 */
 int
 __wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **stack_base, void **stack_limit)
 {
-    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
-
-    *stack_base  = (void *)((sp + 4095u) & ~(uintptr_t)4095u);
-    *stack_limit = (void *)((uintptr_t)*stack_base - (8u * 1024u * 1024u));
+    *stack_base  = (void *)_init_stack_top;
+    *stack_limit = (void *)_init_stack_bottom;
     return 1;
 }
 
