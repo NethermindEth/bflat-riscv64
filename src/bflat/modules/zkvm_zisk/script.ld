@@ -14,13 +14,18 @@ MEMORY {
   /* biosrom (xa) : ORIGIN = 0x00001000, LENGTH = 0x1000 */
   rom   (xa) : ORIGIN = 0x80000000, LENGTH = 0x10000000
   /*
-   * Zisk RAM map (zisk/core/src/mem.rs):
-   *   RAM_ADDR            = 0xa0000000
-   *   AVAILABLE_MEM_ADDR  = 0xa0030000
+   * Zisk RAM map (zisk/core/src/mem.rs, v1.3):
+   *   RAM_ADDR            = 0xa0000000   program stack, STACK_SIZE = 4 MiB
+   *   SYS_ADDR            = 0xa0400000   registers, UART, DMA params, CSRs
+   *   OUTPUT_ADDR         = 0xa0410000   public output, OUTPUT_MAX_SIZE 128 KiB
+   *   general-purpose RAM = 0xa0430000
    *   FLOAT_LIB_RAM_ADDR  = 0xbfff0000
    *   RAM end             = 0xc0000000
+   * The BIOS reads SYS and publishes OUTPUT at exit, so neither the stack nor
+   * anything linked here may overlap them.
    */
-  ram   (wxa) : ORIGIN = 0xa0020000, LENGTH = 0x1FFD0000
+  stack (wa)  : ORIGIN = 0xa0000000, LENGTH = 0x400000
+  ram   (wxa) : ORIGIN = 0xa0430000, LENGTH = 0xbfff0000 - 0xa0430000
 }
 
 PHDRS {
@@ -171,11 +176,12 @@ SECTIONS
   PROVIDE(_global_pointer = .);
 
   . = ALIGN(8);
-  /* Stack grows down from _init_stack_top. With deep NativeAOT call chains
-   * (TypeLoader, cctor recursion) 1 MiB overflowed into .bss and corrupted
-   * static state (notably pal/module.c:mem). 4 MiB gives ample headroom. */
-  PROVIDE(_init_stack_top = . + 0x400000);
-  PROVIDE(_kernel_heap_bottom = _init_stack_top);
+  /* Stack grows down from _init_stack_top through ZisK's own stack window,
+   * whose bottom borders unmapped memory: an overflow faults in the emulator
+   * instead of corrupting SYS, OUTPUT or .bss. 4 MiB is all ZisK reserves and
+   * several times the deepest stack measured on mainnet blocks. */
+  PROVIDE(_init_stack_top    = ORIGIN(stack) + LENGTH(stack));
+  PROVIDE(_kernel_heap_bottom = .);
   /* zkVM per-site inline allocator: reserve the top 8 bytes of RAM as a
    * FIXED-address cell holding the downward bump pointer, so the JIT can
    * hardcode its address (lui/addi, no relocation) and the C allocator
@@ -195,6 +201,12 @@ SECTIONS
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
 
   _end = .;
+
+  ASSERT(ORIGIN(stack) >= 0xa0000000 && ORIGIN(stack) + LENGTH(stack) <= 0xa0400000,
+         "the stack overlaps the ZisK SYS/OUTPUT area")
+  ASSERT(ADDR(.modules) >= 0xa0430000 && _kernel_heap_bottom >= 0xa0430000,
+         "data or heap overlaps the ZisK SYS/OUTPUT area")
+  ASSERT(_kernel_heap_bottom < _kernel_heap_top, "no room left for the heap")
 
   /* Discard debug sections */
   /DISCARD/ : {
