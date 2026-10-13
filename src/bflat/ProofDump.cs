@@ -164,6 +164,7 @@ static class ProofDump
             if (il.GetExceptionRegions().Length > 0)
                 e["eh"] = EhClauses(il, mangler);
             e["args"] = Args(m);
+            e["argSpans"] = ArgSpans(m);
             e["locals"] = il.GetLocals().Select(l => Ty(l.Type)).ToList();
             e["ret"] = sig.ReturnType.IsVoid ? null : Ty(sig.ReturnType);
             if (m.GetTypicalMethodDefinition() is EcmaMethod em)
@@ -306,6 +307,26 @@ static class ProofDump
         for (int k = 0; k < sig.Length; k++)
             args.Add(Ty(sig[k]));
         return args;
+    }
+
+    /// <summary>For each IL argument, the bytes a byref argument points to (the
+    /// value type `this` is, or the type a `ref` parameter refers to); 0 for
+    /// other arguments or when the size is not known.</summary>
+    static List<int> ArgSpans(MethodDesc m)
+    {
+        static int Span(TypeDesc t) => t.IsValueType || t.IsPrimitive ? t.GetElementSize().AsInt
+            : t.IsGCPointer ? 8 : 0;
+        var sig = m.Signature;
+        var spans = new List<int>();
+        if (!sig.IsStatic)
+            spans.Add(m.OwningType.IsValueType ? Span(m.OwningType) : 0);
+        for (int k = 0; k < sig.Length; k++)
+        {
+            int n = 0;
+            try { if (sig[k].IsByRef) n = Span(((ByRefType)sig[k]).ParameterType); } catch { n = 0; }
+            spans.Add(n);
+        }
+        return spans;
     }
 
     /// <summary>The field of every ldfld/stfld/ldsfld/stsfld/ldflda/ldsflda in
