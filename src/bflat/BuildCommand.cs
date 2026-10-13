@@ -494,6 +494,46 @@ internal class BuildCommand : CommandBase
         libc == "zisk" || libc == "zisk_sim" || libc == "sp1" || libc == "openvm";
 
     /// <summary>
+    /// Lists the linker's --wrap targets that name a managed method the scanner
+    /// reached but codegen never emitted.
+    /// </summary>
+    /// <remarks>
+    /// --wrap only redirects calls. A managed method that every caller inlined
+    /// leaves no call behind, so its wrapper is never linked and the managed
+    /// body runs instead, with nothing reporting it: that is how constant
+    /// ILLink stubs of HashHelpers.IsPrime silently replaced the integer
+    /// reimplementation they were stubbed for. A method inlined by only some
+    /// of its callers is still emitted and is not reported.
+    /// </remarks>
+    private static List<string> FindInlinedWrapTargets(string ldArgs, ILScanResults scanResults,
+        CompilationResults compilationResults, NameMangler nameMangler)
+    {
+        var wrapTargets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string arg in ldArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string token = arg.Trim('"');
+            if (token.StartsWith("--wrap=", StringComparison.Ordinal))
+                wrapTargets.Add(token["--wrap=".Length..]);
+        }
+
+        var inlined = new List<string>();
+        if (wrapTargets.Count == 0)
+            return inlined;
+
+        var emitted = new HashSet<MethodDesc>(compilationResults.CompiledMethodBodies);
+        foreach (MethodDesc reached in scanResults.CompiledMethodBodies)
+        {
+            if (emitted.Contains(reached))
+                continue;
+            string symbol = nameMangler.GetMangledMethodName(reached).ToString();
+            if (wrapTargets.Contains(symbol))
+                inlined.Add($"{symbol} ({reached})");
+        }
+        inlined.Sort(StringComparer.Ordinal);
+        return inlined;
+    }
+
+    /// <summary>
     /// Layout directory holding a zkVM target's own script.ld and
     /// entrypoint.o. Named after the libc, so lib/linux/riscv64/&lt;libc&gt;.
     /// Everything else the target links comes from the ZisK directory, which
@@ -2192,6 +2232,22 @@ internal class BuildCommand : CommandBase
             var p = Process.Start(command, args);
             p.WaitForExit();
             return p.ExitCode;
+        }
+
+        if (scanResults != null)
+        {
+            List<string> inlinedWrapTargets = FindInlinedWrapTargets(ldArgs.ToString(),
+                scanResults, compilationResults, ((ILCompiler.Compilation)compilation).NodeFactory.NameMangler);
+            if (inlinedWrapTargets.Count > 0)
+            {
+                Console.Error.WriteLine(
+                    $"error: {inlinedWrapTargets.Count} --wrap target(s) are managed methods that every caller " +
+                    "inlined, so no call is left to redirect and the managed body runs instead of the wrapper. " +
+                    "Replace the body itself (e.g. a zisk_subst C# snippet) instead of wrapping it:");
+                foreach (string target in inlinedWrapTargets)
+                    Console.Error.WriteLine($"  {target}");
+                return 1;
+            }
         }
 
         if (targetOS == TargetOS.Linux && result.GetValueForOption(WrapCheckOption))

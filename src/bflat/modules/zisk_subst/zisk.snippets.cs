@@ -308,6 +308,140 @@ namespace __ZiskSnippets
                     ref global::System.Runtime.CompilerServices.Unsafe.Unbox<float>(value)));
         }
 
+        // ---- System.Collections.HashHelpers.IsPrime -------------------------
+        // The original bounds its trial division with (int)Math.Sqrt(candidate).
+        // divisor <= candidate / divisor is the same bound in integers: for a
+        // positive divisor it holds exactly when divisor * divisor <= candidate,
+        // and Math.Sqrt of an int is never off by enough for the cast to land
+        // on the other side of a square. One donor serves every copy of the
+        // shared HashHelpers source (CoreLib, System.Collections.Concurrent,
+        // System.Collections.Immutable).
+        public static bool HashHelpersIsPrime(int candidate)
+        {
+            if ((candidate & 1) != 0)
+            {
+                for (int divisor = 3; divisor <= candidate / divisor; divisor += 2)
+                {
+                    if ((candidate % divisor) == 0)
+                        return false;
+                }
+                return true;
+            }
+            return candidate == 2;
+        }
+
+        // ---- System.Collections.Frozen.FrozenHashTable.CalcNumBuckets --------
+        // The .NET 11 method with its one FP line,
+        // `numCollisions / (double)uniqueCodesCount <= 0.05`, rewritten as
+        // `numCollisions * 20 <= uniqueCodesCount`. Both counts are below 2^31,
+        // so a ratio above 1/20 exceeds it by at least 1/(20 * 2^31), far more
+        // than the rounding of the double division: the two tests agree on
+        // every input and the bucket count is the upstream one. The
+        // IsBucketFirstVisit local function takes its captures as parameters,
+        // and Primes/GetPrime are CoreLib's copy of the shared HashHelpers
+        // source (same table, same code) since the bare name is ambiguous here.
+        // .NET 10 lacks only the Array.MaxLength guard, which matters only once
+        // the doubled count overflows an int.
+        public static int FrozenHashTableCalcNumBuckets(global::System.ReadOnlySpan<int> hashCodes, bool hashCodesAreUnique)
+        {
+            const int LargeInputSizeThreshold = 1000;
+            const int MaxSmallBucketTableMultiplier = 16;
+            const int MaxLargeBucketTableMultiplier = 3;
+            const int BitsPerInt32 = 32;
+
+            global::System.Collections.Generic.HashSet<int> codes = null;
+            int uniqueCodesCount = hashCodes.Length;
+            if (!hashCodesAreUnique)
+            {
+                codes = new global::System.Collections.Generic.HashSet<int>(hashCodes.Length);
+                foreach (int hashCode in hashCodes)
+                    codes.Add(hashCode);
+                uniqueCodesCount = codes.Count;
+            }
+
+            long minNumBuckets = (long)uniqueCodesCount * 2;
+            if (minNumBuckets + hashCodes.Length > global::System.Array.MaxLength)
+                return corelib::System.Collections.HashHelpers.GetPrime(uniqueCodesCount);
+
+            global::System.ReadOnlySpan<int> primes = corelib::System.Collections.HashHelpers.Primes;
+            int minPrimeIndexInclusive = 0;
+            while ((uint)minPrimeIndexInclusive < (uint)primes.Length && minNumBuckets > primes[minPrimeIndexInclusive])
+                minPrimeIndexInclusive++;
+
+            if (minPrimeIndexInclusive >= primes.Length)
+                return corelib::System.Collections.HashHelpers.GetPrime(uniqueCodesCount);
+
+            int maxNumBuckets = uniqueCodesCount *
+                (uniqueCodesCount >= LargeInputSizeThreshold ? MaxLargeBucketTableMultiplier : MaxSmallBucketTableMultiplier);
+
+            int maxPrimeIndexExclusive = minPrimeIndexInclusive;
+            while ((uint)maxPrimeIndexExclusive < (uint)primes.Length && maxNumBuckets > primes[maxPrimeIndexExclusive])
+                maxPrimeIndexExclusive++;
+
+            if (maxPrimeIndexExclusive < primes.Length)
+                maxNumBuckets = primes[maxPrimeIndexExclusive - 1];
+
+            int[] seenBuckets = global::System.Buffers.ArrayPool<int>.Shared.Rent((maxNumBuckets / BitsPerInt32) + 1);
+
+            int bestNumBuckets = maxNumBuckets;
+            int bestNumCollisions = uniqueCodesCount;
+
+            for (int primeIndex = minPrimeIndexInclusive; primeIndex < maxPrimeIndexExclusive; primeIndex++)
+            {
+                int numBuckets = primes[primeIndex];
+                global::System.Array.Clear(seenBuckets, 0, global::System.Math.Min(numBuckets, seenBuckets.Length));
+
+                int numCollisions = 0;
+                if (codes is not null && uniqueCodesCount != hashCodes.Length)
+                {
+                    foreach (int code in codes)
+                    {
+                        if (!IsBucketFirstVisit(code, numBuckets, seenBuckets, ref numCollisions, bestNumCollisions))
+                            break;
+                    }
+                }
+                else
+                {
+                    foreach (int code in hashCodes)
+                    {
+                        if (!IsBucketFirstVisit(code, numBuckets, seenBuckets, ref numCollisions, bestNumCollisions))
+                            break;
+                    }
+                }
+
+                if (numCollisions < bestNumCollisions)
+                {
+                    bestNumBuckets = numBuckets;
+
+                    if ((long)numCollisions * 20 <= uniqueCodesCount)
+                        break;
+
+                    bestNumCollisions = numCollisions;
+                }
+            }
+
+            global::System.Buffers.ArrayPool<int>.Shared.Return(seenBuckets);
+
+            return bestNumBuckets;
+        }
+
+        private static bool IsBucketFirstVisit(int code, int numBuckets, int[] seenBuckets, ref int numCollisions, int bestNumCollisions)
+        {
+            uint bucketNum = (uint)code % (uint)numBuckets;
+            if ((seenBuckets[bucketNum / 32] & (1 << (int)bucketNum)) != 0)
+            {
+                numCollisions++;
+                if (numCollisions >= bestNumCollisions)
+                    return false;
+            }
+            else
+            {
+                seenBuckets[bucketNum / 32] |= 1 << (int)bucketNum;
+            }
+
+            return true;
+        }
+
         // ---- System.Collections.Frozen.LengthBuckets ------------------------
         // CreateLengthBucketsArrayIfAppropriate rates a by-length string-lookup
         // optimization in double ratio math. Returning null = "use the fallback

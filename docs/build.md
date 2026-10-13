@@ -94,7 +94,7 @@ the CoreLib it just unpacked, so a runtime bump that moves a substituted
 method fails here rather than at your first guest compilation:
 
 ```
-zkVM: applied 18 C#-snippet body substitution(s)
+zkVM: applied 21 C#-snippet body substitution(s)
 zkVM: substitutions verified for libc=zisk against System.Private.CoreLib
 ```
 

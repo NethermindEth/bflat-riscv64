@@ -33,6 +33,7 @@ which is not driven from this repository.
 | **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
 | **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for every zkVM target | Renamed musl symbols, unresolved wraps, broken postprocessing |
 | **Substitution check** | Build | Every C#-snippet body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
+| **Inlined-wrap check** | Build (optimized) | Every `--wrap` target that is a managed method the scanner reached is still emitted, so calls to it remain for the linker to divert | A wrapped method inlined into all its callers, which silently bypasses the wrapper |
 | **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
 | **ISA verification** | Build, opt-in | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |
 | **Sample regression** | Pipeline | The samples still produce their known-good output | Behavioural drift in the runtime shims |

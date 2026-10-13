@@ -286,6 +286,31 @@ class ZkvmSubstitutions
         Add(Method(singleType, "CompareTo", objectType), Snippet("SingleCompareToObject"),
             "Single.CompareTo(object)");
 
+        // System.Collections.HashHelpers.IsPrime (one copy per assembly that
+        // compiles the shared source in) and FrozenHashTable.CalcNumBuckets.
+        // Whole bodies, not constant stubs plus --wrap to C: ILC inlines a
+        // constant stub into its callers, which leaves no call to divert.
+        // CoreLib always has its copy; the other types resolve only when the
+        // guest references their assembly, but once they do the method must.
+        var hashHelpersIsPrime = Snippet("HashHelpersIsPrime");
+        Add(Method(Type(ctx.SystemModule, "System.Collections", "HashHelpers"), "IsPrime", int32),
+            hashHelpersIsPrime, "System.Private.CoreLib HashHelpers.IsPrime(int)");
+        foreach (string assembly in new[] { "System.Collections.Concurrent", "System.Collections.Immutable" })
+        {
+            var hashHelpers = Type(Module(assembly), "System.Collections", "HashHelpers");
+            if (hashHelpers != null)
+                Add(Method(hashHelpers, "IsPrime", int32), hashHelpersIsPrime,
+                    $"{assembly} HashHelpers.IsPrime(int)");
+        }
+        var frozenHashTable = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "FrozenHashTable");
+        if (frozenHashTable != null)
+        {
+            var intSpan = ((MetadataType)ctx.SystemModule.GetType("System", "ReadOnlySpan`1")).MakeInstantiatedType(int32);
+            Add(Method(frozenHashTable, "CalcNumBuckets", intSpan, ctx.GetWellKnownType(WellKnownType.Boolean)),
+                Snippet("FrozenHashTableCalcNumBuckets"),
+                "FrozenHashTable.CalcNumBuckets(ReadOnlySpan<int>,bool)");
+        }
+
         // System.Collections.Frozen.LengthBuckets. The whole assembly is absent
         // unless the guest references Immutable, so the TYPE may legitimately
         // not resolve - but once it does, the method must.

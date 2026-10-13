@@ -52,40 +52,6 @@
     <type fullname="System.Buffers.Utilities">
       <method signature="System.Buffers.Utilities/MemoryPressure GetMemoryPressure()" body="stub" value="0" />
     </type>
-
-    <!-- HashHelpers.IsPrime bounds its divisor loop with (int)Math.Sqrt. The
-         managed body is replaced with a constant-returning stub (removing
-         the F/D instructions; body="remove" would poison callers with
-         no-return codegen); every caller is diverted by -\-wrap (BuildCommand)
-         to the exact integer reimplementation in the rhp module. The same
-         shared source is compiled into several assemblies - substitute all. -->
-    <type fullname="System.Collections.HashHelpers">
-      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
-    </type>
-  </assembly>
-
-  <assembly fullname="System.Collections.Concurrent">
-    <type fullname="System.Collections.HashHelpers">
-      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
-    </type>
-  </assembly>
-
-  <assembly fullname="System.Collections.Immutable">
-    <type fullname="System.Collections.HashHelpers">
-      <method signature="System.Boolean IsPrime(System.Int32)" body="stub" value="false" />
-    </type>
-
-    <!-- CalcNumBuckets rates candidate bucket counts by collision percentage
-         in double math at collection-freeze time. The stub body (never
-         executed) sheds the F/D instructions and -\-wrap diverts callers to
-         the rhp module, which returns the smallest prime >= the entry count -
-         any bucket count is correct, collisions chain. LengthBuckets is NOT
-         substituted: its int[] return cannot be expressed as a stub value,
-         and body="remove" marks the method no-return, which poisons callers
-         (ILC emits a trap after the call instead of using the result). -->
-    <type fullname="System.Collections.Frozen.FrozenHashTable">
-      <method signature="System.Int32 CalcNumBuckets(System.ReadOnlySpan`1&lt;System.Int32&gt;,System.Boolean)" body="stub" value="1" />
-    </type>
   </assembly>
 
   <!--
