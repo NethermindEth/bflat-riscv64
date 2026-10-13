@@ -122,7 +122,8 @@ run_one test_tls \
 # aliased to its end.
 run_one test_pal \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_pal.c" "${MOD_DIR}/pal/module.c" \
-	-Wl,--defsym,_kernel_heap_top=_kernel_heap_bottom+1048576
+	-Wl,--defsym,_kernel_heap_top=_kernel_heap_bottom+1048576 \
+	-Wl,--defsym,_init_stack_top=_init_stack_bottom+262144
 
 run_one test_nofp \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_nofp.c" "${MOD_DIR}/nofp/module.c"

@@ -387,18 +387,18 @@ __wrap_pthread_sigmask(int how, void *set, void *oldset)
 extern const char _init_stack_bottom[];
 extern const char _init_stack_top[];
 
-/*@ // The linker script's stack window: base is its top, limit its bottom.
-    requires \valid(stack_base) && \valid(stack_limit);
-    assigns *stack_base, *stack_limit;
+/*@ // NativeAOT expects the lower bound first, followed by the upper bound.
+    requires \valid(stack_low) && \valid(stack_high);
+    assigns *stack_low, *stack_high;
     ensures \result == 1;
-    ensures *stack_base == (void *)_init_stack_top;
-    ensures *stack_limit == (void *)_init_stack_bottom;
+    ensures *stack_low == (void *)_init_stack_bottom;
+    ensures *stack_high == (void *)_init_stack_top;
 */
 int
-__wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **stack_base, void **stack_limit)
+__wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **stack_low, void **stack_high)
 {
-    *stack_base  = (void *)_init_stack_top;
-    *stack_limit = (void *)_init_stack_bottom;
+    *stack_low = (void *)_init_stack_bottom;
+    *stack_high = (void *)_init_stack_top;
     return 1;
 }
 

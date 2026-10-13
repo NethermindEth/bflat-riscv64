@@ -8,6 +8,8 @@
  *   - _kernel_heap_bottom is defined here as a 1 MiB array;
  *     _kernel_heap_top is aliased to its end via
  *     -Wl,--defsym,_kernel_heap_top=_kernel_heap_bottom+1048576
+ *   - _init_stack_top is aliased to the end of the 256 KiB stack array via
+ *     -Wl,--defsym,_init_stack_top=_init_stack_bottom+262144
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  */
@@ -24,8 +26,8 @@
 char _kernel_heap_bottom[HEAP_SIZE] __attribute__((aligned(4096)));
 
 /* Stack window; only its bounds are read. */
-char _init_stack_bottom[16];
-char _init_stack_top[16];
+char _init_stack_bottom[256 * 1024];
+extern const char _init_stack_top[]; /* --defsym'd to bottom + sizeof stack */
 
 /* Fixed bump-pointer cell (real image: top 8 bytes of RAM). */
 uint8_t *g_zk_bump_ptr = 0;
@@ -61,7 +63,7 @@ extern void *__wrap___libc_realloc(void *p, unsigned long n);
 extern void *__wrap_calloc(unsigned long nmemb, unsigned long size);
 extern int __wrap_pthread_create(void *a, void *b, void *c, void *d);
 extern int __wrap_pthread_sigmask(int how, void *set, void *oldset);
-extern int __wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **base, void **limit);
+extern int __wrap__Z24PalGetMaximumStackBoundsPPvS0_(void **low, void **high);
 extern int __wrap___clock_gettime(int clk, void *ts);
 extern int __wrap_clock_gettime(int clk, void *ts);
 extern int __wrap___malloc_allzerop(void *p);
@@ -304,10 +306,12 @@ int main(void)
     MARK("stackbounds");
     /* --- stack bounds: the linker script's window, returns 1 --- */
     {
-        void *base = NULL, *limit = NULL;
-        CHECK(__wrap__Z24PalGetMaximumStackBoundsPPvS0_(&base, &limit) == 1);
-        CHECK(base == _init_stack_top);
-        CHECK(limit == _init_stack_bottom);
+        void *low = NULL, *high = NULL;
+        CHECK(__wrap__Z24PalGetMaximumStackBoundsPPvS0_(&low, &high) == 1);
+        CHECK(low == _init_stack_bottom);
+        CHECK(high == _init_stack_top);
+        uintptr_t stack_pointer = (uintptr_t)(_init_stack_bottom + sizeof(_init_stack_bottom) / 2);
+        CHECK((uintptr_t)low <= stack_pointer && stack_pointer < (uintptr_t)high);
     }
 
     MARK("vfprintf");
