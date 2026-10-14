@@ -209,6 +209,8 @@ static class ProofDump
             if (callis.Count > 0) e["callis"] = callis;
             e["strings"] = Strings(il, bytes, mangler);
             e["types"] = Types(il, bytes, mangler);
+            var rvas = RvaTokens(il, bytes, mangler);
+            if (rvas.Count > 0) e["rvaTokens"] = rvas;
         }
 
         File.WriteAllText(Path.Combine(dir, IlFile), JsonSerializer.Serialize(new Dictionary<string, object>
@@ -464,6 +466,35 @@ static class ProofDump
                 _ => 0,
             };
         }
+    }
+
+    /// <summary>The field of every `ldtoken` of a field with data in the image
+    /// (an RVA field, for `RuntimeHelpers.InitializeArray`), by token: the
+    /// symbol of its read-only data and its size in bytes.</summary>
+    static List<Dictionary<string, object>> RvaTokens(MethodIL il, byte[] b, NameMangler mangler)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var seen = new HashSet<int>();
+        foreach (var (i, op) in Instructions(b))
+        {
+            if (op != 0xd0)
+                continue;
+            int token = BitConverter.ToInt32(b, i + 1);
+            if (!seen.Add(token) || il.GetObject(token) is not Internal.TypeSystem.Ecma.EcmaField ef || !ef.HasRva
+                || s_factory == null)
+                continue;
+            try
+            {
+                result.Add(new Dictionary<string, object>
+                {
+                    ["token"] = token,
+                    ["symbol"] = s_factory.FieldRvaData(ef).GetMangledName(mangler),
+                    ["size"] = ef.FieldType.GetElementSize().AsInt,
+                });
+            }
+            catch (Exception) { }
+        }
+        return result;
     }
 
     /// <summary>The string literal of every `ldstr` in the body, by token: the
@@ -935,6 +966,14 @@ static class ProofDump
                     if (byToken.TryGetValue(token, out var prev) && prev["target"] is MethodDesc pm && Dispatch(pm)
                         && constrainedTok == null)
                         prev["dispatch"] = true;
+                    // a `newobj` of a constructor first seen in a `call`
+                    // (a base or chained constructor call): the allocation too
+                    if (op == 0x73 && byToken.TryGetValue(token, out var prev2) && prev2["target"] is MethodDesc nm
+                        && !prev2.ContainsKey("alloc") && mangler != null && Alloc(nm.OwningType, mangler) is { } alloc2)
+                        prev2["alloc"] = alloc2;
+                    if (op == 0x73 && byToken.TryGetValue(token, out var prev3) && prev3["target"] is MethodDesc vm
+                        && vm.OwningType.IsValueType && !prev3.ContainsKey("valueType"))
+                        prev3["valueType"] = Ty(vm.OwningType);
                 }
                 else if (il.GetObject(token) is MethodDesc callee)
                 {
