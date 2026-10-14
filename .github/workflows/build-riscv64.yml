@@ -237,6 +237,11 @@ jobs:
   build_riscv64:
     runs-on: ubuntu-latest
     needs: legs
+    # Pushes authenticate with Docker Hub OIDC, which trusts only this environment
+    environment: ${{ inputs.publish && 'docker-hub' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     container:
       image: ubuntu:26.04
       options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
@@ -340,10 +345,11 @@ jobs:
 
       - name: Log in to Docker Hub
         if: inputs.publish
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Publish to Docker Hub
         if: inputs.publish
