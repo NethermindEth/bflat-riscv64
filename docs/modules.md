@@ -209,6 +209,16 @@ target-aware, each entry module carries a one-instruction tail call under the
 binding's name, in its own section so `--gc-sections` drops it — and with it
 the reference to the bindings library — in a guest built without `--extlib`.
 
+**Each entry module also carries the target's `memcpy`**, as `__wrap_memcpy`
+behind `--wrap=memcpy` (declared in `pal`'s `module_params.yml` for `sp1` and
+`openvm`). musl's generic C `memcpy` moves 32-bit words, and neither VM has
+Zisk's DMA copy. Both versions move 64-bit words, but they follow different
+alignment rules. SP1 rejects misaligned accesses, so its version aligns the
+destination and merges a misaligned source from aligned words. OpenVM's rv64
+load and store chips take any address for the same single row, so its version
+copies unaligned words and finishes with the copy's last word. The symbol is
+weak, so a guest that links its own `__wrap_memcpy` keeps it.
+
 What differs between all four targets is the exit protocol, and that is not
 in the entry point: `pal`'s `zkvm_raw_exit` owns it, because `exit`,
 `_Exit` and `abort` all funnel through there. `pal.o` is built once and
