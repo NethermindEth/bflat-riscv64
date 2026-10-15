@@ -246,6 +246,20 @@ for m in zkvm_zisk zkvm_zisk_sim zkvm_sp1 zkvm_sp1_nobind zkvm_openvm ; do
 		-Wl,--defsym,_global_pointer=zkvm_test_gp
 done
 
+# __wrap_memcpy, linked from the same renamed entry-module objects.
+for m in zkvm_sp1 zkvm_openvm ; do
+	if ! obj="$(prepare_zkvm_obj "${m}")" ; then
+		echo "BUILD FAIL: ${m} asm"
+		failures=$((failures + 1))
+		continue
+	fi
+	run_one "test_memcpy_${m}" \
+		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" \
+		"${TESTS_DIR}/test_zkvm_memcpy.c" "${obj}" \
+		-Wl,--defsym,_init_stack_top=zkvm_test_stack+16 \
+		-Wl,--defsym,_global_pointer=zkvm_test_gp
+done
+
 echo "--------------------------------------------------"
 if [ "${failures}" != "0" ] ; then
 	echo "module unit tests: ${failures} suite(s) FAILED"

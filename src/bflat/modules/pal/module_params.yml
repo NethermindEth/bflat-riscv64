@@ -97,3 +97,8 @@ options:
     # desktop bootstrapper's.
     - value: --wrap=main
       libc: sp1
+    # musl's memcpy moves 32-bit words, and neither VM has ZisK's DMA copy to
+    # hand copies to; each entry module (zkvm_sp1/zkvm_openvm module.S)
+    # carries a 64-bit __wrap_memcpy fitted to its VM's alignment rules.
+    - value: --wrap=memcpy
+      libc: [sp1, openvm]
