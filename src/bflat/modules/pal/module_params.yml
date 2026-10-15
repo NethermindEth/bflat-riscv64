@@ -102,3 +102,10 @@ options:
     # carries a 64-bit __wrap_memcpy fitted to its VM's alignment rules.
     - value: --wrap=memcpy
       libc: [sp1, openvm]
+    # Likewise for musl's memmove (an overlap check in front of memcpy) and
+    # memset (32-bit stores): __wrap_memmove and __wrap_memset sit beside
+    # __wrap_memcpy in each entry module.
+    - value: --wrap=memmove
+      libc: [sp1, openvm]
+    - value: --wrap=memset
+      libc: [sp1, openvm]

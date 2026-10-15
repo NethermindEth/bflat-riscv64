@@ -177,3 +177,138 @@ __wrap_memcpy:
     ret
     .cfi_endproc
     .size   __wrap_memcpy, .-__wrap_memcpy
+
+/* void *__wrap_memmove(void *dst, const void *src, size_t n), reached through
+ * --wrap=memmove (pal's module_params.yml, sp1 and openvm only).
+ *
+ * musl's memmove checks for overlap and tail-calls memcpy for almost every
+ * call. A destination below the source, or past its end, is copied forward by
+ * __wrap_memcpy, which reads every source word, its last word included,
+ * before storing over it. Only a destination inside the source is copied
+ * backward, mirroring __wrap_memcpy: unaligned 64-bit words, finishing with
+ * the copy's first word, read before the loop.
+ *
+ * Weak for the same reason as __wrap_memcpy. */
+.section .text.__wrap_memmove,"ax",@progbits
+.weak   __wrap_memmove
+.type   __wrap_memmove, @function
+.p2align 2
+__wrap_memmove:
+    .cfi_startproc
+    sub     t0, a0, a1
+    bltu    t0, a2, .Lmove_backward
+    tail    __wrap_memcpy
+
+    /* dst - src < n, so n > 0. t6 and a1 walk down from the ends of the
+     * destination and source. */
+.Lmove_backward:
+    add     t6, a0, a2
+    add     a1, a1, a2
+    li      t0, 8
+    bltu    a2, t0, .Lmove_byte
+
+    /* The first word, read before the loop and stored after it: it may
+     * overlap the loop's last word, which it rewrites with the same bytes. */
+    sub     a3, a1, a2
+    ld      t5, 0(a3)
+    li      t1, 32
+    bltu    a2, t1, .Lmove_words
+.Lmove_blocks:
+    ld      t2, -8(a1)
+    ld      t3, -16(a1)
+    ld      t4, -24(a1)
+    ld      a5, -32(a1)
+    sd      t2, -8(t6)
+    sd      t3, -16(t6)
+    sd      t4, -24(t6)
+    sd      a5, -32(t6)
+    addi    a1, a1, -32
+    addi    t6, t6, -32
+    addi    a2, a2, -32
+    bgeu    a2, t1, .Lmove_blocks
+.Lmove_words:
+    bltu    a2, t0, .Lmove_head
+.Lmove_word:
+    ld      t2, -8(a1)
+    sd      t2, -8(t6)
+    addi    a1, a1, -8
+    addi    t6, t6, -8
+    addi    a2, a2, -8
+    bgeu    a2, t0, .Lmove_word
+.Lmove_head:
+    sd      t5, 0(a0)
+    ret
+
+.Lmove_byte:
+    addi    a1, a1, -1
+    addi    t6, t6, -1
+    lbu     t1, 0(a1)
+    sb      t1, 0(t6)
+    addi    a2, a2, -1
+    bnez    a2, .Lmove_byte
+    ret
+    .cfi_endproc
+    .size   __wrap_memmove, .-__wrap_memmove
+
+/* void *__wrap_memset(void *dst, int c, size_t n), reached through
+ * --wrap=memset (pal's module_params.yml, sp1 and openvm only).
+ *
+ * musl's memset stores 32-bit words before its 64-bit loop. Like
+ * __wrap_memcpy, this stores unaligned 64-bit words, 32 bytes per iteration,
+ * and finishes with the fill's last word rather than a byte loop.
+ *
+ * Weak for the same reason as __wrap_memcpy. */
+.section .text.__wrap_memset,"ax",@progbits
+.weak   __wrap_memset
+.type   __wrap_memset, @function
+.p2align 2
+__wrap_memset:
+    .cfi_startproc
+    mv      t6, a0
+    andi    a1, a1, 0xff
+    li      t0, 8
+    bltu    a2, t0, .Lset_bytes
+
+    /* Most fills are zero, which needs no broadcast. */
+    beqz    a1, .Lset_broadcast_done
+    slli    t1, a1, 8
+    or      a1, a1, t1
+    slli    t1, a1, 16
+    or      a1, a1, t1
+    slli    t1, a1, 32
+    or      a1, a1, t1
+.Lset_broadcast_done:
+    /* The last word may overlap the loop's last word, which it rewrites with
+     * the same bytes. */
+    add     a4, a0, a2
+    sd      a1, -8(a4)
+    li      t1, 32
+    bltu    a2, t1, .Lset_words
+.Lset_blocks:
+    sd      a1, 0(t6)
+    sd      a1, 8(t6)
+    sd      a1, 16(t6)
+    sd      a1, 24(t6)
+    addi    t6, t6, 32
+    addi    a2, a2, -32
+    bgeu    a2, t1, .Lset_blocks
+.Lset_words:
+    bltu    a2, t0, .Lset_done
+.Lset_word:
+    sd      a1, 0(t6)
+    addi    t6, t6, 8
+    addi    a2, a2, -8
+    bgeu    a2, t0, .Lset_word
+.Lset_done:
+    ret
+
+.Lset_bytes:
+    beqz    a2, .Lset_done
+.Lset_byte:
+    sb      a1, 0(t6)
+    addi    t6, t6, 1
+    addi    a2, a2, -1
+    bnez    a2, .Lset_byte
+    ret
+    .cfi_endproc
+    .size   __wrap_memset, .-__wrap_memset
