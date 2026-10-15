@@ -219,6 +219,12 @@ load and store chips take any address for the same single row, so its version
 copies unaligned words and finishes with the copy's last word. The symbol is
 weak, so a guest that links its own `__wrap_memcpy` keeps it.
 
+`__wrap_memmove` and `__wrap_memset` (behind `--wrap=memmove` and
+`--wrap=memset`) follow the same split. `memmove` hands every copy that is safe
+to run forward to `__wrap_memcpy` and copies only a destination inside the
+source backward, mirroring `memcpy`. `memset` stores 64-bit words, aligned on
+SP1 and unaligned on OpenVM. Both are weak, like `__wrap_memcpy`.
+
 What differs between all four targets is the exit protocol, and that is not
 in the entry point: `pal`'s `zkvm_raw_exit` owns it, because `exit`,
 `_Exit` and `abort` all funnel through there. `pal.o` is built once and
