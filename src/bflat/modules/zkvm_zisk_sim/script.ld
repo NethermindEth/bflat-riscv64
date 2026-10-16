@@ -19,10 +19,10 @@ PHDRS {
 SECTIONS
 {
   /* Base the image at 0x50000000, not the usual 0x10000: pal/module.c reaches
-   * the heap symbols (g_zk_bump_ptr at 0xBFFEFFF8, _kernel_heap_top/_bottom) with
+   * the heap symbols (g_zk_bump_ptr at 0xBFFBFFF8, _kernel_heap_top/_bottom) with
    * PC-relative auipc/addi pairs, whose reach is +/-2GB. From 0x10000 the fixed
-   * cell at 0xBFFEFFF8 is ~2.68GB away and R_RISCV_PCREL_HI20 overflows; 0x50000000
-   * keeps the whole 0x50000000..0xBFFF0000 span within +/-2GB. (Real zisk avoids
+   * cell at 0xBFFBFFF8 is ~2.68GB away and R_RISCV_PCREL_HI20 overflows; 0x50000000
+   * keeps the whole 0x50000000..0xBFFC0000 span within +/-2GB. (Real zisk avoids
    * this by placing text in ROM at 0x80000000.) */
   . = 0x50000000;
 
@@ -119,7 +119,7 @@ SECTIONS
   _global_pointer = .;
 
   /* zkVM per-site inline allocator: the JIT bakes the bump-pointer cell ADDRESS
-   * (0xBFFEFFF8 = top 8 bytes of the real zisk RAM map, see modules/zkvm_zisk/
+   * (0xBFFBFFF8 = top 8 bytes of the real zisk RAM map, see modules/zkvm_zisk/
    * script.ld: ORIGIN(ram)+LENGTH(ram)-8) directly into machine code as an
    * lui/addiw/slli immediate, with no relocation. So zisk_sim must expose
    * g_zk_bump_ptr at that EXACT address, otherwise the first inline allocation
@@ -133,10 +133,10 @@ SECTIONS
   .heap (NOLOAD) : ALIGN(16)
   {
     _kernel_heap_bottom = .;
-    . = 0xBFFEFFE8;        /* heap top, 24 below RAM end (0xBFFF0000) */
+    . = 0xBFFBFFE8;        /* heap top, 24 below RAM end (0xBFFC0000) */
     _kernel_heap_top = .;
-    PROVIDE(g_zk_heap_floor = 0xBFFEFFF0);
-    PROVIDE(g_zk_bump_ptr = 0xBFFEFFF8);
+    PROVIDE(g_zk_heap_floor = 0xBFFBFFF0);
+    PROVIDE(g_zk_bump_ptr = 0xBFFBFFF8);
   } :heap
 
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);

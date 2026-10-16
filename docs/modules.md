@@ -146,8 +146,8 @@ The linker scripts diverge:
 | Image base | Split ROM (`0x80000000`, 256 MiB) and RAM (`0xa0020000`, ~256 MiB) | `0x50000000` (see below) |
 | Entry section | `.text.init` at the head of `.text` | Same |
 | Managed-code anchors | `__start___managedcode` / `__stop___managedcode` and the `__unbox` pair | Same |
-| Heap | `_kernel_heap_bottom..._kernel_heap_top` at the tail of RAM | `.heap` as a `NOLOAD` segment mirroring the zisk RAM window (`0xa0020000..0xbfff0000`) |
-| Bump-pointer cell | `g_zk_bump_ptr` = `ORIGIN(ram)+LENGTH(ram)-8` = `0xbffefff8`; heap top lowered by 16 so the cell never overlaps | Same address, provided at the exact `0xbffefff8` |
+| Heap | `_kernel_heap_bottom..._kernel_heap_top` at the tail of RAM, which ends at `0xbffc0000`, below the library RAM ZisK 1.4 reserves | `.heap` as a `NOLOAD` segment mirroring the zisk RAM window (`0xa0020000..0xbffc0000`) |
+| Bump-pointer cell | `g_zk_bump_ptr` = `ORIGIN(ram)+LENGTH(ram)-8` = `0xbffbfff8`; heap top lowered by 16 so the cell never overlaps | Same address, provided at the exact `0xbffbfff8` |
 | Discarded sections | `.debug*`, `.comment`, `.riscv.attributes` | (looser — kept for ease of debugging) |
 
 Both linker scripts force code that contains the C# entry point to land
@@ -156,7 +156,7 @@ for non-PIC near-jump encodings.
 
 **The fixed bump-pointer cell.** Both scripts reserve the top 8 bytes of
 the (real or mirrored) RAM map as a fixed-address cell, `g_zk_bump_ptr` at
-`0xbffefff8`, holding the downward bump pointer. Because the address is
+`0xbffbfff8`, holding the downward bump pointer. Because the address is
 fixed, the JIT can bake it into machine code as an `lui`/`addiw`/`slli`
 immediate with **no relocation**, and JIT-emitted inline allocation shares
 the same pointer with `pal`'s C allocator. `pal/module.c` does
@@ -165,9 +165,9 @@ the same pointer with `pal`'s C allocator. `pal/module.c` does
 **Why `zisk_sim` rebases to `0x50000000`.** `pal/module.c` reaches the
 heap symbols (`g_zk_bump_ptr`, `_kernel_heap_top`/`_bottom`) with
 PC-relative `auipc`/`addi` pairs, whose reach is ±2 GB. From the usual
-`0x10000` base the fixed cell at `0xbffefff8` is ~2.68 GB away and
+`0x10000` base the fixed cell at `0xbffbfff8` is ~2.68 GB away and
 `R_RISCV_PCREL_HI20` overflows; basing the image at `0x50000000` keeps the
-whole `0x50000000..0xbfff0000` span within ±2 GB. Real `zisk` avoids this
+whole `0x50000000..0xbffc0000` span within ±2 GB. Real `zisk` avoids this
 by placing text in ROM at `0x80000000`. The `.heap` is declared `NOLOAD`
 so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
 zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
@@ -240,7 +240,7 @@ untouched.
 | Image base | ROM `0x7a000000` (length `0x06000000`), RAM `0xa0020000` — see below | ROM `0x80000000`, RAM `0xa0020000` — the Zisk map |
 | Address ceiling | 2^48 | 2^48 |
 | Stack | `_init_stack_top = 0x78000000`; the whole range below it is reserved for the stack | `_init_stack_top` is placed `0x400000` above `.bss`, so `_end` sits above the stack — OpenVM's bump allocator starts at `_end` and would otherwise hand out stack |
-| Bump-pointer cell | `0xbffefff8` — identical to Zisk | `0xbffefff8` — identical to Zisk |
+| Bump-pointer cell | `0xbffefff8`, the top of RAM ending at `0xbfff0000` (Zisk's ends lower, see above) | `0xbffefff8`, as SP1 |
 | Exit | `ecall` with the syscall id in **`t0`**: `COMMIT` ×8, `COMMIT_DEFERRED_PROOFS` ×8, then `HALT` with the code in `a0` | `TERMINATE`, a custom-0 instruction (`0x0b`, funct3 0) whose exit code is an **immediate**, so a runtime code collapses to 0 or 1 |
 | Console | `WRITE` syscall, caller's descriptor passed through (1 and 2 both reach the host) | `PrintStr` phantom instruction (`0x0b`, funct3 3, imm 1) — one channel, so the descriptor is ignored |
 | Post-link | `patch_elf --nop-fences --nop-zero-words` (see below) | none |
@@ -294,9 +294,9 @@ block took more than 200k misaligned accesses across 44 sites.
 fixup 26 replaces the object-allocation helper call with an inline bump on the
 cell, emitted as a bare constant with no relocation. The address is not baked
 into the JIT: it comes from `JitZkBumpAddr`, which `BuildCommand` sets per
-target. All four currently use `bffefff8`; the knob exists because a VM whose
-guest memory ends lower (OpenVM's rv32 line, at `0x20000000`) needs
-`1ffefff8` instead.
+target: `bffbfff8` for `zisk` and `zisk_sim`, whose RAM ends below ZisK 1.4's
+library RAM, and `bffefff8` for SP1 and OpenVM. A VM whose guest memory ends
+lower still (OpenVM's rv32 line, at `0x20000000`) needs `1ffefff8` instead.
 The knob defaults to 0 and then nothing is inlined, so a plain riscv64 target
 (`musl`, `glibc`) is never handed an absolute guest address to write to.
 
@@ -355,7 +355,7 @@ reaches it indirectly: objects come from the runtime's own riscv64
 refills from this heap.
 
 The bump pointer itself lives in a **fixed-address cell** — the top 8 bytes
-of RAM (`g_zk_bump_ptr`, `0xbffefff8`), provided by the linker script —
+of RAM (`g_zk_bump_ptr`, `0xbffbfff8` on ZisK), provided by the linker script —
 rather than a `static` variable. That lets JIT-emitted inline allocation
 reference it by a hardcoded constant address and share the very same
 pointer with this C allocator. zkVM RAM is zero at boot, so the cell starts
