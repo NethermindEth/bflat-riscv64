@@ -1541,13 +1541,12 @@ internal class BuildCommand : CommandBase
         // with NumberStyles.AllowHexSpecifier); the JIT reads the low 32 bits
         // zero-extended, so a value above int.MaxValue round-trips. A JIT
         // without fixup 26 ignores the unknown knob and keeps the helper call.
-        // Top of the ZisK RAM window (0xa0020000 + 0x1FFD0000 - 8). Every zkVM
-        // target mirrors that map, so they all share one address: the ZisK
-        // simulator by construction, SP1 because its space runs to 2^48, and
-        // OpenVM since its guest memory became the full 4 GiB u32 range
-        // (MEM_BITS 29 -> 32 on the develop-v2.1.0 line). While OpenVM capped
-        // out at 512 MiB it needed an address of its own.
-        string zkBumpAddr = IsZkvm(libc) ? "bffefff8" : null;
+        // Top of the ZisK RAM window, which ends at 0xbffc0000 below the library
+        // RAM ZisK 1.4 reserves, and of the ZisK simulator by construction. SP1
+        // (whose space runs to 2^48) and OpenVM (full 4 GiB u32 range since
+        // MEM_BITS 29 -> 32 on the develop-v2.1.0 line) keep their RAM up to
+        // 0xbfff0000 and the cell 8 bytes below it.
+        string zkBumpAddr = libc == "zisk" || libc == "zisk_sim" ? "bffbfff8" : IsZkvm(libc) ? "bffefff8" : null;
         if (zkBumpAddr != null)
         {
             backendOptions.Add($"JitZkBumpAddr={zkBumpAddr}");

@@ -123,7 +123,7 @@ __wrap_open(const char *path, int flags, int mode)
 
 
 /* The downward bump pointer lives in a FIXED-address cell (top 8 bytes of RAM,
- * 0xbffefff8) provided by the linker script (g_zk_bump_ptr), so JIT-emitted
+ * 0xbffbfff8 on ZisK, 0xbffefff8 elsewhere) provided by the linker script (g_zk_bump_ptr), so JIT-emitted
  * inline allocation can reference it by a hardcoded constant address and share
  * it with this C allocator. zkVM RAM is zero at boot, so it starts as 0 and is
  * lazily initialised to _kernel_heap_top on first use, exactly as before. */

@@ -19,13 +19,16 @@ MEMORY {
    *   SYS_ADDR            = 0xa0400000   registers, UART, DMA params, CSRs
    *   OUTPUT_ADDR         = 0xa0410000   public output, OUTPUT_MAX_SIZE 128 KiB
    *   general-purpose RAM = 0xa0430000
+   *   LIB_RAM             = 0xbffc0000   192 KiB, ZisK 1.4 library calls (CSRs 0x850-0x8bf)
    *   FLOAT_LIB_RAM_ADDR  = 0xbfff0000
    *   RAM end             = 0xc0000000
    * The BIOS reads SYS and publishes OUTPUT at exit, so neither the stack nor
-   * anything linked here may overlap them.
+   * anything linked here may overlap them. RAM ends below LIB_RAM, which ZisK
+   * 1.4 reserves as soon as a program makes a library call, so the heap and the
+   * cells at its top never share it.
    */
   stack (wa)  : ORIGIN = 0xa0000000, LENGTH = 0x400000
-  ram   (wxa) : ORIGIN = 0xa0430000, LENGTH = 0xbfff0000 - 0xa0430000
+  ram   (wxa) : ORIGIN = 0xa0430000, LENGTH = 0xbffc0000 - 0xa0430000
 }
 
 PHDRS {
@@ -188,7 +191,7 @@ SECTIONS
    * hardcode its address (lui/addi, no relocation) and the C allocator
    * (pal/module.c) + JIT-emitted inline allocation share the same pointer.
    * Heap top is lowered by 24 so neither cell ever overlaps the heap. */
-  PROVIDE(g_zk_bump_ptr     = ORIGIN(ram) + LENGTH(ram) - 8);   /* = 0xbffefff8 */
+  PROVIDE(g_zk_bump_ptr     = ORIGIN(ram) + LENGTH(ram) - 8);   /* = 0xbffbfff8 */
   /* Companion cell 8 bytes BELOW the bump pointer, holding the lowest address
    * the heap may occupy. JIT-emitted inline allocation (dotnet-riscv fixup 26)
    * loads it and fail-fasts instead of bumping past the bottom of the heap, so
@@ -197,7 +200,7 @@ SECTIONS
    * from .init_array, before the runtime entry point, and never rewrites it -
    * that is what lets the JIT hoist the load out of loops and pay for the
    * bounds check once per method rather than once per allocation. */
-  PROVIDE(g_zk_heap_floor   = ORIGIN(ram) + LENGTH(ram) - 16);  /* = 0xbffefff0 */
+  PROVIDE(g_zk_heap_floor   = ORIGIN(ram) + LENGTH(ram) - 16);  /* = 0xbffbfff0 */
   PROVIDE(_kernel_heap_top  = ORIGIN(ram) + LENGTH(ram) - 24);
   PROVIDE(_kernel_heap_size = _kernel_heap_top - _kernel_heap_bottom);
 
