@@ -1486,11 +1486,14 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitRiscV64DmaCompare=1");
 
             // ZisK precompiles are a CSR write with the operand address; libziskos wraps
-            // keccak-f and sha256-f in two-instruction stubs reached through a P/Invoke.
+            // keccak-f, sha256-f and the 256-bit arithmetic (arith256, arith256_mod) in
+            // two-instruction stubs reached through a P/Invoke.
             // dotnet-riscv fixup perf-56 (JitZkCsrPInvokes) emits the listed P/Invokes as
-            // the single csrrs instead of a call, with no register kills. A JIT without
-            // the fixup ignores the unknown knob. CSR numbers in hex.
-            backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_sha256_f:805,memmove:813,memcpy:813");
+            // the single csrrs instead of a call, with no register kills. A three-argument
+            // entry is emitted as `csrrs x0, csr, a1; add x0, a0, a2`, the shape of the DMA
+            // copies and of the EVM JUMPDEST bitmap precompile. A JIT without the fixup
+            // ignores the unknown knob. CSR numbers in hex.
+            backendOptions.Add("JitZkCsrPInvokes=syscall_keccak_f:800,syscall_arith256:801,syscall_arith256_mod:802,syscall_sha256_f:805,memmove:813,memcpy:813,zkvm_jump_dest_bitmap:81c");
 
             // dotnet-riscv fixup perf-57: raise the inliner's profitability multiplier. On the
             // zkVM code size is free and every avoided call saves its executed ABI overhead;
