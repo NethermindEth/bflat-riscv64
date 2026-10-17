@@ -175,9 +175,32 @@ __wrap_memcpy:
     andi    t0, a1, 7
     bnez    t0, .Lsrc_misaligned
 
+    li      t1, 64
+    bltu    a2, t1, .Lhalf
+.Lblocks:
+    ld      t2, 0(a1)
+    ld      t3, 8(a1)
+    ld      t4, 16(a1)
+    ld      t5, 24(a1)
+    ld      a4, 32(a1)
+    ld      a5, 40(a1)
+    ld      a6, 48(a1)
+    ld      a7, 56(a1)
+    sd      t2, 0(t6)
+    sd      t3, 8(t6)
+    sd      t4, 16(t6)
+    sd      t5, 24(t6)
+    sd      a4, 32(t6)
+    sd      a5, 40(t6)
+    sd      a6, 48(t6)
+    sd      a7, 56(t6)
+    addi    a1, a1, 64
+    addi    t6, t6, 64
+    addi    a2, a2, -64
+    bgeu    a2, t1, .Lblocks
+.Lhalf:
     li      t1, 32
     bltu    a2, t1, .Lwords
-.Lblocks:
     ld      t2, 0(a1)
     ld      t3, 8(a1)
     ld      t4, 16(a1)
@@ -189,7 +212,6 @@ __wrap_memcpy:
     addi    a1, a1, 32
     addi    t6, t6, 32
     addi    a2, a2, -32
-    bgeu    a2, t1, .Lblocks
 .Lwords:
     li      t1, 8
     bltu    a2, t1, .Lbytes
@@ -204,13 +226,63 @@ __wrap_memcpy:
 
     /* t0 = src & 7. Each destination word is the high bytes of one aligned
      * source word and the low bytes of the next: t3 and t4 are the two
-     * shifts, a3 walks the aligned source, t2 holds its word. */
+     * shifts, a3 walks the aligned source, t2 holds its word. Unrolled to
+     * 64 bytes because the merge is most of a guest's copying (decoding
+     * the input), and the loop's own four instructions were a fifth of it. */
 .Lsrc_misaligned:
     slli    t3, t0, 3
     li      t4, 64
     sub     t4, t4, t3
     andi    a3, a1, -8
     ld      t2, 0(a3)
+    li      t1, 64
+    bltu    a2, t1, .Lmerge_pairs
+.Lmerge_block:
+    ld      t5, 8(a3)
+    srl     a4, t2, t3
+    sll     a5, t5, t4
+    or      a4, a4, a5
+    sd      a4, 0(t6)
+    ld      t2, 16(a3)
+    srl     a4, t5, t3
+    sll     a5, t2, t4
+    or      a4, a4, a5
+    sd      a4, 8(t6)
+    ld      t5, 24(a3)
+    srl     a4, t2, t3
+    sll     a5, t5, t4
+    or      a4, a4, a5
+    sd      a4, 16(t6)
+    ld      t2, 32(a3)
+    srl     a4, t5, t3
+    sll     a5, t2, t4
+    or      a4, a4, a5
+    sd      a4, 24(t6)
+    ld      t5, 40(a3)
+    srl     a4, t2, t3
+    sll     a5, t5, t4
+    or      a4, a4, a5
+    sd      a4, 32(t6)
+    ld      t2, 48(a3)
+    srl     a4, t5, t3
+    sll     a5, t2, t4
+    or      a4, a4, a5
+    sd      a4, 40(t6)
+    ld      t5, 56(a3)
+    srl     a4, t2, t3
+    sll     a5, t5, t4
+    or      a4, a4, a5
+    sd      a4, 48(t6)
+    ld      t2, 64(a3)
+    srl     a4, t5, t3
+    sll     a5, t2, t4
+    or      a4, a4, a5
+    sd      a4, 56(t6)
+    addi    a3, a3, 64
+    addi    t6, t6, 64
+    addi    a2, a2, -64
+    bgeu    a2, t1, .Lmerge_block
+.Lmerge_pairs:
     li      t1, 16
     bltu    a2, t1, .Lmerge_word
 .Lmerge_pair:
