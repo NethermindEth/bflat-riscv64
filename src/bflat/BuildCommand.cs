@@ -1530,6 +1530,11 @@ internal class BuildCommand : CommandBase
         {
             backendOptions.Add("EnableRiscV64Compressed=0");
             backendOptions.Add("EnableRiscV64Atomic=0");
+
+            // dotnet-riscv fixup perf-83: every zkVM target links the non-collecting uGC (ugc-zero), so no
+            // stack is ever scanned and zeroing a slot only because it holds GC references is dead work.
+            // localsinit and read-before-write zeroing stay. Ignored by a JIT without the fixup.
+            backendOptions.Add("JitZkNoGcMustInit=1");
         }
 
         // zkVM per-site inline allocation (dotnet-riscv fixup 26). The JIT
