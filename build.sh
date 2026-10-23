@@ -131,7 +131,7 @@ function build_modules()
 							fi
 							pushd src
 								bash -c "${build}"
-								on_fail $? "Failed to build module ${module}"
+								on_fail $? "Failed to build module ${mod}"
 							popd
 						# Otherwise, if release file is provided, download from release and unpack
 						elif [ "$repo" != "null" ] && [ "$tag" != "null" ] && [ "$tag" != "" ] && [ "$release_file" != "null" ] && [ "$release_file" != "" ]; then
