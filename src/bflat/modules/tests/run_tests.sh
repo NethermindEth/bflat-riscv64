@@ -91,10 +91,6 @@ run_one test_gs_cookie \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_gs_cookie.c" \
 	"${MOD_DIR}/gs_cookie/module.c"
 
-run_one test_security_stub \
-	${CC} ${CFLAGS} "${TESTS_DIR}/test_security_stub.c" \
-	"${MOD_DIR}/security-stub/module.c"
-
 run_one test_rng_stupid \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_rng_stupid.c" \
 	"${MOD_DIR}/rng_stupid/module.c"
@@ -164,12 +160,13 @@ run_one test_stdcppshim \
 	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_stdcppshim.cpp" \
 	"${MOD_DIR}/stdcppshim/module.cpp" -Wl,--wrap=malloc
 
+# ubootstrap's classlib table is contract-versioned; the test pins the
+# .NET 11 layout (slot 4 = ResolveDispatch).
 run_one test_ubootstrap \
-	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_ubootstrap.cpp" \
+	${CXX} ${CXXFLAGS} -DBFLAT_DOTNET=11 "${TESTS_DIR}/test_ubootstrap.cpp" \
 	"${MOD_DIR}/ubootstrap/module.cpp"
 
 # --- assembly modules -------------------------------------------------
-OBJCOPY="${OBJCOPY:-riscv64-linux-gnu-objcopy}"
 
 # rhp_native twice: the write barriers' t3 post-increment is contract-
 # versioned, and build.sh selects it with --defsym BFLAT_DOTNET.
@@ -214,7 +211,8 @@ prepare_zkvm_obj()
 # first - so the targets' differing exit protocols do not need emulating.
 #
 # The three targets hand off differently, and the test needs to know which
-# stub to expect: zisk/zisk_sim call __libc_start_main, openvm calls
+# stub to expect: zisk calls __libc_start_main (zisk_sim links the same
+# entry point), openvm calls
 # noos_start_main, sp1 calls sp1-zkvm's __start (and reaches the .NET side
 # later, through __wrap_main -> noos_main).
 #
@@ -225,7 +223,7 @@ prepare_zkvm_obj()
 # expects that fallback - the case that broke the CI sample guests when the
 # reference was still strong.
 STACK_TOP="zkvm_test_stack+65536"
-for m in zkvm_zisk zkvm_zisk_sim zkvm_sp1 zkvm_sp1_nobind zkvm_openvm ; do
+for m in zkvm_zisk zkvm_sp1 zkvm_sp1_nobind zkvm_openvm ; do
 	src="${m}"
 	case "${m}" in
 	zkvm_sp1)        entry="-DZKVM_ENTRY_SP1=1" ;;

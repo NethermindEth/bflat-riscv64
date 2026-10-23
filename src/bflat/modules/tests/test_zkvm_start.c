@@ -7,7 +7,7 @@
  * linker-script symbols and then hands control to the start-up routine
  * the target uses. Three shapes exist and each gets its own build:
  *
- *   ZKVM_ENTRY_LIBC (zisk, zisk_sim)
+ *   ZKVM_ENTRY_LIBC (zisk; zisk_sim links the same entry point)
  *       __libc_start_main(uBootstrap_main, argc, argv, 0, 0, 0, sp)
  *   ZKVM_ENTRY_NOOS (openvm)
  *       noos_start_main(argc, argv) - musl's start-up replaced wholesale
@@ -48,6 +48,8 @@ extern int uBootstrap_main(int argc, char *argv[]);
 #define BAD_ARGV_TERM 24
 #define BAD_STACK 25
 #define BAD_GP 26
+#define BAD_ENVP 27
+#define BAD_AUXV 28
 
 /* Current sp/gp. _start loads both from the linker symbols, so every
  * start-up stub is entered with them already pointing at the arrays
@@ -103,7 +105,7 @@ int uBootstrap_main(int argc, char *argv[])
 }
 
 /* Stand-in for musl's __libc_start_main (zisk, zisk_sim): validates the
- * handoff and exits. Signature per the riscv64 call in _start:
+ * handoff, including the envp/auxv musl derives from argv, and exits. Signature per the riscv64 call in _start:
  *   a0 = main, a1 = argc, a2 = argv, a3..a5 = 0, a6 = stack end */
 int test_libc_start_main(int (*main_fn)(int, char **), long argc,
                          char **argv, void (*init)(void), void (*fini)(void),
@@ -117,6 +119,17 @@ int test_libc_start_main(int (*main_fn)(int, char **), long argc,
         _exit(BAD_ENTRY);
     if (argv_verdict(argc, argv) != OK)
         _exit(argv_verdict(argc, argv));
+
+    /* musl takes envp at argv + argc + 1 and auxv after envp's NULL, so
+     * both must be terminated inside the module's vector: an empty envp
+     * and an AT_NULL auxv pair. */
+    char **envp = argv + argc + 1;
+    if (envp[0] != NULL)
+        _exit(BAD_ENVP);
+    uintptr_t *auxv = (uintptr_t *)(envp + 1);
+    if (auxv[0] != 0 || auxv[1] != 0)
+        _exit(BAD_AUXV);
+
     if (!gp_ok(read_gp()))
         _exit(BAD_GP);
 

@@ -123,14 +123,13 @@ and `os`.
 | rhp_native | Assembly replacements for riscv64 runtime helpers (GC reference-assignment barriers) |
 | rng_stupid | Deterministic pseudo-random generator — a zkVM guest must be reproducible |
 | rust_sys | Trivial Rust compatibility layer |
-| security-stub | Stubs for the GSSAPI surface of the .NET runtime |
 | stdcppshim | Replacements for C++ allocators |
 | tls | Simple TLS implementation that does not rely on the ELF format |
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
 | zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
 | zkvm_zisk | Entry point and linker script for Zisk |
-| zkvm_zisk_sim | Entry point and linker script for the Zisk simulator |
+| zkvm_zisk_sim | Linker script for the Zisk simulator (the entry point is zkvm_zisk's) |
 | zkvm_sp1 | Entry point and linker script for SP1 |
 | zkvm_openvm | Entry point and linker script for OpenVM |
 

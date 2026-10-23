@@ -14,9 +14,14 @@ app_str:
 
     .section .data
     .balign 8
+/* The initial process vector musl's __libc_start_main walks: argv, then
+ * envp at argv + argc + 1, then auxv after envp's NULL. All three must end
+ * here, or musl reads envp and auxv from whatever .data follows. */
 argv_vec:
     .dword app_str
-    .dword 0
+    .dword 0            /* argv terminator */
+    .dword 0            /* envp: empty */
+    .dword 0, 0         /* auxv: AT_NULL */
 
 .section .text.init
 .global _start

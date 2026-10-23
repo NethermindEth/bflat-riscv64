@@ -36,7 +36,6 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [nofp](#nofp) | Soft-float and libm entry points that trap loudly | No floating-point hardware |
 | [zisk_subst](#zisk-subst) | ILC-stage substitutions and C# snippets — data, not an object file | Managed code that carries FP |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
-| [security-stub](#security-stub) | Security/GSS functions return failure | Unused network paths must still link |
 | [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
 | [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
 | [rust_sys](#rust-sys) | `sys_alloc_aligned` | Interop with adjacent Rust precompiles |
@@ -134,10 +133,12 @@ thread pointer, run `.init_array` and enter `uBootstrap_main`.
 ## zkvm_zisk / zkvm_zisk_sim — entry point and memory map
 {: #zkvm-zisk }
 
-**Files:** `modules/zkvm_zisk/{module.S,script.ld}`, `modules/zkvm_zisk_sim/{module.S,script.ld}`
+**Files:** `modules/zkvm_zisk/{module.S,script.ld}`, `modules/zkvm_zisk_sim/script.ld`
 
-Two siblings. Both contain a tiny `_start` written in assembly that sets
-`gp`, `sp`, and tail-calls `__libc_start_main(uBootstrap_main, …)`.
+Two siblings sharing one entry point: `zkvm_zisk/module.S` is a tiny
+`_start` written in assembly that sets `gp`, `sp`, and tail-calls
+`__libc_start_main(uBootstrap_main, …)`. `zisk_sim` links it unchanged and
+brings only its own memory map.
 
 The linker scripts diverge:
 
@@ -518,16 +519,6 @@ make the proof non-deterministic. The PRNG produces the same bytes for
 the same execution, which is exactly what proving requires; whether the
 caller's algorithm tolerates non-cryptographic randomness is the
 caller's problem.
-
-## security-stub — GSS / security functions
-{: #security-stub }
-
-**File:** `modules/security-stub/module.c`
-
-A long list of `NetSecurityNative_*` functions that all return `-1`.
-.NET's networking stack references these even when no GSS is in use;
-returning failure is enough to prevent link errors and never gets
-executed at runtime in our workloads.
 
 ## gs_cookie — neutralised stack cookie
 {: #gs-cookie }

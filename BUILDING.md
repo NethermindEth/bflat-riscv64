@@ -118,8 +118,8 @@ The assembly modules are covered too. `rhp_native` is exercised through a
 shim that marshals the t3/t4/t5 register convention the C ABI cannot
 express, built twice — once per `BFLAT_DOTNET` contract — so the
 version-dependent write-barrier behaviour is pinned from both sides.
-Every zkVM entry module — `zkvm_zisk`, `zkvm_zisk_sim`, `zkvm_sp1`,
-`zkvm_openvm` — has its `_start` checked for the handoff it actually makes:
+Every zkVM entry module — `zkvm_zisk` (also linked for `zisk_sim`),
+`zkvm_sp1`, `zkvm_openvm` — has its `_start` checked for the handoff it actually makes:
 `__libc_start_main` for the Zisk pair, `noos_start_main` for OpenVM, and
 sp1-zkvm's `__start` for SP1, whose .NET side is then reached through
 `__wrap_main` → `noos_main`. Each build checks the managed entry point,

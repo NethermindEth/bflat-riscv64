@@ -110,11 +110,10 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\entrypoint.o" />
 
-    <!-- Zisk Simulator specific -->
+    <!-- Zisk Simulator specific: only the memory map; the entry point is
+         ZisK's (BuildCommand links zisk/entrypoint.o for zisk_sim). -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\script.ld"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\script.ld" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\entrypoint.o" />
 
     <!-- SP1 specific -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_sp1\script.ld"
@@ -190,10 +189,6 @@
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.o" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rust_sys\module_params.yml"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.params.yml" />
-
-    <!-- security-stub -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\security-stub\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\security-stub.o" />
 
     <!-- gs_cookie -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module.o"
