@@ -20,11 +20,11 @@
  * next reuse land 8 bytes high - e.g. Dictionary`2<__Canon,TValue>.TryInsert
  * stores the key via this helper then writes `entry.value` at 0x10(t3): with
  * the increment the value lands in the next entry's slot and the dictionary
- * silently loses every value. BFLAT_DOTNET is passed by build.sh (--defsym);
- * default to 10 so a bare assemble keeps the legacy increment.
+ * silently loses every value. BFLAT_DOTNET is passed by build.sh (--defsym)
+ * and has no default: guessing a line here picks a barrier silently.
  */
 .ifndef BFLAT_DOTNET
-.set BFLAT_DOTNET, 10
+.error "BFLAT_DOTNET is not set (assemble with --defsym BFLAT_DOTNET=10|11)"
 .endif
 
 .globl __wrap_RhpAssignRefRiscV64

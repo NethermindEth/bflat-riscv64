@@ -76,7 +76,7 @@ extern "C" void InitializeModules(void *osModule, void **modules, int count,
 static char fake_module_handle;
 /* C++ linkage: the module declares this one WITHOUT extern "C". The
  * signature follows the .NET line (see module.cpp). */
-#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+#if BFLAT_DOTNET >= 11
 void *PalGetModuleHandleFromPointer(void *pointer, bool pinModule)
 {
     (void)pointer;

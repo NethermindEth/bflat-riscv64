@@ -52,9 +52,11 @@ extern "C" bool RhRegisterOSModule(void * pModule,
     void ** pClasslibFunctions, uint32_t nClasslibFunctions);
 
 /* .NET 11 (rc.2+) grew a pinModule parameter; the C++ mangled name follows
- * it, so the declaration has to match the runtime the module links against.
- * Undefined BFLAT_DOTNET defaults to the newest line, like the other guards. */
-#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+ * it, so the declaration has to match the runtime the module links against. */
+#ifndef BFLAT_DOTNET
+#error "BFLAT_DOTNET is not set (compile with -DBFLAT_DOTNET=10|11)"
+#endif
+#if BFLAT_DOTNET >= 11
 void* PalGetModuleHandleFromPointer(void* pointer, bool pinModule);
 #define BFLAT_PAL_GET_MODULE_HANDLE(p) PalGetModuleHandleFromPointer((p), false)
 #else
@@ -85,10 +87,8 @@ MANAGED_RUNTIME_EXPORT(AppendExceptionStackFrame)
 /* ResolveDispatch (classlib slot 4) is a bflat-fork managed export that only
  * exists in the .NET 11 runtime blobs; the .NET 10 fork leaves slot 4 unused
  * (ICodeManager.h: "unused = 4"), so referencing it there is an undefined
- * symbol at link time. Gate the declaration/reference on the version; only an
- * explicit .NET 10 build drops it (undefined BFLAT_DOTNET defaults to the
- * current net11 layout, keeping bare/test compiles unchanged). */
-#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+ * symbol at link time. Gate the declaration/reference on the version. */
+#if BFLAT_DOTNET >= 11
 MANAGED_RUNTIME_EXPORT(ResolveDispatch)
 #endif
 MANAGED_RUNTIME_EXPORT(GetSystemArrayEEType)
@@ -115,7 +115,7 @@ static const pfn c_classlibFunctions[] = {
     &MANAGED_RUNTIME_EXPORT_NAME(RuntimeFailFast),
     &MANAGED_RUNTIME_EXPORT_NAME(ThreadEntryPoint),
     &MANAGED_RUNTIME_EXPORT_NAME(AppendExceptionStackFrame),
-#if !defined(BFLAT_DOTNET) || BFLAT_DOTNET >= 11
+#if BFLAT_DOTNET >= 11
     &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),  // slot 4: net11 dispatch resolver
 #else
     nullptr,                                        // slot 4: unused on net10 (stock)
