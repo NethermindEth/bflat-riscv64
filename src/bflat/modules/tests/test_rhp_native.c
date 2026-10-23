@@ -17,7 +17,7 @@
 #include "common.h"
 
 #ifndef BFLAT_DOTNET
-#define BFLAT_DOTNET 10
+#error "BFLAT_DOTNET is not set (run_tests.sh passes -DBFLAT_DOTNET=10|11)"
 #endif
 
 #if BFLAT_DOTNET < 11
