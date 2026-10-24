@@ -650,7 +650,7 @@ same error as a schema 1 manifest without a matching build.
 | Module | sources | objects and group | link.wrap | Other sections | Platform-specific parts to move out |
 |--------|---------|-------------------|-----------|----------------|-------------------------------------|
 | nofp | `module.c` | early | 38 transcendental libm names and `asprintf` | Only the platforms link it. Before, the stock musl target also linked `module.o`, without wraps; the object has only `__wrap_*` stubs now, so nothing used it. | — |
-| ubootstrap | `module.cpp` | whole-archive | — | `ilc.features` (invariant globalization), `ilc.direct_pinvoke` (`__Internal`) | — |
+| ubootstrap | `module.cpp` | whole-archive | — | `ilc.direct_pinvoke` (`__Internal`) | — |
 | stdcppshim | `module.cpp` | whole-archive | — | — | — |
 | rhp | `module.c` | whole-archive | 19. One has `eh: failfast`. Six have `flag: no-console`. | — | — |
 | gs_cookie | `module.c` | whole-archive | `__security_cookie` | — | — |
@@ -663,7 +663,7 @@ same error as a schema 1 manifest without a matching build.
 | ugc-zero | — | normal: 6 `.obj` files from `release/` | 2 | `external`, `codegen.options` (`JitZkNoGcMustInit=1`) | — |
 | nothread | `module.c` | pre-libc, `when: { flag: no-atomics }` | — | — | — |
 | noos | `module.c` | pre-libc, `when: { flag: noos }` | — | — | — |
-| guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.features` (invariant timezones) | Nothing in it is for one VM. Only the single-hart substitutions stay; see [Substitutions](#substitutions). |
+| guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.features` (invariant globalization, moved from ubootstrap, and invariant timezones) | Nothing in it is for one VM. Only the single-hart substitutions stay; see [Substitutions](#substitutions). |
 
 The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
 bflat-sp1 and bflat-openvm. Their unit tests went with them

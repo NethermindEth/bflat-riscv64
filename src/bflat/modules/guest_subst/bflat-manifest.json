@@ -2,10 +2,10 @@
   "$schema": "../../bflat-manifest.schema.json",
   "schema": 2,
   "name": "guest_subst",
-  "description": "Managed-code substitutions for single-threaded zkVM guests (ILC stage)",
-  "note": "No native object: this module carries the ILC-stage inputs. substitutions: ILLink.Substitutions XML that stubs method bodies and folds feature fields; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. An entry is here because the guest has one hart. Floating point is not a reason: soft-float arithmetic and the exact libm operations run.",
+  "description": "Managed-code substitutions and feature switches for single-threaded, OS-less zkVM guests (ILC stage)",
+  "note": "No native object: this module carries the ILC-stage inputs, for two reasons. The guest has one hart: substitutions is ILLink.Substitutions XML that stubs the thread-pool tuning and the processor queries; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. The guest has no OS data: the features make globalization and timezones invariant, because a zkVM has no ICU data and no zoneinfo files, and a proof must not depend on them. Floating point is not a reason: soft-float arithmetic and the exact libm operations run.",
   "ilc": {
     "substitutions": ["substitutions.xml"],
-    "features": {"System.TimeZoneInfo.Invariant": true}
+    "features": {"System.Globalization.Invariant": true, "System.TimeZoneInfo.Invariant": true}
   }
 }

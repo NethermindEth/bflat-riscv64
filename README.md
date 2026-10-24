@@ -135,7 +135,7 @@ platform of a target lists the modules it requires.
 | tls | Simple TLS implementation that does not rely on the ELF format |
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
-| guest_subst | ILC-stage substitutions (no native object) |
+| guest_subst | ILC-stage substitutions and invariant feature switches (no native object) |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
 C, C++ and assembly modules are unit-tested on the real ISA under qemu. The

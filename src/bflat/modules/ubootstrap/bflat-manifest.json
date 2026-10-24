@@ -6,7 +6,6 @@
   "sources": [{"file": "module.cpp"}],
   "objects": [{"file": "module.o", "group": "whole-archive", "order": 10}],
   "ilc": {
-    "features": {"System.Globalization.Invariant": true},
     "direct_pinvoke": [
       {
         "value": "__Internal",

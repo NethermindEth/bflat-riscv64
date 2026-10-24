@@ -34,7 +34,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [eh](#eh) | Synthetic program headers for the unwinder | No loader, so nothing maps the real ones |
 | [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
 | [nofp](#nofp) | Transcendental libm entry points that trap loudly | A transcendental has no place in a proof |
-| [guest_subst](#guest-subst) | ILC-stage substitutions — data, not an object file | One hart |
+| [guest_subst](#guest-subst) | ILC-stage substitutions and feature switches — data, not an object file | One hart; no OS data |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
 | [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
 | [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
@@ -620,9 +620,17 @@ runtime's GC discovery into this shim.
 The odd one out: it ships no object file. `guest_subst` carries the data
 that changes *managed* code before it is ever compiled to RISC-V64 —
 [`substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/substitutions.xml),
-an ILLink substitutions file. An entry is there because the guest has one
-hart. Floating point is not a reason: soft-float arithmetic and the exact
-libm operations run. All four platforms require the module. The file is
+an ILLink substitutions file, and two feature switches. There are two
+reasons for its content:
+
+- The guest has one hart. The substitutions stub the thread-pool tuning and
+  the processor queries.
+- The guest has no OS data. `System.Globalization.Invariant` and
+  `System.TimeZoneInfo.Invariant` are on: a zkVM has no ICU data and no
+  zoneinfo files, and a proof must not depend on them.
+
+Floating point is not a reason: soft-float arithmetic and the exact libm
+operations run. All four platforms require the module. The file is
 copied into the layout and consumed by the driver at guest-build time; the
 mechanism is described under
 [Stage 1.5](architecture.md#stage-15--ilc-stage-substitutions).
