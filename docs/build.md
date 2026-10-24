@@ -88,16 +88,6 @@ mismatch fails the image build instead of the first use.
 
 ## Verifying a build
 
-The build re-checks its own [ILC-stage
-substitutions](architecture.md#stage-15--ilc-stage-substitutions) against
-the CoreLib it just unpacked, so a runtime bump that moves a substituted
-method fails here rather than at your first guest compilation:
-
-```
-zkVM: applied 21 C#-snippet body substitution(s)
-zkVM: substitutions verified for the layout modules against System.Private.CoreLib
-```
-
 The module test, fuzzing and proof suites are described on the
 [Verification](verification.md) page.
 

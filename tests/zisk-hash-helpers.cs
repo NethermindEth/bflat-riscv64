@@ -1,8 +1,9 @@
 using System.Runtime.CompilerServices;
 
-// Build with --libc zisk -Ot and run under ziskemu with a step limit. HashHelpers.IsPrime has an
-// integer body from guest_subst's snippets.cs; while it was a constant stub that ILC inlined, GetPrime above
-// its primes table counted to int.MaxValue without testing anything. Expected values are upstream's.
+// Build with --libc zisk -Ot and run under ziskemu with a step limit. HashHelpers.IsPrime is the upstream
+// body: it bounds the divisors with Math.Sqrt, which is soft-float musl sqrt on the zkVM. While it was a
+// constant stub that ILC inlined, GetPrime above its primes table counted to int.MaxValue without testing
+// anything. Expected values are upstream's.
 internal static class Program
 {
     [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "IsPrime")]

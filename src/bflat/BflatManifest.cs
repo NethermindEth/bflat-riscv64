@@ -269,7 +269,6 @@ internal sealed class BflatManifest
     public List<ManifestItem> LdOptions { get; } = new List<ManifestItem>();
 
     public List<ManifestItem> IlcSubstitutions { get; } = new List<ManifestItem>();
-    public List<ManifestItem> IlcSnippets { get; } = new List<ManifestItem>();
     public List<ManifestItem> IlcSources { get; } = new List<ManifestItem>();
     public List<ManifestItem> IlcReferences { get; } = new List<ManifestItem>();
     public List<ManifestItem> IlcDefines { get; } = new List<ManifestItem>();
@@ -318,7 +317,6 @@ internal sealed class BflatManifest
             yield break;
         if (LdOptions.Count > 0) yield return "link.ld";
         if (IlcSubstitutions.Count > 0) yield return "ilc.substitutions";
-        if (IlcSnippets.Count > 0) yield return "ilc.snippets";
         if (IlcDefines.Count > 0) yield return "ilc.defines";
         if (IlcDirectPInvoke.Count > 0) yield return "ilc.direct_pinvoke";
         if (IlcFeatures.Count > 0) yield return "ilc.features";
@@ -505,11 +503,9 @@ internal sealed class BflatManifest
 
     private static void ReadIlc(ManifestReader r, JsonElement ilc, BflatManifest m)
     {
-        r.CheckKeys(ilc, "$.ilc", "substitutions", "snippets", "sources", "references", "defines", "features", "direct_pinvoke");
+        r.CheckKeys(ilc, "$.ilc", "substitutions", "sources", "references", "defines", "features", "direct_pinvoke");
         if (ilc.TryGetProperty("substitutions", out JsonElement subst))
             r.ForEach(subst, "$.ilc.substitutions", (e, p) => m.IlcSubstitutions.Add(r.FileItem(e, p)));
-        if (ilc.TryGetProperty("snippets", out JsonElement snippets))
-            r.ForEach(snippets, "$.ilc.snippets", (e, p) => m.IlcSnippets.Add(r.FileItem(e, p)));
         if (ilc.TryGetProperty("sources", out JsonElement sources))
             r.ForEach(sources, "$.ilc.sources", (e, p) => m.IlcSources.Add(r.FileItem(e, p)));
         if (ilc.TryGetProperty("references", out JsonElement refs))
@@ -903,7 +899,7 @@ internal sealed class ManifestException : Exception
 /// </summary>
 internal sealed class ManifestLink
 {
-    /// <summary>The selected platform, or null for a link of modules only (see <see cref="ForModules"/>).</summary>
+    /// <summary>The selected platform.</summary>
     public BflatManifest Platform { get; private set; }
     public ManifestTarget Target { get; private set; }
     public List<BflatManifest> Manifests { get; } = new List<BflatManifest>();
@@ -983,18 +979,6 @@ internal sealed class ManifestLink
         if (platform.Path != null && !modules.ContainsValue(platform))
             link.Packages.Add(platform);
         link.Check();
-        return link;
-    }
-
-    /// <summary>
-    /// Every module of the layout that is not a platform, for a build that
-    /// selects no platform (<c>--verify-substitutions</c>).
-    /// </summary>
-    public static ManifestLink ForModules(Dictionary<string, BflatManifest> modules, ManifestTarget target)
-    {
-        var link = new ManifestLink { Target = target };
-        foreach (BflatManifest m in modules.Values.Where(m => m.Platform == null))
-            link.Add(m);
         return link;
     }
 

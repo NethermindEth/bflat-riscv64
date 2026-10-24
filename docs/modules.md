@@ -33,8 +33,8 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
 | [eh](#eh) | Synthetic program headers for the unwinder | No loader, so nothing maps the real ones |
 | [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
-| [nofp](#nofp) | Soft-float and libm entry points that trap loudly | No floating-point hardware |
-| [guest_subst](#guest-subst) | ILC-stage substitutions and C# snippets — data, not an object file | One hart; libm calls that nofp traps |
+| [nofp](#nofp) | Transcendental libm entry points that trap loudly | A transcendental has no place in a proof |
+| [guest_subst](#guest-subst) | ILC-stage substitutions — data, not an object file | One hart |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
 | [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
 | [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
@@ -476,18 +476,25 @@ buffer instead of the dynamic-loader logic in musl.
 
 **File:** `modules/nofp/module.c`
 
-A definition for every soft-float compiler-RT helper (`__addsf3`,
-`__divdf3`, `__floatsidf`, `__fixunsdfsi`, …) and for the libm surface
-the runtime references (`pow`, `sqrt`, `fmod`, …). They exist because a
-RISC-V toolchain emits calls to these even when `double` appears only in
-code that is never reached; without the module the link fails with
-hundreds of unresolved symbols.
+A `--wrap` stub for each transcendental libm function that the runtime
+references (`sin`, `pow`, `exp`, `log`, …). The runtime's math helpers
+reference them, but on the zkVM those paths do not run. The bundled musl is
+built for `rv64im`, so its implementations would link and run: the trap is
+policy. A transcendental has no place in a proof, and a guest that reaches
+one has a bug.
 
-Every one of them **traps**: the body calls a `noreturn` helper that exits
-with status 255. Empty bodies would let a stray FP call return an undefined
-register value and the run continue with a silently wrong result — the worst
-failure mode for a proving system. The policy lives in one function
-(`nofp_trap`).
+Every stub **traps**: the body calls a `noreturn` helper that exits with
+status 255. The policy lives in one function (`nofp_trap`).
+
+The module does not stub these:
+
+- The soft-float builtins (`__adddf3`, `__muldf3`, …). They are the
+  floating-point arithmetic of the guest, and `libgcc.a` defines them.
+- The exact operations: `ceil`, `floor`, `modf`, `sqrt`, `fma`, `scalbn`,
+  `fmod` and their float forms. Each has one correctly rounded IEEE 754
+  result, like `+` and `/`, and CoreLib calls them for ordinary work:
+  double formatting, `DateTime.Add*`, `HashHelpers.IsPrime`, and the `%`
+  operator on `double`.
 
 One exception, deliberately not a trap: `__wrap_asprintf` returns `-1`.
 It is referenced only by the cgroup parsing that pal already stubs out,
@@ -612,14 +619,12 @@ runtime's GC discovery into this shim.
 
 The odd one out: it ships no object file. `guest_subst` carries the data
 that changes *managed* code before it is ever compiled to RISC-V64 —
-[`substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/substitutions.xml)
-(an ILLink substitutions file) and
-[`snippets.cs`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/snippets.cs)
-(whole-body C# replacements). An entry is there for one of two reasons:
-the guest has one hart, or the method calls a libm function that
-[nofp](#nofp) traps. Soft-float arithmetic runs, so floating point alone
-is not a reason. All four platforms require the module. Both are copied into the layout and consumed
-by the driver at guest-build time; the mechanism is described under
+[`substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/substitutions.xml),
+an ILLink substitutions file. An entry is there because the guest has one
+hart. Floating point is not a reason: soft-float arithmetic and the exact
+libm operations run. All four platforms require the module. The file is
+copied into the layout and consumed by the driver at guest-build time; the
+mechanism is described under
 [Stage 1.5](architecture.md#stage-15--ilc-stage-substitutions).
 
 It is grouped with the modules because it answers the same kind of

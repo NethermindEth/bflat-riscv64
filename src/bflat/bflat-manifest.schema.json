@@ -498,12 +498,6 @@
             "$ref": "#/$defs/fileItem"
           }
         },
-        "snippets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/fileItem"
-          }
-        },
         "sources": {
           "type": "array",
           "items": {

@@ -94,7 +94,7 @@ internal static class Program
         {
             foreach (ManifestSource s in m.Sources)
                 MustExist(m, s.File, "source");
-            foreach (ManifestItem i in m.IlcSubstitutions.Concat(m.IlcSnippets).Concat(m.IlcSources))
+            foreach (ManifestItem i in m.IlcSubstitutions.Concat(m.IlcSources))
                 MustExist(m, i.Value, "ILC file");
             foreach (ManifestTest t in m.Tests)
                 MustExist(m, t.File, "test");
@@ -182,7 +182,7 @@ internal static class Program
         {
             var files = new SortedSet<string>(StringComparer.Ordinal) { BflatManifest.FileName };
             IEnumerable<string> named = m.EffectiveObjects().Select(o => o.File)
-                .Concat(m.IlcSubstitutions.Concat(m.IlcSnippets).Concat(m.IlcSources).Concat(m.IlcReferences).Select(i => i.Value));
+                .Concat(m.IlcSubstitutions.Concat(m.IlcSources).Concat(m.IlcReferences).Select(i => i.Value));
             if (m.Platform != null)
                 named = named.Append(m.Platform.LinkerScript).Append(m.Platform.Entry);
 
@@ -295,7 +295,6 @@ internal static class Program
         Console.WriteLine($"direct P/Invoke: {string.Join(" ", link.Values(m => m.IlcDirectPInvoke))}");
         Console.WriteLine($"features: {string.Join(" ", link.Features.Select(f => $"{f.Key}={f.Value}"))}");
         Console.WriteLine($"ILC substitutions: {string.Join(" ", link.Files(m => m.IlcSubstitutions))}");
-        Console.WriteLine($"ILC snippets: {string.Join(" ", link.Files(m => m.IlcSnippets))}");
         foreach ((string tool, List<string> args) in link.PostlinkSteps())
             Console.WriteLine($"postlink: {tool} {string.Join(" ", args)}");
         Console.WriteLine($"link: {ld}");

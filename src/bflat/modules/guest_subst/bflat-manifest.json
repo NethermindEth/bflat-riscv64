@@ -2,11 +2,10 @@
   "$schema": "../../bflat-manifest.schema.json",
   "schema": 2,
   "name": "guest_subst",
-  "description": "Managed-code substitutions for single-threaded soft-float zkVM guests (ILC stage)",
-  "note": "No native object: this module carries the ILC-stage inputs. substitutions: ILLink.Substitutions XML that stubs or removes method bodies and folds feature fields; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. snippets: C# compiled at guest-build time against the implementation assemblies, with access checks off; its method bodies replace the originals (see ZkvmSubstitutions.BuildBodySubstitutions). An entry is here for one of two reasons: the guest has one hart, or the method reaches a libm function that the nofp module traps. Soft-float arithmetic runs, so floating point alone is not a reason.",
+  "description": "Managed-code substitutions for single-threaded zkVM guests (ILC stage)",
+  "note": "No native object: this module carries the ILC-stage inputs. substitutions: ILLink.Substitutions XML that stubs method bodies and folds feature fields; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. An entry is here because the guest has one hart. Floating point is not a reason: soft-float arithmetic and the exact libm operations run.",
   "ilc": {
     "substitutions": ["substitutions.xml"],
-    "snippets": ["snippets.cs"],
     "features": {"System.TimeZoneInfo.Invariant": true}
   }
 }
