@@ -4,5 +4,9 @@
   "name": "zisk_subst",
   "description": "Managed-code substitutions for the FPU-less zkVM targets (ILC stage)",
   "note": "No native object: this module carries the ILC-stage inputs. substitutions: ILLink.Substitutions XML that stubs or removes method bodies and folds feature fields; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. snippets: C# compiled at guest-build time against the implementation assemblies, with access checks off; its method bodies replace the originals (see ZkvmSubstitutions.CompileSnippets).",
-  "ilc": {"substitutions": ["zisk.substitutions.xml"], "snippets": ["zisk.snippets.cs"]}
+  "ilc": {
+    "substitutions": ["zisk.substitutions.xml"],
+    "snippets": ["zisk.snippets.cs"],
+    "features": {"System.TimeZoneInfo.Invariant": true}
+  }
 }

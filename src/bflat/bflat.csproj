@@ -17,24 +17,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Remove ZisK from all the automatic download/extract tasks -->
-    <SupportedTarget Remove="linux-zisk-riscv64" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- Module payloads are data shipped into the compiler layout, never
          part of bflat's own compilation (zisk_subst's snippets reference
          CoreLib internals that only exist in the guest's reference set). -->
     <Compile Remove="modules\**\*.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <SdkBlob Remove="libs-zisk-riscv64" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- don’t attempt to download the ZisK *blob* either -->
-    <Blob Remove="libs-zisk-riscv64" />
-  </ItemGroup>
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
@@ -61,11 +49,6 @@
     <RuntimeArtifact Include="bflat-compiler-native-$(CompilerHost)" />
     <RuntimeArtifact Include="@(SupportedTarget->'bflat-libs-%(Identity)')" />
     <RuntimeArtifact Include="bflat-refs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Remove ZisK from all the automatic download/extract tasks -->
-    <RuntimeArtifact Remove="bflat-libs-zisk-riscv64" />
   </ItemGroup>
 
   <ItemGroup>
@@ -126,15 +109,14 @@
     <Copy SourceFiles="$(MSBuildThisFileDirectory)bflat-manifest.schema.json"
           DestinationFolder="$(OutputPath)" />
 
-    <!-- crt1 for the zkVM platforms: musl's crt1.o with _start/_start_c
-         renamed, so that the platform entry point defines _start. -->
-    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
+    <!-- crt1 for the platforms: musl's crt1.o with _start/_start_c renamed,
+         so that the platform entry point defines _start. -->
     <PropertyGroup>
       <_LlvmObjcopy>llvm-objcopy</_LlvmObjcopy>
       <_MuslCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1.o'))</_MuslCrt1>
-      <_ZiskCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'zisk', 'crt1.o'))</_ZiskCrt1>
+      <_PlatformCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1-platform.o'))</_PlatformCrt1>
     </PropertyGroup>
-    <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_ZiskCrt1)&quot;"
+    <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_PlatformCrt1)&quot;"
           ConsoleToMSBuild="true" />
 
     <!-- The stock musl target links nofp's object without its wraps (the
@@ -161,8 +143,10 @@
     (lib/linux/riscv64/musl/System.Private.CoreLib.dll, from the libs blob),
     so the same check runs at bflat build time against the same assemblies.
 
-    Both zkVM libcs are checked: they select different module sets. Set
-    SkipZkvmSubstitutionCheck=true to bypass (e.g. bisecting a blob).
+    No platform is needed: without one, bflat checks the substitutions of
+    every module in lib/modules (the platforms ship in their packages, which
+    do not exist yet at this point). Set SkipZkvmSubstitutionCheck=true to
+    bypass (e.g. bisecting a blob).
   -->
   <Target Name="VerifyZkvmSubstitutions"
           AfterTargets="CreateCompilerLayout"
@@ -183,14 +167,10 @@
          host aborts with "framework not found" (exit 150) before bflat runs,
          which looks exactly like a failed check. Same workaround BUILDING.md
          documents for running a net10.0 bflat on an 11-only image. -->
-    <Exec Command="&quot;$(RunCommand)&quot; build &quot;$(_VerifyProbe)&quot; --os linux --arch riscv64 --libc %(ZkvmLibc.Identity) --verify-substitutions"
+    <Exec Command="&quot;$(RunCommand)&quot; build &quot;$(_VerifyProbe)&quot; --os linux --arch riscv64 --libc musl --verify-substitutions"
           WorkingDirectory="$(MSBuildThisFileDirectory)"
           EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
   </Target>
-  <ItemGroup>
-    <ZkvmLibc Include="zisk" />
-    <ZkvmLibc Include="zisk_sim" />
-  </ItemGroup>
 
   <Target Name="ValidateVariant"
           BeforeTargets="Restore;CollectPackageReferences;DownloadCompilerNupkg;Build">

@@ -3,14 +3,113 @@
   "schema": 2,
   "name": "zkvm_zisk",
   "description": "The ZisK platform: entry point and memory map",
-  "note": "The platform data that is still in BuildCommand.cs (ISA, JIT options, ZKVM_ZISK, patch_elf passes) moves into codegen, ilc and postlink here when bflat implements those sections. The platform itself then moves to bflat-libziskos.",
   "sources": [{"file": "module.S"}],
+  "ilc": {"defines": ["ZKVM_ZISK"]},
+  "codegen": {
+    "abi": "lp64",
+    "isa": {
+      "disable": ["c", "a", "f", "d", "zba", "zbb", "zbs", "zicond"],
+      "enable": [
+        {
+          "value": "zba",
+          "when": {"compiler": "zb-lowering-fixes"},
+          "note": "The ZisK transpiler implements Zba, Zbb and Zbs natively (sh*add, rev8, andn, clz, bset, ...). Only with a compiler package that has the Zb lowering fixes (dotnet-riscv#9). Zicond waits for a ZisK release that decodes czero."
+        },
+        {"value": "zbb", "when": {"compiler": "zb-lowering-fixes"}},
+        {"value": "zbs", "when": {"compiler": "zb-lowering-fixes"}}
+      ]
+    },
+    "options": [
+      {
+        "value": "RiscV64ElideLeafRaSave=1",
+        "when": {"optimize": true},
+        "note": "Elide the RA spill/reload and frame in leaf methods (dotnet-riscv patches 23 and 31). Sound only on a single-threaded deterministic guest with no GC thread suspension and no return-address hijacking."
+      },
+      {
+        "value": "JitRiscV64DmaCompare=1",
+        "when": {"optimize": true},
+        "note": "Constant-size SequenceEqual as the csrrs 0x814 + addi x0 idiom that the ZisK ROM transpiler folds into one dma_xmemcmp step (patch 30). Real ZisK only: the simulator, SP1 and OpenVM do not know the idiom."
+      },
+      {
+        "value": "JitZkCsrPInvokes=syscall_keccak_f:800,syscall_arith256:801,syscall_arith256_mod:802,syscall_sha256_f:805,memmove:813,memcpy:813,zkvm_jump_dest_bitmap:81c",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixup perf-56: emit these libziskos P/Invokes as the single csrrs of the precompile (three-argument entries as csrrs + add x0), with no register kills. CSR numbers in hex."
+      },
+      {
+        "value": "JitInlineAdditionalMultiplier=3",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixup perf-57: code size is free on the zkVM and each avoided call saves its ABI overhead; +3 measured -2.2% steps for +3% code on mainnet blocks."
+      },
+      {
+        "value": "JitZkNoPinning=1",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixup perf-61: uGC never moves objects, so fixed locals need no pinning."
+      },
+      {
+        "value": "JitZkSynthesizeCounts=1",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixups perf-62/perf-63: synthesized block weights; locals live only across cold calls stay in caller-saved registers and are spilled at the call."
+      },
+      {"value": "JitZkSpillKeepReg=1", "when": {"optimize": true}},
+      {"value": "JitZkColdCallSpill=7d", "when": {"optimize": true}},
+      {
+        "value": "JitZkMemsetCsr=18",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixup perf-64: zero fills of 24+ bytes as the ZisK memset precompile idiom."
+      },
+      {
+        "value": "JitZkMemcpyCsr=10",
+        "when": {"optimize": true},
+        "note": "dotnet-riscv fixup perf-65: unrolled block copies of 16+ bytes as the ZisK DMA memcpy idiom."
+      },
+      {
+        "value": "EnableRiscV64Compressed=0",
+        "note": "The decoder has no C extension, and a single-threaded guest needs no atomics: the managed .text stays 32-bit and lock-free (dotnet-riscv fixups 24/25). Check with --error-on-compressed / --error-on-atomic."
+      },
+      "EnableRiscV64Atomic=0",
+      {
+        "value": "JitZkBumpAddr=bffbfff8",
+        "note": "Per-site inline allocation (dotnet-riscv fixup 26): the cell of the bump pointer, at a fixed address. It MUST equal g_zk_bump_ptr in the linker script. The top of the ZisK RAM window, which ends at 0xbffc0000 below the library RAM that ZisK 1.4 reserves."
+      }
+    ]
+  },
+  "postlink": [
+    {
+      "tool": "patch_elf",
+      "args": [
+        "--fix-init-array",
+        "--fix-tdata",
+        {
+          "value": "--remove-eh",
+          "when": {"eh": "failfast"},
+          "note": "Drops .eh_frame, .eh_frame_hdr and .dotnet_eh_table, which is exactly what the unwinder reads. Only when the build trades exception handling for size."
+        },
+        "--trim-bss",
+        {"value": "--print-fn-boundaries", "when": {"verbose": true}}
+      ]
+    }
+  ],
   "platform": {
     "aliases": {"libc": "zisk"},
     "base": {"os": "linux", "arch": "riscv64", "libc": "musl"},
-    "requires": ["nofp", "ubootstrap", "stdcppshim", "rhp", "gs_cookie", "rhp_native", "pal", "eh", "tls",
-                 "rng_stupid", "rust_sys", "ugc-zero", "nothread", "noos", "zisk_subst"],
-    "flags": ["no-console"],
+    "requires": [
+      "nofp",
+      "ubootstrap",
+      "stdcppshim",
+      "rhp",
+      "gs_cookie",
+      "rhp_native",
+      "pal",
+      "eh",
+      "tls",
+      "rng_stupid",
+      "rust_sys",
+      "ugc-zero",
+      "nothread",
+      "noos",
+      "zisk_subst"
+    ],
+    "flags": ["no-console", "no-fpu"],
     "linker_script": "script.ld",
     "entry": "module.o"
   }

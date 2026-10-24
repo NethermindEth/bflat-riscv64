@@ -35,11 +35,13 @@ using System.Text;
 //     linker script, entry) to <layout-modules-dir>/<name>/. Fails if a file
 //     is missing. bflat.csproj runs it while it makes the compiler layout.
 //
-// bflat-modules link <layout-modules-dir> <libc> [--remove-eh]
-//     Shows the part of the link command that the manifests make for a
-//     platform, with <placeholders> for the parts that bflat adds itself.
-//     It uses the same code as bflat, so it answers "what does --libc X
-//     link, and in which order" without a guest build.
+// bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...]
+//                    [--remove-eh] [-O0] [-v] [--compiler <capability>]...
+//     Shows what the manifests give a guest build on a platform: the module
+//     part of the link command (with <placeholders> for the parts that bflat
+//     adds itself), the ISA, the RyuJIT options, the ILC inputs and the
+//     post-link steps. It uses the same code as bflat, so it answers "what
+//     does this platform build, and in which order" without a guest build.
 internal static class Program
 {
     private static int Main(string[] args)
@@ -51,8 +53,7 @@ internal static class Program
                 ["check", string src] => Check(src),
                 ["plan", string src, string outFile] => Plan(src, outFile),
                 ["pack", string src, string outDir] => Pack(src, outDir),
-                ["link", string dir, string libc] => Link(dir, libc, removeEh: false),
-                ["link", string dir, string libc, "--remove-eh"] => Link(dir, libc, removeEh: true),
+                ["link", string dir, string platform, .. string[] rest] => Link(dir, platform, rest),
                 _ => Usage(),
             };
         }
@@ -68,7 +69,8 @@ internal static class Program
         Console.Error.WriteLine("usage: bflat-modules check <modules-dir>");
         Console.Error.WriteLine("       bflat-modules plan <modules-dir> <out-file>");
         Console.Error.WriteLine("       bflat-modules pack <modules-dir> <layout-modules-dir>");
-        Console.Error.WriteLine("       bflat-modules link <layout-modules-dir> <libc> [--remove-eh]");
+        Console.Error.WriteLine("       bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...]");
+        Console.Error.WriteLine("                          [--remove-eh] [-O0] [-v] [--compiler <capability>]...");
         return 2;
     }
 
@@ -239,19 +241,42 @@ internal static class Program
         return 0;
     }
 
-    private static int Link(string dir, string libc, bool removeEh)
+    private static int Link(string dir, string platformPath, string[] rest)
     {
-        Dictionary<string, BflatManifest> modules = ManifestLink.LoadModules(dir);
-        BflatManifest platform = ManifestLink.FindPlatform(modules, libc)
-            ?? throw new ManifestException($"--libc {libc}: no platform has this alias in {dir}");
-        ManifestTarget target = ManifestLink.TargetFor(platform, removeEh ? "failfast" : "unwind", "dotnet", optimize: true);
-        ManifestLink link = ManifestLink.Create(platform, modules, target);
+        var packages = new List<BflatManifest>();
+        var compiler = new HashSet<string>(StringComparer.Ordinal);
+        bool removeEh = false, optimize = true, verbose = false;
+        for (int i = 0; i < rest.Length; i++)
+        {
+            switch (rest[i])
+            {
+                case "--remove-eh": removeEh = true; break;
+                case "-O0": optimize = false; break;
+                case "-v": verbose = true; break;
+                case "--compiler" when i + 1 < rest.Length: compiler.Add(rest[++i]); break;
+                default: packages.Add(BflatManifest.Load(rest[i])); break;
+            }
+        }
 
-        // The same sequence as the zkVM link in BuildCommand.
+        Dictionary<string, BflatManifest> modules = ManifestLink.LoadModules(dir);
+        BflatManifest platform = BflatManifest.Load(platformPath);
+        if (platform.Platform == null)
+            throw new ManifestException($"{platformPath}: not a platform manifest");
+        var build = new ManifestTarget
+        {
+            Eh = removeEh ? "failfast" : "unwind",
+            Stdlib = "dotnet",
+            Optimize = optimize,
+            Verbose = verbose,
+            Compiler = compiler,
+        };
+        ManifestLink link = ManifestLink.Create(platform, modules, ManifestLink.TargetFor(platform, build), packages);
+
+        // The same sequence as the platform link in BuildCommand.
         var ld = new StringBuilder();
         ld.Append("<crt1.o> <crti.o> <guest.o> <runtime> ");
         link.AppendObjects(ld, ObjectGroup.PreLibc);
-        ld.Append("<libc.a> <libgcc.a> <crtn.o> <--extra-ld> <--extlib> ");
+        ld.Append("<libc.a> <libgcc.a> <crtn.o> <--extra-ld> ");
         link.AppendObjects(ld, ObjectGroup.PreEntry);
         link.AppendEntry(ld);
         link.AppendObjects(ld, ObjectGroup.Early);
@@ -263,9 +288,17 @@ internal static class Program
         ld.Append("<--ldflags>");
 
         Console.WriteLine($"platform {platform.Name}: {string.Join(", ", link.Manifests.Select(m => m.Name))}");
+        Console.WriteLine($"abi: {link.Abi ?? "-"}");
+        Console.WriteLine($"isa: {link.Isa(_ => true)}");
+        Console.WriteLine($"codegen options: {string.Join(" ", link.CodegenOptions)}");
+        Console.WriteLine($"defines: {string.Join(" ", link.Values(m => m.IlcDefines))}");
+        Console.WriteLine($"direct P/Invoke: {string.Join(" ", link.Values(m => m.IlcDirectPInvoke))}");
+        Console.WriteLine($"features: {string.Join(" ", link.Features.Select(f => $"{f.Key}={f.Value}"))}");
         Console.WriteLine($"ILC substitutions: {string.Join(" ", link.Files(m => m.IlcSubstitutions))}");
         Console.WriteLine($"ILC snippets: {string.Join(" ", link.Files(m => m.IlcSnippets))}");
-        Console.WriteLine(ld.ToString());
+        foreach ((string tool, List<string> args) in link.PostlinkSteps())
+            Console.WriteLine($"postlink: {tool} {string.Join(" ", args)}");
+        Console.WriteLine($"link: {ld}");
         return 0;
     }
 }

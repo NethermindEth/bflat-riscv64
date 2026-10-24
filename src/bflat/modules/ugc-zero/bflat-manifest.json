@@ -21,5 +21,13 @@
     },
     {"file": "release/ugc_zalloc.c.obj", "order": 30}
   ],
-  "link": {"wrap": ["GC_Initialize", "GC_VersionInfo"]}
+  "link": {"wrap": ["GC_Initialize", "GC_VersionInfo"]},
+  "codegen": {
+    "options": [
+      {
+        "value": "JitZkNoGcMustInit=1",
+        "note": "dotnet-riscv fixup perf-83: uGC never collects, so no stack is ever scanned, and zeroing a slot only because it holds GC references is dead work. localsinit and read-before-write zeroing stay."
+      }
+    ]
+  }
 }
