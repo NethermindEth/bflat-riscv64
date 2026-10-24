@@ -26,8 +26,8 @@
 extern void exit(int status) __attribute__((noreturn));
 
 /*@ // Single abort policy for every FP stub: terminate with status 255,
-    // never return. exit() resolves to the PAL's __wrap_exit (ZisK exit
-    // ecall) in the zkVM link.
+    // never return. exit() resolves to the PAL's __wrap_exit (the exit of
+    // the platform) in the zkVM link.
     assigns \nothing;
     ensures \false;
     exits \exit_status == 255;

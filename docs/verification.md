@@ -53,13 +53,12 @@ and what it guarantees:
 $ python3 src/bflat/scripts/check_acsl.py
 module            defined  annotated  status
 eh                      4          4  ok
-nofp                  105        105  ok
 pal                    47         47  ok
 rhp                    16         16  ok
 ...
 ```
 
-Annotations inside macro bodies — nofp generates its 100+ trap stubs from a
+Annotations inside macro bodies — nofp generates its trap stubs from a
 macro — are only visible to Frama-C when the preprocessor keeps comments
 through expansion, so the checker passes `-cpp-extra-args=-CC`. C++ modules
 carry ACSL++ annotations as documentation (plain Frama-C does not parse
@@ -71,9 +70,9 @@ The suites in `src/bflat/modules/tests/` are cross-compiled for riscv64 and
 executed under qemu-user, so module code runs on the guest ISA rather than
 a host approximation. That is what makes some of them possible at all:
 
-- **The raw ZisK exit ecall is tested for real.** `a7 == 93` is also Linux
-  riscv64 `__NR_exit`, so `__wrap_exit(42)` genuinely terminates a forked
-  child with status 42.
+- **The terminators are tested for real.** The tests define the platform
+  function `zkvm_platform_exit` as the exit of a forked child, so
+  `__wrap_exit(42)` genuinely terminates that child with status 42.
 - **Assembly modules are covered.** A small shim marshals the `t3/t4/t5`
   register convention that the C ABI cannot express, so the GC write
   barriers are tested directly — including their version-dependent `t3`
@@ -82,7 +81,6 @@ a host approximation. That is what makes some of them possible at all:
 ```console
 $ ./src/bflat/modules/tests/run_tests.sh
 pal                137 passed, 0 failed
-nofp               105 passed, 0 failed
 rhp_native(net10)   26 passed, 0 failed
 ...
 module unit tests: all suites passed

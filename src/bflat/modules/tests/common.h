@@ -3,9 +3,9 @@
  * @brief Minimal unit-test harness for the native modules.
  *
  * Tests are cross-compiled for riscv64 and executed under qemu-user, so
- * even the raw-ecall paths run for real: the ZisK exit ecall (a7 == 93)
- * coincides with Linux riscv64 __NR_exit, so __wrap_exit(42) genuinely
- * terminates the (forked) child with status 42 under qemu.
+ * the module code runs on the guest ISA. The terminators run for real too:
+ * a suite defines the platform function zkvm_platform_exit as the exit of
+ * a forked child, so __wrap_exit(42) terminates that child with status 42.
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  */

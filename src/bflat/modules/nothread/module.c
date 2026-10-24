@@ -8,23 +8,16 @@
  */
 
 /*
- * The bundled musl libc.a is built rv64ima -- correct for ZisK, which decodes
- * rv64imafd. SP1 and OpenVM decode rv64im, with NO A extension, and musl's
- * locking primitives are where the lr/sc/amo* instructions live: a linked
- * guest picked up 128 of them, all in pthread_cond_timedwait, __lock,
- * __lockfile, pthread_mutex_*, pthread_rwlock_*, __wait and __tl_lock.
+ * A zkVM guest has no threads: there is no thread-creation instruction, no
+ * interrupts and one hart. This module says so explicitly. It replaces musl's
+ * locking, waiting and thread primitives with implementations for one hart,
+ * so that no lock, futex or thread path of musl is in the image.
  *
- * That is fatal on SP1 and latent on OpenVM. SP1 transpiles every executable
- * word up front and PANICS on one it cannot decode
- * (crates/core/executor/src/disassembler/rrs.rs, transpile(.., false)), so the
- * guest never loads. OpenVM emits `unimp` for such a word and traps only if
- * execution reaches it -- better, but still a landmine.
- *
- * Rebuilding musl for rv64im would be the general fix and belongs in
- * dotnet-riscv. This module is the local one, and it is available because a
- * zkVM guest genuinely has no threads: there is no thread-creation
- * instruction, no interrupts and one hart, so every lock is uncontended by
- * construction and every wait is unwakeable by construction.
+ * Before, this module also kept the lr/sc/amo* instructions of an rv64ima
+ * musl out of the image of a decoder without the A extension. The musl of the
+ * layout is now built for rv64im and has no A instructions, but the module
+ * stays: it is the clear statement of what a lock and a wait mean on one
+ * hart.
  *
  * So: the acquire/release primitives become no-ops that report success, and
  * the primitives that BLOCK become fail-fast. Both halves matter. A no-op lock
@@ -42,8 +35,8 @@
  * pointless (__membarrier_init, __do_cleanup_push): they are not called, they
  * are there so pthread_create.lo is never pulled in for them.
  *
- * Linked for the sp1 and openvm targets only. ZisK decodes the A extension
- * happily, so it keeps musl's real primitives and stays bit-for-bit unchanged.
+ * Linked for the platforms with the no-atomics flag (sp1 and openvm). The
+ * other platforms keep musl's primitives, which work on one hart too.
  */
 extern void exit(int status) __attribute__((noreturn));
 
