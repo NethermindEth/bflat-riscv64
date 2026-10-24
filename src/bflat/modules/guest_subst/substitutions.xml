@@ -13,7 +13,8 @@
   bflat links libgcc.a, so FP code runs correctly. The exact libm operations
   (ceil, floor, modf, sqrt, ...) run too; only the transcendental functions
   trap (see the nofp module), and CoreLib does not call them on its ordinary
-  paths. Every entry here is for the single hart.
+  paths. Every entry here is for the single hart. The module manifest also
+  sets the invariant globalization and timezone feature switches.
 -->
 <linker>
   <assembly fullname="System.Private.CoreLib">
