@@ -276,7 +276,7 @@ object.
 lld applies `--wrap` to the full link. Thus the position of a `--wrap`
 between the files has no effect: only the files and their sequence decide
 which archive members lld takes. Refer to the verification in
-[What left BuildCommand.cs](#what-left-buildcommandcs).
+[What left BuildCommand.cs and the modules](#what-left-buildcommandcs-and-the-modules).
 
 ### `link`: wraps and other linker options
 
@@ -538,6 +538,32 @@ For a platform build, bflat links musl's `crt1.o` with `_start` renamed
 (`lib/linux/riscv64/musl/crt1-platform.o`), so that the entry of the
 platform defines `_start`.
 
+### Platform interface
+
+The modules of bflat are built once and shared by all platforms. Thus they
+contain no code for one zkVM. Where a guest needs the zkVM itself, `pal`
+calls a function that the entry object of the platform (`platform.entry`)
+defines:
+
+| Function | Required | Called for | Without it |
+|----------|----------|------------|------------|
+| `void zkvm_platform_exit(long code)` | yes; it must not return | `exit`, `_Exit` and `abort` of the guest | the link fails |
+| `void zkvm_platform_write(int fd, const char *buf, int len)` | no | console output (`Console`, the trap messages of `noos`, `sys_write`) | the output is lost |
+| `long zkvm_platform_syscall(long n, long a1, …, long a6)` | no | a raw `syscall` that `pal` does not answer itself | `syscall` returns `-1` |
+
+The entry object also defines `_start`. The four platforms of today:
+
+| Platform | `zkvm_platform_exit` | `zkvm_platform_write` | `zkvm_platform_syscall` |
+|----------|----------------------|-----------------------|-------------------------|
+| `zisk`, `zisk_sim` | `ecall` with `a7 = 93` | — | musl's `syscall` (ZisK emulates Linux syscalls) |
+| `sp1` | `zkvm_halt` of the bindings library; without it, the commits and `HALT` | the `WRITE` syscall | — |
+| `openvm` | `TERMINATE` | `PrintStr` | — |
+
+`pal` also exports functions that a platform can bind its runtime to. Today
+there is one: `void *zkvm_alloc_or_abort(uint32_t bytes, uint32_t align)`,
+the allocation that ends the guest on exhaustion. The ZisK platform binds the
+ziskos Rust allocator to it (`__wrap_inline_bump_alloc_aligned`).
+
 ### Address constants
 
 Status: planned.
@@ -632,7 +658,7 @@ same error as a schema 1 manifest without a matching build.
 | rhp | `module.c` | whole-archive | 19. One has `eh: failfast`. Six have `flag: no-console`. | — | — |
 | gs_cookie | `module.c` | whole-archive | `__security_cookie` | — | — |
 | rhp_native | `module.S` | whole-archive | 4 | — | — |
-| pal | `module.c` | whole-archive | 40. One has `flag: no-console`. | — | The code for one VM in `module.c`: the ZisK exit ecall and accelerator arenas, the SP1 syscalls and digest, the console code. Their wraps are already in the packages. |
+| pal | `module.c` | whole-archive | 40. One has `flag: no-console`. | — | — (the exit, the console and raw syscalls go through the [platform interface](#platform-interface)) |
 | eh | `module.c` | whole-archive | `dl_iterate_phdr` | — | — |
 | tls | `module.c` | whole-archive | 4 | — | — |
 | rng_stupid | `module.c` | normal | 4 | — | — |
@@ -646,9 +672,9 @@ The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
 bflat-sp1 and bflat-openvm. Their unit tests went with them
 (`tests/platform/` of each package).
 
-## What left BuildCommand.cs
+## What left BuildCommand.cs and the modules
 
-| In `BuildCommand.cs` before | Now |
+| Before | Now |
 |-----------------------------|-----|
 | `IsZkvm(libc)` (23 calls) and the `libc == "zisk"`/`"sp1"`/`"openvm"` tests | the selected platform, its `flags` and its `codegen.abi` |
 | the fixed link order of the modules | `objects.group` and `objects.order` |
@@ -662,6 +688,8 @@ bflat-sp1 and bflat-openvm. Their unit tests went with them
 | `System.TimeZoneInfo.Invariant`, invariant globalization | `ilc.features` |
 | `__Internal` direct P/Invoke | `ilc.direct_pinvoke` |
 | `patch_elf` passes for zisk and sp1 | `postlink` |
+| the exit, console and syscall code of each zkVM in `pal` (selected by `__zkvm_target_*` marker symbols) | the [platform interface](#platform-interface), defined by the entry of each platform |
+| the ziskos allocator bridge in `pal` | `zkvm_alloc_or_abort`, bound by the ZisK entry |
 
 **Verification.** For each platform, the ISA string, the effective RyuJIT
 options, the defines, the feature switches, the direct P/Invoke list and the

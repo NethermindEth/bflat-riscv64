@@ -27,7 +27,6 @@ extern const char _kernel_heap_top[]; /* --defsym'd to bottom + HEAP_SIZE */
 uint8_t *g_zk_bump_ptr;
 uint8_t *g_zk_heap_floor;
 char _init_stack_bottom[1], _init_stack_top[1];
-long __real_syscall(long number, ...) { (void)number; return 0; }
 
 extern void *__wrap___libc_malloc_impl(unsigned long n);
 extern void *__wrap___libc_realloc(void *p, unsigned long n);
