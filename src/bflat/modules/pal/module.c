@@ -671,15 +671,28 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 
     return total;
 }
-extern char __zkvm_target_sp1 __attribute__((weak));
-extern char __zkvm_target_openvm __attribute__((weak));
-
-
-extern long __real_syscall(long number, ...);
+/* ------------------------------------------------------------------------
+ * The platform interface. pal.o is built once and shared by every platform,
+ * so what differs between the zkVMs - how the guest ends, where console
+ * output goes, whether a raw syscall can be serviced - is not here: the entry
+ * object of the platform (platform/entry.S in its bflat-* package) defines
+ * these functions, and pal calls them. docs/manifest.md lists the contract.
+ *
+ *   zkvm_platform_exit     required: end the guest with an exit code
+ *   zkvm_platform_write    optional: console output; without it, it is lost
+ *   zkvm_platform_syscall  optional: a raw Linux syscall; without it, -1
+ *
+ * The optional ones are weak references: a platform that does not define
+ * them gets the default. Host builds (the fuzz harnesses) use none of them.
+ * ------------------------------------------------------------------------ */
+extern void zkvm_platform_exit(long code) __attribute__((noreturn));
+extern void zkvm_platform_write(int fd, const char *buf, int len) __attribute__((weak));
+extern long zkvm_platform_syscall(long number, long arg1, long arg2, long arg3,
+                                  long arg4, long arg5, long arg6) __attribute__((weak));
 
 /*@ // riscv_flush_icache (0x11b / 283) is a no-op on the zkVM (no icache);
-    // everything else forwards to musl's real syscall with six argument
-    // slots. The forwarded effects cannot be specified here.
+    // everything else goes to the platform, or fails without one. The
+    // effects of the platform's syscall cannot be specified here.
     behavior flush_icache:
       assumes number == 0x11b;
       ensures \result == 0;
@@ -704,89 +717,22 @@ __wrap_syscall(long number, ...)
             return 0;
 
         default:
-            /* SP1 has no Linux syscalls (an unknown id is a hard executor
-             * error) and OpenVM has no ecall at all, so a passthrough would
-             * end the guest; the callers (NUMASupportInitialize's
-             * get_mempolicy, membarrier probes) all cope with a failure. ZisK
-             * emulates Linux syscalls, keep the passthrough there. */
-            if (&__zkvm_target_sp1 || &__zkvm_target_openvm)
-                return -1;
-            return __real_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
+            /* A platform that emulates Linux syscalls forwards them. On the
+             * others a raw syscall would end the guest (an unknown id is a
+             * hard error, or there is no ecall handler at all), so it fails:
+             * the callers (NUMASupportInitialize's get_mempolicy, membarrier
+             * probes) all cope with a failure. */
+            if (zkvm_platform_syscall)
+                return zkvm_platform_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
+            return -1;
     }
 }
 
-/* Which zkVM this image is being linked for. pal.o is built once and shared
- * by every zkVM target, so the target-specific halt and console protocols are
- * selected at LINK time: each platform's entry point (platform/entry.S in
- * its bflat-* package) defines one of these as an absolute symbol, and the weak
- * references below are non-NULL only in that link. No definition at all -
- * ZisK and the ZisK simulator, plus the host test/fuzz builds - means the
- * ZisK protocol, so those targets are bit-for-bit unaffected. The addresses
- * are never dereferenced. */
-
-/* SP1's own halt, from libzkevm (the zkEVM SDK repackaged as the bflat-sp1
- * bindings library). It commits the RUNNING public-values digest - the hash
- * SP1 maintains over everything written to FD_PUBLIC_VALUES - and only then
- * halts. Weak, because a guest that links no bindings package does not have
- * it; see zkvm_raw_exit for why that case is still correct. */
-extern void zkvm_halt(unsigned char exit_code) __attribute__((weak));
-
-/* OpenVM's custom-0 instructions (TERMINATE, the PrintStr phantom) live in
- * the OpenVM entry point (platform/entry.S in bflat-openvm), so that no other
- * target's image carries an encoding it cannot decode (SP1 transpiles every
- * word of .text up front and rejects custom opcodes). Weak: only the OpenVM
- * entry point defines them. */
-extern void zkvm_openvm_terminate(long code) __attribute__((weak, noreturn));
-extern void zkvm_openvm_print(const char *buf, long len) __attribute__((weak));
-
-#if defined(__riscv)
-/* SP1 (sp1/crates/zkvm/entrypoint/src/syscalls/mod.rs): the syscall id goes
- * in t0, arguments in a0.. - NOT the Linux a7 convention. An id SP1 does not
- * know is a hard ExecutionError, so nothing may leak a stray ecall. */
-#define SP1_HALT                    0x00
-#define SP1_WRITE                   0x02
-#define SP1_COMMIT                  0x10
-#define SP1_COMMIT_DEFERRED_PROOFS  0x1A
-
-/* SHA-256 of the empty byte string, as the eight little-endian u32 words
- * SP1's syscall_halt commits before halting. SP1 hashes everything the guest
- * writes to FD_PUBLIC_VALUES and commits the digest; this guest never writes
- * to that descriptor (console output goes to fd 1, see zkvm_console_write),
- * so the stream is empty and its digest is constant.
- *
- * It is only ever used when libzkevm is absent, and write_output - the only
- * thing that writes that descriptor - lives in libzkevm, so when this constant
- * is used the stream really is empty. Any future code path that writes public
- * values without libzkevm would invalidate it: the proof would carry a digest
- * that does not match its public values. Execution is unaffected either way;
- * only proving is. */
-static const unsigned int sp1_empty_pv_digest[8] = {
-    0x42c4b0e3u, 0x141cfc98u, 0xc8f4fb9au, 0x24b96f99u,
-    0xe441ae27u, 0x4c939b64u, 0x1b9995a4u, 0x55b85278u
-};
-#endif /* __riscv */
-
-/* Clean zkVM termination.
- *
- * ZisK only treats an ecall with a7 == 93 (CAUSE_EXIT) as "program end": its
- * trap handler routes that to ROM_EXIT, whose instruction carries the `end`
- * flag the emulator waits for. musl's exit()/_Exit() issue exit_group (94)
- * instead, which ZisK does NOT recognise, so the emulation stops "not
- * completed". Override musl's terminators (via --wrap=exit/_Exit/abort) to
- * emit the real target exit sequence.
- *
- * SP1 halts on its own HALT syscall (id in t0), and expects the public-values
- * and deferred-proof digests committed first. That commit has to hash whatever
- * the guest wrote to FD_PUBLIC_VALUES, so it belongs to whoever owns
- * write_output - libzkevm - and this function hands over to its zkvm_halt when
- * it is linked. The open-coded sequence below is the fallback for a guest
- * built without the bindings package: nothing can have written public values
- * then, because write_output lives in that same library, so the digest of the
- * empty stream is the correct one. OpenVM has no syscalls at all:
- * it ends on the TERMINATE custom instruction (custom-0, funct3 0), whose
- * exit code is an IMMEDIATE - so a runtime code collapses to OpenVM's own two
- * outcomes, 0 for success and 1 for failure (openvm::process::exit/panic). */
-/*@ // Terminates the guest with the target's exit sequence. It ends the
+/* Clean zkVM termination. musl's exit()/_Exit()/abort() issue exit_group,
+ * which a zkVM does not take as the end of the program, so pal wraps them
+ * (--wrap=exit/_Exit/abort) and ends the guest with the platform's own
+ * sequence. */
+/*@ // Terminates the guest with the platform's exit sequence. It ends the
     // program at the emulator level - invisible to ACSL, hence
     // ensures \false rather than an exits clause: this function never
     // returns and never reaches C's exit().
@@ -798,60 +744,19 @@ static void
 zkvm_raw_exit(long code)
 {
 #if defined(__riscv)
-    if (&__zkvm_target_sp1) {
-        if (zkvm_halt) {
-            zkvm_halt((unsigned char)(code & 0xff));
-        }
-        /* No bindings package: the public-values stream is provably empty, so
-         * the constant digest below is the digest of what was written. */
-        for (int i = 0; i < 8; i++) {
-            register long t0 __asm__("t0") = SP1_COMMIT;
-            register long a0 __asm__("a0") = i;
-            register long a1 __asm__("a1") = sp1_empty_pv_digest[i];
-            __asm__ volatile("ecall" : : "r"(t0), "r"(a0), "r"(a1) : "memory");
-        }
-        /* No deferred proofs are verified by this guest, so every word of
-         * that digest is zero - but SP1's own entrypoint commits the eight
-         * words unconditionally, so do the same. */
-        for (int i = 0; i < 8; i++) {
-            register long t0 __asm__("t0") = SP1_COMMIT_DEFERRED_PROOFS;
-            register long a0 __asm__("a0") = i;
-            register long a1 __asm__("a1") = 0;
-            __asm__ volatile("ecall" : : "r"(t0), "r"(a0), "r"(a1) : "memory");
-        }
-        register long t0 __asm__("t0") = SP1_HALT;
-        register long a0 __asm__("a0") = code & 0xff;
-        __asm__ volatile("ecall" : : "r"(t0), "r"(a0) : "memory");
-    } else if (&__zkvm_target_openvm) {
-        if (zkvm_openvm_terminate)
-            zkvm_openvm_terminate(code);
-    } else {
-        register long a0 __asm__("a0") = code;
-        register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
-        __asm__ volatile("ecall" : : "r"(a0), "r"(a7) : "memory");
-    }
-    for (;;) { } /* the sequence ends the program; loop is just in case */
+    zkvm_platform_exit(code);
 #else
-    /* Host builds (fuzz harnesses) have no zkVM ecall; _Exit keeps the
-     * same no-atexit, no-flush termination contract. */
+    /* Host builds (fuzz harnesses) have no zkVM; _Exit keeps the same
+     * no-atexit, no-flush termination contract. */
     extern void _Exit(int) __attribute__((noreturn));
     _Exit((int)code);
 #endif
 }
 
-/* Guest console. ZisK has no terminal device and swallows writes (rhp's
- * __wrap_SystemNative_Write returns "all consumed"); SP1 and OpenVM both
- * surface guest output on the host, so route it there instead. Called
- * through a WEAK reference from rhp/module.c, which is linked and unit
- * tested without pal.
- *
- * SP1: the WRITE syscall, which prints descriptors 1 and 2 on the host and
- * warns about any other (sp1/crates/core/executor/src/minimal/write.rs), so
- * the caller's descriptor is passed straight through.
- * OpenVM: the PrintStr phantom instruction - custom-0, funct3 3, imm 1, with
- * the buffer in the rd field and the length in rs1
- * (openvm/extensions/riscv/guest/src/io.rs raw_print_str_from_bytes). It has
- * a single output channel, so `fd` is ignored there. */
+/* Guest console, for rhp's __wrap_SystemNative_Write and noos's trap
+ * message, which reach it through a WEAK reference because they are linked
+ * and unit tested without pal. The platform decides where the bytes go; a
+ * platform without a host-visible console swallows them. */
 /*@ requires len >= 0;
     requires \valid_read(buf + (0 .. len - 1));
     assigns \nothing;
@@ -860,32 +765,15 @@ zkvm_raw_exit(long code)
 int
 zkvm_console_write(int fd, const char *buf, int len)
 {
-#if defined(__riscv)
-    if (len > 0 && buf != (void *)0) {
-        if (&__zkvm_target_sp1) {
-            register long t0 __asm__("t0") = SP1_WRITE;
-            register long a0 __asm__("a0") = fd;
-            register const void *a1 __asm__("a1") = buf;
-            register long a2 __asm__("a2") = len;
-            __asm__ volatile("ecall"
-                             : : "r"(t0), "r"(a0), "r"(a1), "r"(a2)
-                             : "memory");
-        } else if (&__zkvm_target_openvm) {
-            if (zkvm_openvm_print)
-                zkvm_openvm_print(buf, len);
-        }
-    }
-#else
-    (void)fd;
-    (void)buf;
-#endif
+    if (len > 0 && buf != (void *)0 && zkvm_platform_write)
+        zkvm_platform_write(fd, buf, len);
     return len;
 }
 
 /* Nethermind.Zkvm.Abstractions binds its console (IO.PrintLine) to
- * sys_write(fd, buf, len). ziskos and the SP1 bindings export one; the
- * OpenVM bindings do not, and the link fails. Weak, so a bindings library
- * that does define it keeps its own. */
+ * sys_write(fd, buf, len). Not every bindings library exports one, and then
+ * the link fails. Weak, so a bindings library that does define it keeps its
+ * own. */
 /*@ requires nbytes <= 0x7fffffff; requires \valid_read(buf + (0 .. nbytes - 1));
     assigns \nothing; */
 __attribute__((weak)) void
@@ -1077,6 +965,11 @@ __wrap_memalign(unsigned long align, unsigned long size)
     return __wrap_aligned_alloc(align, size);
 }
 
+/* Allocation for a runtime that cannot handle NULL from its allocator: a
+ * platform binds that runtime's allocator hook to this function (the ZisK
+ * platform binds the ziskos Rust allocator, inline_bump_alloc_aligned, whose
+ * NULL goes to a panic handler that spins until the emulator's step limit).
+ * Note the argument order: size first, as those hooks have it. */
 /*@ // Never returns NULL: on exhaustion it halts the guest instead.
     requires align <= 8 || (align & (align - 1)) == 0;
     assigns g_zk_bump_ptr;
@@ -1087,14 +980,11 @@ __wrap_memalign(unsigned long align, unsigned long size)
     exits \exit_status == 134;
 */
 void *
-__wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align)
+zkvm_alloc_or_abort(uint32_t bytes, uint32_t align)
 {
-    static const char msg[] = "ziskos: out of memory\n";
+    static const char msg[] = "out of memory\n";
     void *p = __wrap_aligned_alloc(align, bytes);
 
-    /* This is the ziskos Rust allocator. It hands NULL to handle_alloc_error,
-     * and the ziskos panic handler is `j .`, so the guest would spin until the
-     * emulator's step limit (2^36 steps, ~40 minutes) instead of ending. */
     if (p == NULL) {
         sys_write(2, (const unsigned char *)msg, sizeof(msg) - 1);
         __wrap_abort();
@@ -1153,7 +1043,7 @@ zk_accel_leave(uint8_t *mark)
     mem = mark;
 }
 
-/* The __real_ references are weak so that a ZisK guest linking no bindings
+/* The __real_ references are weak so that a guest linking no bindings
  * library, which leaves them undefined, still links. The wrappers are only
  * reached through --wrap, which requires the bindings library.
  *

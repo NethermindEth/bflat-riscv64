@@ -43,7 +43,7 @@
       {
         "symbol": "System_Console_Interop_Sys__InitializeTerminalAndSignalHandling",
         "when": {"flag": "no-console"},
-        "note": "No terminal device on any real zkVM; the sim keeps the host console. SystemNative_Write still goes through the wrapper on SP1/OpenVM - it is what routes the bytes to their host-visible output (pal's zkvm_console_write); on ZisK the wrapper swallows them."
+        "note": "No terminal device on any real zkVM; the sim keeps the host console. SystemNative_Write still goes through the wrapper: it hands the bytes to pal's zkvm_console_write, and so to the platform's console, if it has one."
       },
       {"symbol": "SystemNative_SetTerminalInvalidationHandler", "when": {"flag": "no-console"}},
       {"symbol": "SystemNative_Write", "when": {"flag": "no-console"}},

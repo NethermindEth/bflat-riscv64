@@ -4,6 +4,11 @@
  *        helpers align_down_8_uintptr / zkvm_emit / zkvm_raw_exit are
  *        exercised through their only callers).
  *
+ * The platform functions that pal calls (zkvm_platform_exit, _write,
+ * _syscall; the platform's entry object defines them) are stand-ins here
+ * that record what pal hands them. The real ones are tested in the platform
+ * packages.
+ *
  * Link requirements (see run_tests.sh):
  *   - _kernel_heap_bottom is defined here as a 1 MiB array;
  *     _kernel_heap_top is aliased to its end via
@@ -33,21 +38,42 @@ extern const char _init_stack_top[]; /* --defsym'd to bottom + sizeof stack */
 uint8_t *g_zk_bump_ptr = 0;
 uint8_t *g_zk_heap_floor = 0;
 
-/* __real_syscall sentinel: proves argument forwarding. */
-static long real_syscall_last_number;
-static long real_syscall_last_arg1;
-long __real_syscall(long number, ...)
+/* --- the platform, as stand-ins ------------------------------------ */
+
+/* zkvm_platform_exit: the child exits with the code pal hands over. */
+__attribute__((noreturn)) void zkvm_platform_exit(long code)
 {
-    va_list ap;
-    va_start(ap, number);
-    real_syscall_last_number = number;
-    real_syscall_last_arg1 = va_arg(ap, long);
-    va_end(ap);
+    _exit((int)code);
+}
+
+/* zkvm_platform_syscall sentinel: proves argument forwarding. */
+static long platform_syscall_last_number;
+static long platform_syscall_last_arg1;
+static long platform_syscall_last_arg6;
+long zkvm_platform_syscall(long number, long arg1, long arg2, long arg3,
+                           long arg4, long arg5, long arg6)
+{
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    platform_syscall_last_number = number;
+    platform_syscall_last_arg1 = arg1;
+    platform_syscall_last_arg6 = arg6;
     return 4242;
 }
 
-/* __real_zkvm_modexp stand-in: allocates scratch memory through the ziskos
- * allocator bridge and dirties it, as the Rust accelerator does, then writes
+/* zkvm_platform_write sentinel: what the console hands over. */
+static int platform_write_fd = -1;
+static const char *platform_write_buf;
+static int platform_write_len = -1;
+void zkvm_platform_write(int fd, const char *buf, int len)
+{
+    platform_write_fd = fd;
+    platform_write_buf = buf;
+    platform_write_len = len;
+}
+
+/* __real_zkvm_modexp stand-in: allocates scratch memory through the
+ * allocator that a Rust runtime is bound to and dirties it, as the Rust
+ * accelerator does, then writes
  * its result through the caller's buffer (a6). Returns a0 + a7 to prove the
  * first and last registers are forwarded. */
 static uint8_t *accel_scratch_low;
@@ -55,11 +81,10 @@ long __real_zkvm_modexp(uintptr_t a0, uintptr_t a1, uintptr_t a2,
                         uintptr_t a3, uintptr_t a4, uintptr_t a5,
                         uintptr_t a6, uintptr_t a7)
 {
-    extern void *__wrap_inline_bump_alloc_aligned(uint32_t bytes,
-                                                  uint32_t align);
+    extern void *zkvm_alloc_or_abort(uint32_t bytes, uint32_t align);
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     for (int i = 0; i < 3; i++) {
-        uint8_t *p = __wrap_inline_bump_alloc_aligned(1000, 32);
+        uint8_t *p = zkvm_alloc_or_abort(1000, 32);
         memset(p, 0xAB, 1000);
         accel_scratch_low = p;
     }
@@ -110,7 +135,8 @@ extern void *__wrap_aligned_alloc(unsigned long align, unsigned long size);
 extern int __wrap_posix_memalign(void **out, unsigned long align,
                                  unsigned long size);
 extern void *__wrap_memalign(unsigned long align, unsigned long size);
-extern void *__wrap_inline_bump_alloc_aligned(uint32_t bytes, uint32_t align);
+extern void *zkvm_alloc_or_abort(uint32_t bytes, uint32_t align);
+extern int zkvm_console_write(int fd, const char *buf, int len);
 extern long __wrap_zkvm_modexp(uintptr_t a0, uintptr_t a1, uintptr_t a2,
                                uintptr_t a3, uintptr_t a4, uintptr_t a5,
                                uintptr_t a6, uintptr_t a7);
@@ -323,11 +349,11 @@ int main(void)
 
         p = __wrap_memalign(256, 40);
         CHECK(p != NULL && ((uintptr_t)p % 256) == 0);
-        p = __wrap_inline_bump_alloc_aligned(40, 32);
+        p = zkvm_alloc_or_abort(40, 32);
         CHECK(p != NULL && ((uintptr_t)p % 32) == 0);
 
         /* exhaustion halts instead of returning NULL into Rust */
-        EXPECT_EXIT(134, __wrap_inline_bump_alloc_aligned(2 * HEAP_SIZE, 8));
+        EXPECT_EXIT(134, zkvm_alloc_or_abort(2 * HEAP_SIZE, 8));
     }
 
     MARK("accel_arena");
@@ -409,15 +435,28 @@ int main(void)
     }
 
     MARK("syscall");
-    /* --- syscall: 0x11b swallowed, everything else forwarded --- */
+    /* --- syscall: 0x11b swallowed, everything else to the platform --- */
     CHECK(__wrap_syscall(0x11b, 1L, 2L, 3L, 4L, 5L, 6L) == 0);
-    CHECK(__wrap_syscall(999L, 77L, 0L, 0L, 0L, 0L, 0L) == 4242);
-    CHECK(real_syscall_last_number == 999);
-    CHECK(real_syscall_last_arg1 == 77);
+    CHECK(platform_syscall_last_number == 0);
+    CHECK(__wrap_syscall(999L, 77L, 0L, 0L, 0L, 0L, 66L) == 4242);
+    CHECK(platform_syscall_last_number == 999);
+    CHECK(platform_syscall_last_arg1 == 77);
+    CHECK(platform_syscall_last_arg6 == 66);
 
-    /* --- terminators: the ZisK exit ecall (a7 == 93) is also Linux
-     * riscv64 __NR_exit, so under qemu-user the child genuinely exits
-     * with the requested status. --- */
+    MARK("console");
+    /* --- console: the platform gets the bytes; the caller gets len --- */
+    {
+        static const char hello[] = "hello";
+        CHECK(zkvm_console_write(1, hello, 5) == 5);
+        CHECK(platform_write_fd == 1);
+        CHECK(platform_write_buf == hello);
+        CHECK(platform_write_len == 5);
+        platform_write_len = -1;
+        CHECK(zkvm_console_write(2, hello, 0) == 0);
+        CHECK(platform_write_len == -1); /* nothing to write: not called */
+    }
+
+    /* --- terminators: pal hands the code to zkvm_platform_exit --- */
     MARK("exit-family");
     EXPECT_EXIT(42, __wrap_exit(42));
     EXPECT_EXIT(7, __wrap__Exit(7));

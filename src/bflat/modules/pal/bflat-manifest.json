@@ -3,7 +3,7 @@
   "schema": 2,
   "name": "pal",
   "description": "Deterministic OS surface, bump allocator, FP-free stdio",
-  "note": "Platform-specific wraps are in the platform packages: the ZisK accelerator arenas and inline_bump_alloc_aligned (whose __wrap_ definitions are here, in module.c) in libziskos.bflat.manifest of bflat-libziskos; the SP1 and OpenVM memory primitives and SP1's main in the platform manifests of bflat-sp1 and bflat-openvm, whose entry.S defines them.",
+  "note": "What differs between the zkVMs is not here: the guest's exit, its console and raw syscalls go to the zkvm_platform_* functions that the entry object of the platform defines (see the platform interface in docs/manifest.md), and the wraps for one platform are in its package. The accelerator arenas (ZK_ACCEL_ARENA) wrap functions of the zkVM accelerator standard; the bindings manifest of a package decides which ones.",
   "sources": [{"file": "module.c"}],
   "objects": [{"file": "module.o", "group": "whole-archive", "order": 60}],
   "link": {

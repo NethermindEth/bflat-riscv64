@@ -30,7 +30,6 @@ char _kernel_heap_bottom[4096];
 uint8_t *g_zk_bump_ptr;
 uint8_t *g_zk_heap_floor;
 char _init_stack_bottom[1], _init_stack_top[1];
-long __real_syscall(long number, ...) { (void)number; return 0; }
 
 #define POOL 32
 

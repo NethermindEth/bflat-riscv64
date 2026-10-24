@@ -237,14 +237,16 @@ to run forward to `__wrap_memcpy` and copies only a destination inside the
 source backward, mirroring `memcpy`. `memset` stores 64-bit words, aligned on
 SP1 and unaligned on OpenVM. Both are weak, like `__wrap_memcpy`.
 
-What differs between all four targets is the exit protocol, and that is not
-in the entry point: `pal`'s `zkvm_raw_exit` owns it, because `exit`,
-`_Exit` and `abort` all funnel through there. `pal.o` is built once and
-shared, so each of these modules exports an absolute marker symbol
-(`__zkvm_target_sp1`, `__zkvm_target_openvm`) that `pal` and `rhp` pick up
-through **weak references**: non-`NULL` only in that target's link, absent
-everywhere else, which is why Zisk keeps its original `a7 = 93` path
-untouched.
+What also differs between the four targets is the exit protocol, the
+console and the raw syscalls. `pal.o` is built once and shared, and holds
+none of that: `exit`, `_Exit` and `abort` all funnel through `pal`'s
+`zkvm_raw_exit`, which calls the platform's **`zkvm_platform_exit`**; console
+output goes to its **`zkvm_platform_write`**, and a raw syscall that `pal`
+does not answer itself to its **`zkvm_platform_syscall`**. The entry point of
+each platform defines them (the last two are optional; refer to the platform
+interface in the [manifest format](manifest.md#platform-interface)). ZisK's
+exit is the `a7 = 93` ecall, and it forwards syscalls to musl, because ZisK
+emulates them.
 
 | Aspect | `sp1` | `openvm` |
 |--------|-------|----------|
@@ -328,9 +330,10 @@ break every inline allocation site.
 **Status.** Both targets run end to end in their provers. Nethermind's
 stateless guest executes all nine mainnet blocks of the `stateless-tests`
 suite on each of SP1, OpenVM and Zisk, with matching output; SP1 reports zero
-misaligned accesses. `pal`'s `__wrap_syscall` returns `-1` on both targets
-rather than issuing an `ecall`, because unlike Zisk, SP1 treats an unknown
-syscall id as a hard error and OpenVM has no `ecall` handler at all.
+misaligned accesses. Neither platform defines `zkvm_platform_syscall`, so
+`pal`'s `__wrap_syscall` returns `-1` on both rather than issuing an `ecall`:
+unlike Zisk, SP1 treats an unknown syscall id as a hard error and OpenVM has
+no `ecall` handler at all.
 
 ## pal — platform abstraction layer
 {: #pal }
@@ -354,8 +357,8 @@ that .NET calls during startup or runtime:
 | `mmap`, `munmap`, `mlock*` | mmap routed to the bump allocator; lock calls are no-ops |
 | `__libc_malloc_impl`, `__libc_realloc`, `__libc_free` | A custom downward bump allocator using the heap symbols from the linker script |
 | `signal`, `sigaction`, `sched_yield` | No-ops |
-| `syscall` | Whitelist: 0x11b → 0; everything else → `__real_syscall` |
-| `exit`, `_Exit`, `abort` | Emit the real ZisK exit ecall (`a7 = 93`, `CAUSE_EXIT`) via `zkvm_raw_exit` |
+| `syscall` | Whitelist: 0x11b → 0; everything else → the platform's `zkvm_platform_syscall`, or `-1` without one |
+| `exit`, `_Exit`, `abort` | The platform's exit sequence, `zkvm_platform_exit`, via `zkvm_raw_exit` |
 
 The bump allocator deserves a note: it grows downward from
 `_kernel_heap_top`, stores an 8-byte size header before each allocation,
@@ -373,12 +376,17 @@ reference it by a hardcoded constant address and share the very same
 pointer with this C allocator. zkVM RAM is zero at boot, so the cell starts
 at `0` and is lazily initialised to `_kernel_heap_top` on first use.
 
-**Clean termination.** ZisK only treats an `ecall` with `a7 == 93`
-(`CAUSE_EXIT`) as "program end"; its trap handler routes that to `ROM_EXIT`,
-whose instruction carries the `end` flag the emulator waits for. musl's
-`exit`/`_Exit` issue `exit_group` (94), which ZisK does not recognise — the
-run would stop "not completed". So `pal` wraps all three terminators to emit
-the real ZisK exit ecall (`abort` exits with `134` = 128 + SIGABRT).
+**Clean termination.** musl's `exit`/`_Exit` issue `exit_group` (94), which
+no zkVM takes as the end of the program (ZisK, for example, only treats an
+`ecall` with `a7 == 93` as "program end", and the run would stop "not
+completed"). So `pal` wraps all three terminators and calls the platform's
+`zkvm_platform_exit` (`abort` exits with `134` = 128 + SIGABRT). The exit
+sequence of each zkVM is in the entry point of its platform.
+
+**Allocation that must not fail.** `zkvm_alloc_or_abort(bytes, align)`
+allocates from the bump heap and ends the guest on exhaustion, for a runtime
+that cannot handle `NULL` from its allocator. The ZisK platform binds the
+ziskos Rust allocator (`inline_bump_alloc_aligned`) to it.
 
 ## rhp — Redhawk Platform shims
 {: #rhp }

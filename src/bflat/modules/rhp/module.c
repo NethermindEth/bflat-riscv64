@@ -298,10 +298,10 @@ void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param)
 {
 }
 
-/* pal's guest console. Weak on purpose: rhp.o is linked (and unit tested)
- * without pal, and ZisK - whose console is a no-op device - has no use for
- * it either. Non-NULL only on the targets whose emulator surfaces guest
- * output on the host (SP1, OpenVM); see pal/module.c zkvm_console_write. */
+/* pal's guest console, which hands the bytes to the platform (a platform
+ * without a host-visible console swallows them; see pal/module.c
+ * zkvm_console_write). Weak on purpose: rhp.o is linked (and unit tested)
+ * without pal. */
 extern int zkvm_console_write(int fd, const char *buf, int len) __attribute__((weak));
 
 /*@ // The buffer is handed to the guest console if the target has one, and
