@@ -208,37 +208,42 @@ overflows the fixed ZisK ROM.
 ## Stage 2 — The link command
 
 The final ELF is produced by `ld.lld` (Clang's linker, shipped with
-bflat). The command line for `--libc zisk` looks roughly like this — the
-other zkVM targets differ only in the first two lines, which come from
-`lib/linux/riscv64/<libc>/` instead of the ZisK directory:
+bflat). The command line for `--libc zisk` looks roughly like this. The
+module part comes from the manifests in `lib/modules/` (`<m>` below): the
+platform manifest (`zkvm_zisk`) gives the linker script and the entry point,
+and each module that it requires gives its objects, their link group and
+their wraps. The other zkVM targets differ in the platform manifest, so in
+the first two lines and in the wraps that a module declares for one
+platform only. `bflat-modules link <layout>/lib/modules zisk` prints the
+exact module part for a platform:
 
 ```bash
 ld.lld -static -nostdlib -m elf64lriscv \
-    -T <ziskLibPath>/script.ld \
-    <ziskLibPath>/entrypoint.o \
-    <ziskLibPath>/nofp.o \
+    -T <m>/zkvm_zisk/script.ld \
+    <m>/zkvm_zisk/module.o \
+    <m>/nofp/module.o \
     --whole-archive \
-        <ziskLibPath>/ubootstrap.o \
-        <ziskLibPath>/stdcppshim.o \
-        <ziskLibPath>/rhp.o \
+        <m>/ubootstrap/module.o \
+        <m>/stdcppshim/module.o \
+        <m>/rhp/module.o \
         --wrap=RhpPInvoke --wrap=RhpReversePInvoke ... \
         --wrap=RhBulkMoveWithWriteBarrier \
-        <ziskLibPath>/rhp_native.o \
+        <m>/rhp_native/module.o \
         --wrap=RhpAssignRefRiscV64 --wrap=RhpCidResolve \
-        <ziskLibPath>/pal.o \
+        <m>/pal/module.o \
         --wrap=getenv --wrap=getcwd ... --wrap=__stdio_write \
         --wrap=exit --wrap=_Exit --wrap=abort \
-        <ziskLibPath>/eh.o --wrap=dl_iterate_phdr \
-        <ziskLibPath>/tls.o \
+        <m>/eh/module.o --wrap=dl_iterate_phdr \
+        <m>/tls/module.o \
         --wrap=__tls_get_addr --wrap=__init_tls ... \
     --no-whole-archive \
-    <ziskLibPath>/rng_stupid.o \
+    <m>/rng_stupid/module.o \
     --wrap=minipal_get_cryptographically_secure_random_bytes ... \
-    <ziskLibPath>/rust_sys.o --wrap=sys_alloc_aligned \
-    --wrap=GC_Initialize --wrap=GC_VersionInfo \
-    <ziskLibPath>/uGC.cpp.obj <ziskLibPath>/uGCHandleManager.cpp.obj \
-    <ziskLibPath>/uGCHandleStore.cpp.obj <ziskLibPath>/uGCHeap.cpp.obj \
-    <ziskLibPath>/ugc_core.c.obj <ziskLibPath>/ugc_zalloc.c.obj \
+    <m>/rust_sys/module.o --wrap=sys_alloc_aligned \
+    <m>/ugc-zero/release/uGC.cpp.obj --wrap=GC_Initialize --wrap=GC_VersionInfo \
+    <m>/ugc-zero/release/uGCHandleManager.cpp.obj \
+    <m>/ugc-zero/release/uGCHandleStore.cpp.obj <m>/ugc-zero/release/uGCHeap.cpp.obj \
+    <m>/ugc-zero/release/ugc_core.c.obj <m>/ugc-zero/release/ugc_zalloc.c.obj \
     <managedcode.o> \
     <runtime libraries from dotnet-riscv>
 ```
@@ -255,9 +260,10 @@ Two mechanisms are doing all the work:
   touching musl.
 
 Which symbols are wrapped depends on the target and on the build: each
-module declares its own set in `module_params.yml`, so `--remove-eh`, for
-instance, swaps `--wrap=dl_iterate_phdr` for `--wrap=RhpThrowEx`. The
-[Modules](modules.md) page has the full list.
+module declares its own set in its `bflat-manifest.json`, with conditions
+on the platform and the build, so `--remove-eh`, for instance, adds
+`--wrap=RhpThrowEx`. The [Modules](modules.md) page has the full list, and
+the [manifest format](manifest.md) page describes the conditions.
 
 ## Stage 3 — Postprocessing (Zisk only)
 

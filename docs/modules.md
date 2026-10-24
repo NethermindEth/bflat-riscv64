@@ -63,10 +63,12 @@ structures and the assembly, module by module. The
 these objects sit in the link line.
 
 Modules live under `src/bflat/modules/`. Each has a
-`module.c`/`module.cpp`/`module.S` source, an optional `module_params.yml`
-listing its linker switches (mostly `--wrap=` declarations), and a compiled
-`module.o` from `build.sh modules riscv64`. The sections below follow
-roughly the order they matter at runtime.
+`module.c`/`module.cpp`/`module.S` source, a `bflat-manifest.json` that
+declares its sources, its objects and their place in the link, and its
+linker switches (mostly `--wrap=` declarations), and a compiled `module.o`
+from `build.sh modules riscv64`. The [manifest format](manifest.md) page
+describes the file. The sections below follow roughly the order they matter
+at runtime.
 
 ## ubootstrap — runtime entry point
 {: #ubootstrap }
@@ -211,8 +213,8 @@ binding's name, in its own section so `--gc-sections` drops it — and with it
 the reference to the bindings library — in a guest built without `--extlib`.
 
 **Each entry module also carries the target's `memcpy`**, as `__wrap_memcpy`
-behind `--wrap=memcpy` (declared in `pal`'s `module_params.yml` for `sp1` and
-`openvm`). musl's generic C `memcpy` moves 32-bit words, and neither VM has
+behind `--wrap=memcpy` (declared in `pal`'s `bflat-manifest.json` for the
+`zkvm_sp1` and `zkvm_openvm` platforms). musl's generic C `memcpy` moves 32-bit words, and neither VM has
 Zisk's DMA copy. Both versions move 64-bit words, but they follow different
 alignment rules. SP1 rejects misaligned accesses, so its version aligns the
 destination and merges a misaligned source from aligned words. OpenVM's rv64
@@ -325,7 +327,7 @@ syscall id as a hard error and OpenVM has no `ecall` handler at all.
 {: #pal }
 
 **File:** `modules/pal/module.c` ·
-[symbols](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/pal/module_params.yml)
+[symbols](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/pal/bflat-manifest.json)
 
 The largest module by behavioural surface. It overrides musl primitives
 that .NET calls during startup or runtime:
@@ -607,22 +609,25 @@ stage earlier, on IL rather than on symbols.
 
 ## Build flow for modules
 
-`build.sh modules riscv64` walks every directory under
-`src/bflat/modules/` and:
+`build.sh modules riscv64` runs `bflat-modules plan` (in `src/bflat-modules/`),
+which reads the `bflat-manifest.json` of every directory under
+`src/bflat/modules/`. For each module, `build.sh` then:
 
-1. Compiles `module.c` with `clang --target=riscv64-linux-gnu
+1. Downloads the files that the manifest's `external` section names: a
+   release archive (`repo` + `tag` + `release`), unpacked into `dir`.
+2. Compiles each `.c` file in `sources` with `clang --target=riscv64-linux-gnu
    -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -funified-lto`.
-2. Assembles `module.S` with `riscv64-linux-gnu-as --march=rv64ima --mabi=lp64`
+3. Assembles each `.S` file with `riscv64-linux-gnu-as --march=rv64ima --mabi=lp64`
    — assembly is the one input that does not go through clang, since
    bitcode does not apply to it.
-3. Compiles `module.cpp` with `clang++` and the same flags as (1).
-4. Patches the resulting object's ABI marker byte to keep the linker
+4. Compiles each `.cpp` file with `clang++` and the same flags as (2).
+5. Patches each resulting object's ABI marker byte to keep the linker
    happy when mixing soft-float-marked and hard-float-marked objects.
-5. If `module_params.yml` declares a remote `repo` + `tag` + release
-   `file`, downloads the release tarball into the module's `release/`
-   directory.
 
-Step 4 — patching offset `0x30` of the ELF e_flags — clears the
+The bflat build then runs `bflat-modules pack`, which copies each manifest
+and the files it names into `lib/modules/<name>/` in the compiler layout.
+
+Step 5 — patching offset `0x30` of the ELF e_flags — clears the
 hard-float bit so the bflat-side modules carry the `lp64` (soft-float)
 marker in their ELF header.
 
