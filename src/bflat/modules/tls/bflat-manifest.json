@@ -1,0 +1,9 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "tls",
+  "description": "Minimal TLS bootstrap without musl's ELF machinery",
+  "sources": [{"file": "module.c"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 80}],
+  "link": {"wrap": ["__tls_get_addr", "__init_tls", "__init_tp", "__copy_tls"]}
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "rhp_native",
+  "description": "GC write barriers reduced to the bare store (uGC has no card table)",
+  "note": "uGC has no card table and never collects, so every GC write barrier reduces to the bare store. These are the hottest helpers in the image (hundreds of call sites).",
+  "sources": [{"file": "module.S"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 50}],
+  "link": {
+    "wrap": [
+      "RhpAssignRefRiscV64",
+      "RhpCheckedAssignRef",
+      "RhpByRefAssignRef",
+      {
+        "symbol": "RhpAssignRef",
+        "note": "The non-RiscV64 name. Guest scans show zero references to it; it stays as insurance until a full workload confirms that it is dead."
+      }
+    ]
+  }
+}

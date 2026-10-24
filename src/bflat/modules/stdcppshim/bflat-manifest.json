@@ -1,0 +1,8 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "stdcppshim",
+  "description": "The C++ runtime pieces the NativeAOT runtime needs",
+  "sources": [{"file": "module.cpp"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 20}]
+}

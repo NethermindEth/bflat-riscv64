@@ -158,6 +158,16 @@ jobs:
             -p:SkipCompilerLayout=true \
             -warnaserror
 
+      # The module manifests have two readers that must agree: the schema
+      # file (editors, the bflat-* packages) and bflat's own parser, which
+      # bflat-modules shares. Neither needs the native toolchain.
+      - name: Check the module manifests
+        run: |
+          apt-get install -y python3-jsonschema
+          python3 src/bflat/scripts/check_manifests.py
+          dotnet build src/bflat-modules/bflat-modules.csproj -warnaserror
+          dotnet run --project src/bflat-modules/bflat-modules.csproj --no-build -- check src/bflat/modules
+
   fuzz_smoke:
     runs-on: ubuntu-latest
     container:
@@ -266,7 +276,6 @@ jobs:
             wget \
             curl \
             ca-certificates \
-            yq \
             docker.io \
             libicu-dev
           pip3 install lief pyelftools --break-system-packages
