@@ -172,7 +172,7 @@ internal static class Program
         string srcRoot = Path.GetFullPath(src);
 
         // Every file each module ships, relative to its own directory. A
-        // manifest may name a file of another module ("../zkvm_zisk/module.o")
+        // manifest may name a file of another module ("../other/module.o")
         // only if that module ships it too.
         var shipped = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         var crossRefs = new List<(BflatManifest From, string File, string Module, string Rel)>();
