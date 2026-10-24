@@ -3,7 +3,7 @@
   "schema": 2,
   "name": "nofp",
   "description": "FP trap stubs and the libm wrap surface for FPU-less guests",
-  "note": "The zkVM platforms link these wraps. The stock musl target also links module.o (bflat.csproj puts a copy in lib/linux/riscv64/musl), but without the wraps.",
+  "note": "Only the zkVM platforms link this module. Its object has only __wrap_* stubs, so a link without the wraps would not use it.",
   "sources": [{"file": "module.c"}],
   "objects": [{"file": "module.o", "group": "early", "order": 10}],
   "link": {

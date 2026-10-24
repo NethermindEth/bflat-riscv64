@@ -332,28 +332,20 @@ internal class BuildCommand : CommandBase
     private static readonly string[] StockLibcs = { "glibc", "musl", "bionic", "shcrt", "none" };
 
     /// <summary>
-    /// Lists the linker's --wrap targets that name a managed method the scanner
+    /// Lists the wrapped symbols that name a managed method the scanner
     /// reached but codegen never emitted.
     /// </summary>
     /// <remarks>
-    /// --wrap only redirects calls. A managed method that every caller inlined
+    /// A linker wrap only redirects calls. A managed method that every caller inlined
     /// leaves no call behind, so its wrapper is never linked and the managed
     /// body runs instead, with nothing reporting it: that is how constant
     /// ILLink stubs of HashHelpers.IsPrime silently replaced the integer
     /// reimplementation they were stubbed for. A method inlined by only some
     /// of its callers is still emitted and is not reported.
     /// </remarks>
-    private static List<string> FindInlinedWrapTargets(string ldArgs, ILScanResults scanResults,
+    private static List<string> FindInlinedWrapTargets(IReadOnlyCollection<string> wrapTargets, ILScanResults scanResults,
         CompilationResults compilationResults, NameMangler nameMangler)
     {
-        var wrapTargets = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string arg in ldArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            string token = arg.Trim('"');
-            if (token.StartsWith("--wrap=", StringComparison.Ordinal))
-                wrapTargets.Add(token["--wrap=".Length..]);
-        }
-
         var inlined = new List<string>();
         if (wrapTargets.Count == 0)
             return inlined;
@@ -1117,9 +1109,8 @@ internal class BuildCommand : CommandBase
 
         // Built-in substitutions for the zkVM targets, declared by modules
         // (guest_subst's substitutions.xml): thread-pool tuning and similar
-        // machinery that is provably dead on a single-threaded guest, and the
-        // CoreLib methods that reach a libm function nofp traps. Applied before user
-        // files; the parser rejects duplicate method entries, so user files
+        // machinery that is provably dead on a single-threaded guest. Applied
+        // before user files; the parser rejects duplicate method entries, so user files
         // extend rather than override this set.
         foreach (string substitutionFile in moduleSubstitutionFiles)
         {
@@ -1777,7 +1768,7 @@ internal class BuildCommand : CommandBase
             else if (linkLibc == "musl")
             {
                 /* pre-libc: module objects that work by DEFINITION, not by
-                 * --wrap, so they MUST precede libc.a (nothread and noos; their
+                 * a linker wrap, so they MUST precede libc.a (nothread and noos; their
                  * manifests tell why). The linker extracts an archive member
                  * only to resolve a symbol that is still undefined at the point
                  * it reaches the archive, so with these definitions already in
@@ -1840,17 +1831,8 @@ internal class BuildCommand : CommandBase
                 ldArgs.Append($"\"{extLibPath}\" ");
             }
 
-            // Add --wrap flags for symbols requested by external libraries
-            foreach (var sym in extLibWrapSymbols)
-            {
-                ldArgs.Append($"--wrap={sym} ");
-            }
-
-            if (libc == "musl")
-            {
-                /* hack, no fp must be built properly */
-                ldArgs.Append($"\"{Path.Combine(firstLib, "nofp.o")}\" ");
-            }
+            // The wraps that the packages of a stock target give.
+            ManifestLink.AppendWraps(ldArgs, extLibWrapSymbols);
 
 
             if (platformLink != null)
@@ -1891,12 +1873,12 @@ internal class BuildCommand : CommandBase
 
         if (scanResults != null)
         {
-            List<string> inlinedWrapTargets = FindInlinedWrapTargets(ldArgs.ToString(),
+            List<string> inlinedWrapTargets = FindInlinedWrapTargets(platformLink?.WrittenWraps ?? extLibWrapSymbols,
                 scanResults, compilationResults, ((ILCompiler.Compilation)compilation).NodeFactory.NameMangler);
             if (inlinedWrapTargets.Count > 0)
             {
                 Console.Error.WriteLine(
-                    $"error: {inlinedWrapTargets.Count} --wrap target(s) are managed methods that every caller " +
+                    $"error: {inlinedWrapTargets.Count} wrapped symbol(s) are managed methods that every caller " +
                     "inlined, so no call is left to redirect and the managed body runs instead of the wrapper. " +
                     "Replace the body itself (e.g. with an ILLink substitution) instead of wrapping it:");
                 foreach (string target in inlinedWrapTargets)
