@@ -3,6 +3,7 @@
   "schema": 2,
   "name": "pal",
   "description": "Deterministic OS surface, bump allocator, FP-free stdio",
+  "note": "Platform-specific wraps are in the platform packages: the ZisK accelerator arenas and inline_bump_alloc_aligned (whose __wrap_ definitions are here, in module.c) in libziskos.bflat.manifest of bflat-libziskos; the SP1 and OpenVM memory primitives and SP1's main in the platform manifests of bflat-sp1 and bflat-openvm, whose entry.S defines them.",
   "sources": [{"file": "module.c"}],
   "objects": [{"file": "module.o", "group": "whole-archive", "order": 60}],
   "link": {
@@ -72,43 +73,10 @@
       "_Exit",
       "abort",
       {
-        "symbol": "inline_bump_alloc_aligned",
-        "when": {"platform": "zkvm_zisk"},
-        "note": "ziskos bump-allocator bridge onto the shared heap. ZisK-only: the symbol comes from libziskos, which no other target links."
-      },
-      {
-        "symbol": "zkvm_bls12_g1_msm",
-        "when": {"platform": "zkvm_zisk"},
-        "note": "Per-call heap arena around the libziskos accelerators that allocate, which would otherwise leak their scratch memory into the never-freeing heap. Keep in step with the ZK_ACCEL_ARENA list in module.c."
-      },
-      {"symbol": "zkvm_bls12_g2_msm", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_bls12_pairing", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_bn254_pairing", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_keccak256", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_kzg_point_eval", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_modexp", "when": {"platform": "zkvm_zisk"}},
-      {"symbol": "zkvm_secp256k1_verify", "when": {"platform": "zkvm_zisk"}},
-      {
         "symbol": "__stdio_write",
         "when": {"flag": "no-console"},
         "note": "Hide musl's stdio write path on the real zkVMs; the sim keeps host stdio. The unwrapped one issues a raw writev - harmless on ZisK, which emulates Linux syscalls, but a hard error on SP1 (unknown syscall id) and unserviced on OpenVM, which has no ecall handler at all. Managed console output does not go through it anyway: it takes the SystemNative_Write wrap in rhp, so nothing is lost."
-      },
-      {
-        "symbol": "main",
-        "when": {"platform": "zkvm_sp1"},
-        "note": "SP1 enters through sp1-zkvm's __start, which calls main(); the guest's main is the entry module's __wrap_main (zkvm_sp1/module.S), not the desktop bootstrapper's."
-      },
-      {
-        "symbol": "memcpy",
-        "when": {"platform": ["zkvm_sp1", "zkvm_openvm"]},
-        "note": "musl's memcpy moves 32-bit words, and neither VM has ZisK's DMA copy to hand copies to; each entry module (zkvm_sp1/zkvm_openvm module.S) carries a 64-bit __wrap_memcpy fitted to its VM's alignment rules."
-      },
-      {
-        "symbol": "memmove",
-        "when": {"platform": ["zkvm_sp1", "zkvm_openvm"]},
-        "note": "Likewise for musl's memmove (an overlap check in front of memcpy) and memset (32-bit stores): __wrap_memmove and __wrap_memset sit beside __wrap_memcpy in each entry module."
-      },
-      {"symbol": "memset", "when": {"platform": ["zkvm_sp1", "zkvm_openvm"]}}
+      }
     ]
   }
 }

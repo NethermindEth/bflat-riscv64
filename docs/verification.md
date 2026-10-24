@@ -171,7 +171,8 @@ guest, so this is the first place a binary is actually *executed*.
 
 The directories under
 [`samples/`](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples)
-are built with `--libc zisk_sim` and run under `qemu-riscv64`, with output
+are built with `--libc zisk_sim` (the platform from bflat-libziskos) and
+run under `qemu-riscv64`, with output
 checked against a known-good baseline.
 
 The real workload is Nethermind's
@@ -202,11 +203,13 @@ has the commands and what each one needs.
 Run the simulator path first:
 
 ```console
-$ bflat build samples/HelloWorld/hello.cs --os linux --libc zisk_sim -x
+$ bflat build samples/HelloWorld/hello.cs --os linux --libc zisk_sim \
+    --extlib libziskos/zisk_sim.bflat.manifest -x
 $ qemu-riscv64 ./hello
 Hello world!
 ```
 
 If `--libc zisk_sim` works and the equivalent `--libc zisk` build fails
-inside Zisk, the difference is almost always the postprocessor —
+inside Zisk, the difference is almost always the post-link step of the
+`zisk` platform —
 `--print-fn-boundaries` is the next step.

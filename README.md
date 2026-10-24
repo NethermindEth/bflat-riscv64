@@ -48,25 +48,32 @@ profile adds code-quality work on top.
 
 ## Supported zkVMs
 
-Four targets, selected by `--libc`. All of them are riscv64 (`--os linux
---arch riscv64`) and share the same modules, soft-float musl and ISA gates;
-they differ in the entry point, the memory map and the halt protocol.
+Four targets, selected by `--libc`. bflat itself knows none of them: each
+one is a **platform** that its bflat-* package defines (entry point, memory
+map, instruction set, RyuJIT options, post-link steps; see the
+[manifest format](docs/manifest.md#platform)), so `--extlib` must give the
+package. All of them are riscv64 (`--os linux --arch riscv64`) and require
+the same modules from bflat, on soft-float musl; they differ in the entry
+point, the memory map and the halt protocol.
 
 - **[zisk](https://github.com/0xPolygonHermez/zisk)** — runs natively inside
-  Zisk. Invoke with `--libc zisk`.
+  Zisk. `--libc zisk`, platform in
+  [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos).
 - **zisk_sim** — runs under user-mode QEMU or native RISC-V64 Linux. Carries
   almost every module and adaptation Zisk needs, except support for
-  **precompiles**. Invoke with `--libc zisk_sim`.
+  **precompiles**. `--libc zisk_sim`, platform in bflat-libziskos.
 - **[sp1](https://github.com/succinctlabs/sp1)** — SP1 v6's
-  `riscv64im-succinct-zkvm-elf`. Invoke with `--libc sp1`.
+  `riscv64im-succinct-zkvm-elf`. `--libc sp1`, platform in
+  [bflat-sp1](https://github.com/NethermindEth/bflat-sp1).
 - **[openvm](https://github.com/openvm-org/openvm)** — OpenVM's RV64 line
   (branch `develop-v2.1.0-rv64`; `main` is still RV32 and rejects a 64-bit
-  ELF). Invoke with `--libc openvm`.
+  ELF). `--libc openvm`, platform in
+  [bflat-openvm](https://github.com/NethermindEth/bflat-openvm).
 
 All four targets run end to end: Nethermind's stateless guest executes the
 nine mainnet blocks of its `stateless-tests` suite on Zisk, SP1 and OpenVM
-alike, with matching output. See [docs/modules.md](docs/modules.md) for each
-target's memory map, entry sequence and exit protocol.
+alike, with matching output. The `platform/` directory of each package has
+the target's memory map, entry sequence and exit protocol.
 
 Bflat itself builds against .NET 10 or .NET 11; see
 [BUILDING.md](BUILDING.md) for the version and variant matrix.
@@ -108,16 +115,18 @@ stock `libc.a` and `crt` objects.
 
 ### Modules
 
-A module is a native object (plus optional linker script and parameters)
-injected into the guest link, with existing symbols redirected to it via
-`--wrap`. Modules are selected automatically from the target `libc`, `arch`
-and `os`.
+A module is a native object injected into the guest link, with existing
+symbols redirected to it via `--wrap`. Its `bflat-manifest.json`
+([format](docs/manifest.md)) declares its sources, objects and wraps. The
+platform of a target lists the modules it requires.
 
 | Module | Description |
 |--------|-------------|
 | eh | Synthetic ELF program headers, so the runtime's unwinder can find its tables in an image with no loader |
 | gs_cookie | Pins the stack-cookie symbol to a constant (a zkVM has no entropy and no page protection) |
 | nofp | Traps soft-float builtins and the libm surface, so stray floating point fails loudly instead of returning garbage |
+| noos | Defines the OS surface the runtime's Unix PAL reaches for, ahead of musl (platforms without an OS) |
+| nothread | Single-hart replacements for musl's locking and thread primitives (platforms without the A extension) |
 | pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and an FP-free `vfprintf` |
 | rhp | Link-time replacements for internal .NET runtime functions (write barriers, fail-fast, FP-carrying collection helpers) |
 | rhp_native | Assembly replacements for riscv64 runtime helpers (GC reference-assignment barriers) |
@@ -128,10 +137,6 @@ and `os`.
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
 | zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
-| zkvm_zisk | Entry point and linker script for Zisk |
-| zkvm_zisk_sim | Linker script for the Zisk simulator (the entry point is zkvm_zisk's) |
-| zkvm_sp1 | Entry point and linker script for SP1 |
-| zkvm_openvm | Entry point and linker script for OpenVM |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
 C, C++ and assembly modules are unit-tested on the real ISA under qemu. The

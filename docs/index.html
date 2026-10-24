@@ -100,12 +100,14 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
 <pre class="run-pane is-active" data-pane="zisk"><code><span class="comment-token"># Build for the Zisk zkVM — fully postprocessed, ready to prove</span>
 <span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
     nethermindeth/bflat-riscv64:latest \
-    bflat build hello.cs --os linux --libc zisk
+    bflat build hello.cs --os linux --libc zisk \
+        --extlib libziskos/libziskos.bflat.manifest
 </code></pre>
 <pre class="run-pane" data-pane="qemu"><code><span class="comment-token"># Build for the simulator — same source, runs under QEMU or native RISC-V64 Linux</span>
 <span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
     nethermindeth/bflat-riscv64:latest \
-    bflat build hello.cs --os linux --libc zisk_sim
+    bflat build hello.cs --os linux --libc zisk_sim \
+        --extlib libziskos/zisk_sim.bflat.manifest
 </code></pre>
     </div>
 
@@ -299,7 +301,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">03</div>
       <div>
         <h3 style="margin: 0 0 4px;">patch_elf.py rewrites the ELF</h3>
-        <p style="margin: 0; color: var(--text-muted);">Fixes <code>.init_array</code> and <code>.tdata</code> attributes for the Zisk loader and trims <code>.bss</code>. Only runs for <code>--libc zisk</code>.</p>
+        <p style="margin: 0; color: var(--text-muted);">Fixes <code>.init_array</code> and <code>.tdata</code> attributes for the Zisk loader and trims <code>.bss</code>. Only the <code>zisk</code> platform runs it.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
@@ -384,8 +386,8 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <p class="mod-desc">Drop-in GC that never collects. Acceptable because each proof is short-lived with a known working set.</p>
     </a>
     <a class="mod" href="{{ '/modules/#zkvm-zisk' | relative_url }}">
-      <div class="mod-name">zkvm_zisk · zkvm_zisk_sim</div>
-      <p class="mod-desc"><code>_start</code> in asm + linker scripts. Sets <code>gp</code>, <code>sp</code>, tail-calls <code>__libc_start_main</code>.</p>
+      <div class="mod-name">zkVM platforms</div>
+      <p class="mod-desc"><code>_start</code> in asm + linker scripts, in each zkVM's bflat-* package. Sets <code>gp</code>, <code>sp</code>, then the VM's start-up.</p>
     </a>
   </div>
 </section>
@@ -451,18 +453,18 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V64 
       <span class="label">~/work/hello — bash</span>
     </div>
     <pre><code><span style="color:#6b738c"># Compile a C# program for Zisk</span>
-$ bflat build hello.cs --os linux --libc zisk
+$ bflat build hello.cs --os linux --libc zisk --extlib libziskos/libziskos.bflat.manifest
 $ ls -lh hello
 -rwxr-xr-x  1 user  staff   2.5M hello
 
 <span style="color:#6b738c"># Same source, simulator-friendly target</span>
-$ bflat build hello.cs --os linux --libc zisk_sim
+$ bflat build hello.cs --os linux --libc zisk_sim --extlib libziskos/zisk_sim.bflat.manifest
 $ qemu-riscv64 ./hello
 Hello world!
 
-<span style="color:#6b738c"># With an external Zisk-precompile library from NuGet</span>
+<span style="color:#6b738c"># The ZisK platform and its precompile library, from a GitHub release</span>
 $ bflat build app.cs --os linux --libc zisk \
-      --extlib NethermindEth/bflat-libziskos:1.0.0
+      --extlib https://github.com/NethermindEth/bflat-libziskos:v1.0.0
 </code></pre>
   </div>
 

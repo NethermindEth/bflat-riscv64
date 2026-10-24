@@ -95,7 +95,7 @@ method fails here rather than at your first guest compilation:
 
 ```
 zkVM: applied 21 C#-snippet body substitution(s)
-zkVM: substitutions verified for libc=zisk against System.Private.CoreLib
+zkVM: substitutions verified for the layout modules against System.Private.CoreLib
 ```
 
 The module test, fuzzing and proof suites are described on the
@@ -103,9 +103,24 @@ The module test, fuzzing and proof suites are described on the
 
 ## Build a C# program for Zisk
 
+bflat knows no zkVM by itself. Each zkVM target is a **platform** that its
+bflat-* package defines: the entry point, the memory map, the instruction
+set, the RyuJIT options and the post-link steps (refer to the
+[manifest format](manifest.md#platform)). `--libc` selects the platform by
+its alias, and `--extlib` must give the package:
+
 ```console
-$ bflat build hello.cs --os linux --libc zisk
+$ bflat build hello.cs --os linux --libc zisk \
+    --extlib path/to/libziskos.bflat.manifest
 ```
+
+The package is
+[`bflat-libziskos`](https://github.com/NethermindEth/bflat-libziskos) (NuGet:
+`Nethermind.ZiskOS.Runtime`). A manifest path makes bflat read every
+`*.bflat.manifest` in its directory: there the platform (`zisk.bflat.manifest`)
+and the bindings (`libziskos.bflat.manifest`) come together. A guest that does
+not use the accelerators can be built with the platform files alone
+(`platform/build.sh` of the package).
 
 Optional but useful flags:
 
@@ -125,13 +140,11 @@ Optional but useful flags:
 | `--substitution <file>` | Apply an extra ILLink substitutions file on top of the built-in zkVM set. |
 | `-x` | Print the ILC and linker commands as they run. |
 
-For `--libc zisk`, `sp1` and `openvm` the link is followed by a postprocessing
-pass that rewrites the ELF **in place**: what `-o` names is what the zkVM runs,
-and there is no second file to choose between. ZisK's pass fixes the init
-array and TLS template and trims `.bss`; SP1's rewrites the encodings its
-transpiler rejects (FENCE and alignment padding). For `--libc zisk_sim` there
-is no postprocessing and the output runs under `qemu-riscv64` or natively on
-RISC-V64 Linux.
+The post-link steps of a platform (its `postlink` section) rewrite the ELF
+**in place**: what `-o` names is what the zkVM runs, and there is no second
+file to choose between. ZisK's step fixes the init array and TLS template and
+trims `.bss`; SP1's rewrites the encodings its transpiler rejects (FENCE and
+alignment padding). The `zisk_sim` and `openvm` platforms have none.
 
 ## Run a built binary
 
@@ -159,62 +172,55 @@ $ bflat build app.cs --os linux --libc zisk \
     --extlib path/to/package.bflat.manifest   # local manifest, sources resolved relatively
 ```
 
-Every package must contain a `*.bflat.manifest` JSON file at its zip root:
+A package contains one or more `*.bflat.manifest` files in the
+[manifest format](manifest.md). A manifest path stands for its whole
+directory: bflat reads every `*.bflat.manifest` there. The bindings manifest
+of bflat-libziskos, for example:
 
 ```json
 {
+  "schema": 2,
   "name": "libziskos",
-  "package_version": "1.0.0",
-  "builds": [
-    {
-      "arch":   "riscv64",
-      "os":     "linux",
-      "libc":   "zisk",
-      "static_lib":          "runtimes/linux-riscv64/native/libziskos.a",
-      "dotnet_lib":          "lib/net10.0/Nethermind.ZiskBindings.dll",
-      "dotnet_assemblyname": "Nethermind.ZiskBindings"
-    }
-  ]
+  "version": "1.0.0",
+  "when": { "platform": "zisk" },
+  "objects": [{ "file": "libziskos.a", "group": "pre-entry" }],
+  "link": { "wrap": ["memcpy", "memset", "memmove", "memcmp"] }
 }
 ```
 
-bflat picks the entry whose `arch / os / libc` triple matches the build
-target. The static library is added to the link line; the .NET assembly
-is referenced and AOT-compiled along with the user code. Paths are
-relative to the manifest.
-
-The canonical example is
-[`bflat-libziskos`](https://github.com/NethermindEth/bflat-libziskos),
-which exposes Zisk's precompile API to managed code.
+A manifest applies when its `when` holds: here only on the `zisk` platform.
+Its static libraries are added to the link line, its `ilc.references` are
+referenced and AOT-compiled along with the user code. Paths are relative to
+the manifest. bflat also reads the format of before (no `schema` key; one
+`builds[]` entry per arch/os/libc), which cannot define a platform.
 
 ## Targeting the simulator
 
 ```console
-$ bflat build app.cs --os linux --libc zisk_sim
+$ bflat build app.cs --os linux --libc zisk_sim \
+    --extlib path/to/zisk_sim.bflat.manifest
 ```
 
-Same runtime, allocator and TLS shim as the Zisk target, but without the
-ELF postprocessor and with a slightly looser linker script — the build to
-reach for when debugging under GDB.
+The `zisk_sim` platform is in bflat-libziskos too. Same runtime, allocator
+and TLS shim as the Zisk target, but without the post-link step, without
+libziskos and with a slightly looser linker script — the build to reach for
+when debugging under GDB.
 
 ## Targeting SP1 and OpenVM
 
 ```console
-$ bflat build app.cs --os linux --libc sp1
-$ bflat build app.cs --os linux --libc openvm
+$ bflat build app.cs --os linux --libc sp1 --extlib path/to/libsp1.bflat.manifest
+$ bflat build app.cs --os linux --libc openvm --extlib path/to/libopenvm.bflat.manifest
 ```
 
-Same modules, allocator and substitutions again; what changes is the entry
-point, the memory map and the halt protocol, all described in
-[modules.md](modules.md#zkvm-sp1). Neither runs the ELF postprocessor —
-both provers load from program headers. SP1 also asserts naturally aligned
-memory accesses, so it always builds with the byte-wise expansion
-`--no-unaligned-access` asks for by hand; OpenVM executes misaligned accesses
-natively and gets wide ones.
-
-Neither has been run end to end in its prover yet, and neither has a
-bindings package for hint/public-value I/O; see
-[modules.md](modules.md#zkvm-sp1) for the remaining work.
+The platforms are in
+[`bflat-sp1`](https://github.com/NethermindEth/bflat-sp1) and
+[`bflat-openvm`](https://github.com/NethermindEth/bflat-openvm). Same modules,
+allocator and substitutions again; what changes is the entry point, the
+memory map and the halt protocol, all in `platform/` of each package. SP1
+asserts naturally aligned memory accesses, so its platform always builds
+with the byte-wise expansion `--no-unaligned-access` asks for by hand;
+OpenVM executes misaligned accesses natively and gets wide ones.
 
 ## Known limitations
 

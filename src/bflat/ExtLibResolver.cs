@@ -30,7 +30,10 @@ using Internal.TypeSystem;
 // Supported spec formats:
 //   1. https://github.com/owner/repo:tag   – GitHub release containing a single .nupkg
 //   2. path or URL ending in .nupkg        – extract the package and read every *.bflat.manifest inside
-//   3. path or URL ending in .bflat.manifest – use the manifest directly
+//   3. path or URL ending in .bflat.manifest – use the manifest directly; for a
+//      local path, every other *.bflat.manifest in its directory too, so a
+//      package directory (an extracted nupkg, a package build's output/) works
+//      through any one of its manifests
 //
 // A package can hold several manifests: for example the platform of a zkVM
 // and the platform of its simulator. BuildCommand selects among them.
@@ -120,7 +123,17 @@ internal static class ExtLibResolver
         if (spec.EndsWith(".bflat.manifest", StringComparison.OrdinalIgnoreCase))
         {
             string manifestPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
-            return new List<string> { manifestPath };
+            var manifests = new List<string> { manifestPath };
+            if (!IsUrl(spec))
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
+                foreach (string sibling in FindManifestsInDirectory(dir, recursive: false))
+                {
+                    if (!string.Equals(Path.GetFullPath(sibling), Path.GetFullPath(manifestPath), StringComparison.Ordinal))
+                        manifests.Add(sibling);
+                }
+            }
+            return manifests;
         }
 
         throw new Exception(
@@ -306,9 +319,10 @@ internal static class ExtLibResolver
     }
 
     // Find the *.bflat.manifest files inside a directory tree.
-    private static List<string> FindManifestsInDirectory(string dir)
+    private static List<string> FindManifestsInDirectory(string dir, bool recursive = true)
     {
-        var manifests = Directory.GetFiles(dir, "*.bflat.manifest", SearchOption.AllDirectories);
+        var manifests = Directory.GetFiles(dir, "*.bflat.manifest",
+            recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
 
         if (manifests.Length == 0)
             throw new Exception($"No *.bflat.manifest file found in {dir}");
