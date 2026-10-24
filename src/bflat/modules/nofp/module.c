@@ -55,25 +55,26 @@ nofp_trap(void)
  * soft-float test group. Because nofp.o is linked ahead of libgcc.a, those
  * stubs also kept the real implementations out of the image entirely.
  *
- * What still traps is the libm surface below: sin, pow and friends genuinely
- * have no business running inside a proof.
+ * What still traps is the transcendental part of libm below: sin, pow and
+ * friends have no business running inside a proof.
  */
 
 /*
  * libm surface. The runtime's math helpers (RhpDblPow, RhpDblLog, ... in
  * MathHelpers.cpp) and the allocation-sampling path in GcAllocInternal
- * reference the C math library. Those paths never execute on the zkVM, but
- * with a hard-float libc the mere reference pulls musl's implementations
- * into the link, and their F/D instructions poison the rv64ima .text (the
- * ZisK transpiler rejects them, and they inflate the instruction ROM).
- * Each function is diverted at link time with --wrap=<fn> (see BuildCommand)
- * to a trap stub here, so the musl archive member is never extracted and a
- * stray runtime call fails loudly instead of computing garbage.
+ * reference the C math library. Those paths never execute on the zkVM. The
+ * bundled musl is built rv64im, so its implementations would link and run;
+ * the trap is policy, not a missing instruction. Each function is diverted
+ * at link time with --wrap=<fn> (see the manifest) to a stub here, so the
+ * musl member is never extracted and a stray call fails loudly.
  *
- * fmod and fmodf are not in this list. They are not a library the guest may
- * or may not use: they are the % operator on double and float, and the JIT
- * lowers every such expression into a call to one. musl computes both with
- * integer arithmetic alone, so the real implementations link and run here.
+ * Only the transcendental functions are here. The exact operations - ceil,
+ * floor, modf, sqrt, fma, scalbn, fmod and their float forms - are not: IEEE
+ * 754 gives each one a single correctly rounded result, like + and /, and
+ * musl computes them with integer arithmetic alone. CoreLib calls them for
+ * ordinary work: double formatting (ceil), DateTime.Add* (modf, through
+ * Math.Truncate), HashHelpers.IsPrime (sqrt), and the C# % operator on
+ * double and float (fmod).
  */
 /* Same contract-in-macro arrangement as NOFP_STUB above (needs -CC). */
 #define NOFP_WRAP_STUB(name) \
@@ -96,43 +97,28 @@ NOFP_WRAP_STUB(atanh)
 NOFP_WRAP_STUB(atanhf)
 NOFP_WRAP_STUB(cbrt)
 NOFP_WRAP_STUB(cbrtf)
-NOFP_WRAP_STUB(ceil)
-NOFP_WRAP_STUB(ceilf)
 NOFP_WRAP_STUB(cos)
 NOFP_WRAP_STUB(cosf)
 NOFP_WRAP_STUB(cosh)
 NOFP_WRAP_STUB(coshf)
 NOFP_WRAP_STUB(exp)
 NOFP_WRAP_STUB(expf)
-NOFP_WRAP_STUB(floor)
-NOFP_WRAP_STUB(floorf)
-NOFP_WRAP_STUB(fma)
-NOFP_WRAP_STUB(fmaf)
 NOFP_WRAP_STUB(log)
 NOFP_WRAP_STUB(logf)
 NOFP_WRAP_STUB(log10)
 NOFP_WRAP_STUB(log10f)
 NOFP_WRAP_STUB(log2)
 NOFP_WRAP_STUB(log2f)
-NOFP_WRAP_STUB(modf)
-NOFP_WRAP_STUB(modff)
 NOFP_WRAP_STUB(pow)
 NOFP_WRAP_STUB(powf)
 NOFP_WRAP_STUB(sin)
 NOFP_WRAP_STUB(sinf)
 NOFP_WRAP_STUB(sinh)
 NOFP_WRAP_STUB(sinhf)
-NOFP_WRAP_STUB(sqrt)
-NOFP_WRAP_STUB(sqrtf)
 NOFP_WRAP_STUB(tan)
 NOFP_WRAP_STUB(tanf)
 NOFP_WRAP_STUB(tanh)
 NOFP_WRAP_STUB(tanhf)
-/* scalbn is not part of the RhpDbl* helper surface; it is dragged in by
- * musl's vfprintf float formatting (fmt_fp). No zkVM guest prints %f/%e/%g,
- * so divert it to the trap as well - this drops musl's hard-float scalbn.o
- * from the link. */
-NOFP_WRAP_STUB(scalbn)
 
 /*
  * asprintf: referenced only by the PAL's CGroup CPU-limit parsing, which is
@@ -140,8 +126,8 @@ NOFP_WRAP_STUB(scalbn)
  * math stubs above this one does NOT trap: -1 is the documented asprintf
  * failure result and the cgroup callers handle it, so if the path is ever
  * reached it degrades to "no cgroup limit detected" instead of aborting.
- * Diverting it keeps musl's vasprintf/fmt_fp/scalbn (hard-float F/D code)
- * out of the link entirely.
+ * Diverting it also keeps musl's vasprintf and the float formatter of
+ * vfprintf out of the image.
  */
 /*@ // Deliberately NOT a trap: -1 is the documented asprintf failure and
     // the (dead) cgroup callers degrade to "no limit detected".

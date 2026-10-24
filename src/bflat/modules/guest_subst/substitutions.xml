@@ -8,11 +8,12 @@
   from strings") stay in the guest's own substitution file. User files must
   not re-declare methods listed here: the parser rejects duplicates.
 
-  Floating point as such is NOT a reason for an entry. The guests are built
+  Floating point is NOT a reason for an entry. The guests are built
   soft-float: the JIT lowers double arithmetic to the compiler-rt builtins and
-  bflat links libgcc.a, so FP code runs correctly. What does not run is the
-  libm surface that the nofp module traps (sqrt, ceil, floor, modf, pow, ...):
-  an entry for FP is here only because its method reaches one of those.
+  bflat links libgcc.a, so FP code runs correctly. The exact libm operations
+  (ceil, floor, modf, sqrt, ...) run too; only the transcendental functions
+  trap (see the nofp module), and CoreLib does not call them on its ordinary
+  paths. Every entry here is for the single hart.
 -->
 <linker>
   <assembly fullname="System.Private.CoreLib">
@@ -45,9 +46,9 @@
 
     <!-- The zkVM guest runs on exactly one hart, so 1 is the exact processor
          count. Folding it also eliminates the Unix cgroup CPU-quota parsing
-         (Math.Ceiling, i.e. libm ceil) that otherwise inlines into every cctor
-         sizing a pool by ProcessorCount, and right-sizes those pools for a
-         single-threaded target as a bonus. -->
+         that otherwise inlines into every cctor sizing a pool by
+         ProcessorCount, and right-sizes those pools for a single-threaded
+         target as a bonus. -->
     <type fullname="System.Environment">
       <method signature="System.Int32 get_ProcessorCount()" body="stub" value="1" />
     </type>
@@ -59,57 +60,4 @@
       <method signature="System.Buffers.Utilities/MemoryPressure GetMemoryPressure()" body="stub" value="0" />
     </type>
   </assembly>
-
-  <!--
-    CoreLib methods that reach a libm function the nofp module traps. Removing
-    a method makes it throw if reached, which a guest can catch; reaching the
-    trap ends the guest with status 255.
-  -->
-  <assembly fullname="System.Private.CoreLib">
-    <!-- Core float-to-string formatter and the Double/Single entry points into
-         it. Grisu3 and Dragon4 both size their output with Math.Ceiling (libm
-         ceil), so double formatting cannot run.
-         NOTE: the .NET 11 ILC signature matcher (ProcessLinkerXmlBase.
-         GetMethodSignature) renders a method's own generic parameters by NAME
-         (TChar/TNumber), not as empty variables. The pre-.NET-11 empty form
-         (ValueListBuilder`1&lt;&gt;&amp;,,...) silently stopped matching -> IL2009 ->
-         FormatFloat survived. Keep the named form.
-         Removing FormatFloat also makes Number.s_sqrtTable dead: CustomILProvider
-         drops the constants that fill it. -->
-    <type fullname="System.Number">
-      <method signature="System.String FormatFloat`2(System.Collections.Generic.ValueListBuilder`1&lt;TChar&gt;&amp;,TNumber,System.ReadOnlySpan`1&lt;System.Char&gt;,System.Globalization.NumberFormatInfo)" body="remove" />
-    </type>
-    <type fullname="System.Double">
-      <method signature="System.String ToString()" body="remove" />
-      <method signature="System.String ToString(System.String)" body="remove" />
-      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
-      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
-      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
-    </type>
-    <type fullname="System.Single">
-      <method signature="System.String ToString()" body="remove" />
-      <method signature="System.String ToString(System.String)" body="remove" />
-      <method signature="System.String ToString(System.IFormatProvider)" body="remove" />
-      <method signature="System.String ToString(System.String,System.IFormatProvider)" body="remove" />
-      <method signature="System.Boolean TryFormat(System.Span`1&lt;System.Char&gt;,System.Int32&amp;,System.ReadOnlySpan`1&lt;System.Char&gt;,System.IFormatProvider)" body="remove" />
-    </type>
-
-    <!-- Math.Truncate(double) is ModF, i.e. libm modf. It is what
-         DateTime.AddDays/AddHours/AddMilliseconds/... call. -->
-    <type fullname="System.Math">
-      <method signature="System.Double Truncate(System.Double)" body="remove" />
-    </type>
-
-    <!-- Timezone rules that call DateTime.AddDays / AddMilliseconds (Math.
-         Truncate above). The guests set System.TimeZoneInfo.Invariant, but these
-         members stay reachable through the custom-timezone API surface. The
-         TimeZoneInfo..cctor has the same call; snippets.cs replaces it. -->
-    <type fullname="System.TimeZoneInfo">
-      <method signature="System.DateTime TransitionTimeToDateTime(System.Int32,System.TimeZoneInfo/TransitionTime)" body="remove" />
-    </type>
-    <type fullname="System.TimeZoneInfo/AdjustmentRule">
-      <method signature="System.Boolean get_HasDaylightSaving()" body="stub" value="false" />
-    </type>
-  </assembly>
-
 </linker>

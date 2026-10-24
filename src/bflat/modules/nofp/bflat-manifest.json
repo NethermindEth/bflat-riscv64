@@ -10,7 +10,7 @@
     "wrap": [
       {
         "symbol": "acos",
-        "note": "libm: divert the math surface referenced by the runtime (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling) to the nofp trap stubs. The bundled musl is built rv64im, so its implementations would link and run correctly - the point is that a transcendental has no business inside a proof, and a guest that reaches one is a bug worth hearing about. fmod and fmodf are deliberately NOT here: they are the C# % operator on double and float, ordinary arithmetic the language defines, and musl's are integer-only."
+        "note": "libm: divert the transcendental functions that the runtime references (MathHelpers.cpp RhpDbl* helpers, GC allocation sampling) to the nofp trap stubs. The bundled musl is built rv64im, so its implementations would link and run correctly - the point is that a transcendental has no business inside a proof, and a guest that reaches one is a bug worth hearing about. The exact operations are deliberately NOT here: ceil, floor, modf, sqrt, fma, scalbn and fmod have one correctly rounded IEEE 754 result, like + and /, and musl computes them with integer arithmetic. CoreLib calls them for ordinary work (double formatting, DateTime.Add*, HashHelpers.IsPrime)."
       },
       "acosf",
       "acosh",
@@ -27,42 +27,31 @@
       "atanhf",
       "cbrt",
       "cbrtf",
-      "ceil",
-      "ceilf",
       "cos",
       "cosf",
       "cosh",
       "coshf",
       "exp",
       "expf",
-      "floor",
-      "floorf",
-      "fma",
-      "fmaf",
       "log",
       "logf",
       "log10",
       "log10f",
       "log2",
       "log2f",
-      "modf",
-      "modff",
       "pow",
       "powf",
       "sin",
       "sinf",
       "sinh",
       "sinhf",
-      "sqrt",
-      "sqrtf",
       "tan",
       "tanf",
       "tanh",
       "tanhf",
-      {"symbol": "scalbn", "note": "musl fmt_fp dependency, see nofp module"},
       {
         "symbol": "asprintf",
-        "note": "asprintf is referenced only by the PAL's CGroup CPU-limit parsing, which cannot open its /proc//sys inputs on zisk (pal's open() returns -1). The stub returns -1 (the documented asprintf failure mode) and, more importantly, keeps musl's vasprintf/fmt_fp/scalbn members - hard-float F/D code - out of the link."
+        "note": "asprintf is referenced only by the PAL's CGroup CPU-limit parsing, which cannot open its /proc and /sys inputs on a zkVM (pal's open() returns -1). The stub returns -1, the documented asprintf failure, so the path degrades to no cgroup limit. It also keeps musl's vasprintf and the float formatter of vfprintf out of the image."
       }
     ]
   }

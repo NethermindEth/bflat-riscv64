@@ -16,13 +16,6 @@
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Module payloads are data shipped into the compiler layout, never
-         part of bflat's own compilation (guest_subst's snippets reference
-         CoreLib internals that only exist in the guest's reference set). -->
-    <Compile Remove="modules\**\*.cs" />
-  </ItemGroup>
-
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
@@ -130,46 +123,6 @@
           DestinationFiles="$(OutputPath)patch_elf.py" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\check_wrap_symbols.py"
           DestinationFiles="$(OutputPath)check_wrap_symbols.py" />
-  </Target>
-
-  <!--
-    Resolve the zkVM C#-snippet body substitutions against the CoreLib that
-    this build just unpacked into the layout, and fail the build if any of
-    them no longer matches.
-
-    Guest builds check this too, but only when someone builds a guest: a
-    runtime bump would otherwise sit green until the first zkVM compilation.
-    The CoreLib the guests will use is already on disk here
-    (lib/linux/riscv64/musl/System.Private.CoreLib.dll, from the libs blob),
-    so the same check runs at bflat build time against the same assemblies.
-
-    No platform is needed: without one, bflat checks the substitutions of
-    every module in lib/modules (the platforms ship in their packages, which
-    do not exist yet at this point). Set SkipZkvmSubstitutionCheck=true to
-    bypass (e.g. bisecting a blob).
-  -->
-  <Target Name="VerifyZkvmSubstitutions"
-          AfterTargets="CreateCompilerLayout"
-          Condition="'$(SkipZkvmSubstitutionCheck)' != 'true'">
-    <PropertyGroup>
-      <_VerifyProbe>$(IntermediateOutputPath)zkvm-subst-probe.cs</_VerifyProbe>
-    </PropertyGroup>
-    <!-- The verification stops before code generation, but the pipeline up to
-         it still needs an input assembly; a trivial one keeps it honest and
-         fast. -->
-    <WriteLinesToFile File="$(_VerifyProbe)"
-                      Lines="class ZkvmSubstitutionProbe { static int Main() =&gt; 0%3B }"
-                      Overwrite="true"
-                      WriteOnlyWhenDifferent="true" />
-    <!-- DOTNET_ROLL_FORWARD: the freshly built apphost targets net$(DotnetVersion).0,
-         but the build machine may only carry a newer runtime major (the
-         toolchain image ships SDK 11 and builds both TFMs). Without this the
-         host aborts with "framework not found" (exit 150) before bflat runs,
-         which looks exactly like a failed check. Same workaround BUILDING.md
-         documents for running a net10.0 bflat on an 11-only image. -->
-    <Exec Command="&quot;$(RunCommand)&quot; build &quot;$(_VerifyProbe)&quot; --os linux --arch riscv64 --libc musl --verify-substitutions"
-          WorkingDirectory="$(MSBuildThisFileDirectory)"
-          EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
   </Target>
 
   <Target Name="ValidateVariant"

@@ -60,11 +60,6 @@ internal class BuildCommand : CommandBase
     private static Option<bool> NoGlobalizationOption = new Option<bool>("--no-globalization", "Disable support for globalization (use invariant mode)");
     private static Option<bool> NoExceptionMessagesOption = new Option<bool>("--no-exception-messages", "Disable exception messages");
     private static Option<bool> NoPieOption = new Option<bool>("--no-pie", "Do not generate position independent executable");
-    // Self-check used by bflat's own build (see VerifyZkvmSubstitutions in
-    // bflat.csproj): resolve the zkVM body substitutions against the CoreLib
-    // in the layout and stop before code generation. Same code path as a real
-    // build, so it cannot drift from what a guest build would resolve.
-    private static Option<bool> VerifySubstitutionsOption = new Option<bool>("--verify-substitutions", "Resolve zkVM body substitutions against the target CoreLib and exit");
 
     private static Option<bool> NoLinkOption = new Option<bool>("-c", "Produce object file, but don't run linker");
     private static Option<bool> MstatOption = new Option<bool>("--mstat", "Produce MSTAT and DGML files for size analysis");
@@ -156,7 +151,6 @@ internal class BuildCommand : CommandBase
             NoGlobalizationOption,
             NoExceptionMessagesOption,
             NoPieOption,
-            VerifySubstitutionsOption,
             SeparateSymbolsOption,
             CommonOptions.NoDebugInfoOption,
             MapFileOption,
@@ -596,9 +590,6 @@ internal class BuildCommand : CommandBase
         // A soft-float platform: its crt, libc and runtime objects get the
         // lp64 float-ABI marker, and it links the soft-float builtins.
         bool softFloatAbi = platformLink?.Abi == "lp64";
-        // A platform without an FPU: the IL rewrites that remove floating
-        // point which the C# snippets cannot express.
-        bool noFpu = platformLink?.HasFlag("no-fpu") == true;
         // The libc whose sysroot, crt and runtime files the target uses.
         string linkLibc = platformLink?.Target.Libc ?? libc;
 
@@ -817,9 +808,7 @@ internal class BuildCommand : CommandBase
         CompilerTypeSystemContext typeSystemContext =
             new BflatTypeSystemContext(targetDetails, genericsMode, supportsReflection ? DelegateFeature.All : 0);
 
-        CustomILProvider customIlProvider = new CustomILProvider(ilProviderOld, typeSystemContext,
-            isZkvmTarget: noFpu);
-        ILProvider ilProvider = customIlProvider;
+        ILProvider ilProvider = new CustomILProvider(ilProviderOld, typeSystemContext);
 
         var referenceFilePaths = new Dictionary<string, string>();
 
@@ -897,34 +886,9 @@ internal class BuildCommand : CommandBase
             [compiledModuleName] = compiledModulePath,
         };
 
-        // zkVM body-substitution machinery, declared by modules in the ilc
-        // section of their manifests (e.g. guest_subst): substitutions XML
-        // for ILC and C# snippet sources compiled against the same references,
-        // with accessibility checks ignored so they can touch CoreLib
-        // internals/privates; the resulting module is registered so the type
-        // system resolves its methods.
-        const string snippetsModuleName = "__BflatSnippets";
-        string snippetsModulePath = null;
-        List<string> moduleSubstitutionFiles = new List<string>();
-        // --verify-substitutions without a platform checks the substitutions
-        // of every module in the layout: the bflat build runs it before any
-        // platform package exists.
-        bool verifySubstitutions = result.GetValueForOption(VerifySubstitutionsOption);
-        ManifestLink ilcLink = platformLink
-            ?? (verifySubstitutions ? ManifestLink.ForModules(modules, buildTarget) : null);
-        if (ilcLink != null)
-        {
-            moduleSubstitutionFiles = ilcLink.Files(m => m.IlcSubstitutions);
-            List<string> snippetFiles = ilcLink.Files(m => m.IlcSnippets);
-            // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
-            // not the public ref assemblies (references): the snippet needs the
-            // private nested types (Random.CompatSeedImpl, ...) that ref
-            // assemblies strip out.
-            if (snippetFiles.Count > 0)
-                snippetsModulePath = ZkvmSubstitutions.CompileSnippets(snippetFiles, referenceFilePaths.Values.ToArray(), defines, langVersion: result.GetValueForOption(CommonOptions.LangVersionOption));
-            if (snippetsModulePath != null)
-                inputFilePaths[snippetsModuleName] = snippetsModulePath;
-        }
+        // Substitutions XML for ILC, declared by modules in the ilc section of
+        // their manifests (e.g. guest_subst).
+        List<string> moduleSubstitutionFiles = platformLink?.Files(m => m.IlcSubstitutions) ?? new List<string>();
 
         typeSystemContext.InputFilePaths = inputFilePaths;
         typeSystemContext.ReferenceFilePaths = referenceFilePaths;
@@ -933,37 +897,6 @@ internal class BuildCommand : CommandBase
 
         //ilProvider.TypeContext = typeSystemContext;
         EcmaModule compiledAssembly = typeSystemContext.GetModuleForSimpleName(compiledModuleName);
-
-        if (snippetsModulePath != null)
-        {
-            // Deliberately NOT wrapped in a catch. Every one of these
-            // substitutions removes floating point from a body that would
-            // otherwise reach an FPU-less target; "apply what we can and warn"
-            // produces a binary that looks built and dies in the emulator on
-            // an F/D opcode. If the snippet set no longer matches the CoreLib
-            // in front of us, the honest outcome is no binary at all.
-            EcmaModule snippetsModule = typeSystemContext.GetModuleForSimpleName(snippetsModuleName);
-            customIlProvider.BodySubstitutions = ZkvmSubstitutions.BuildBodySubstitutions(typeSystemContext, snippetsModule);
-            Console.WriteLine($"zkVM: applied {customIlProvider.BodySubstitutions.Count} C#-snippet body substitution(s)");
-
-            if (verifySubstitutions)
-            {
-                Console.WriteLine(
-                    $"zkVM: substitutions verified for {(platform != null ? "platform " + platform.Name : "the layout modules")} against " +
-                    $"{typeSystemContext.SystemModule.Assembly.GetName().Name}");
-                return 0;
-            }
-        }
-        else if (verifySubstitutions)
-        {
-            // Refuse to report success when there are no substitutions to
-            // check - otherwise a typo in the verification step's arguments
-            // would look like a passing check.
-            Console.Error.WriteLine(
-                "Error: --verify-substitutions found no C# snippets: neither the platform " +
-                "nor the modules in lib/modules declare ilc.snippets");
-            return 1;
-        }
 
         ilProvider = new HardwareIntrinsicILProvider(
             instructionSetSupport,
@@ -1965,7 +1898,7 @@ internal class BuildCommand : CommandBase
                 Console.Error.WriteLine(
                     $"error: {inlinedWrapTargets.Count} --wrap target(s) are managed methods that every caller " +
                     "inlined, so no call is left to redirect and the managed body runs instead of the wrapper. " +
-                    "Replace the body itself (e.g. a guest_subst C# snippet) instead of wrapping it:");
+                    "Replace the body itself (e.g. with an ILLink substitution) instead of wrapping it:");
                 foreach (string target in inlinedWrapTargets)
                     Console.Error.WriteLine($"  {target}");
                 return 1;

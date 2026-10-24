@@ -36,7 +36,7 @@ bflat does not ignore the section.
 | `objects` | yes: all groups | yes, but without `group` and `order` |
 | `link.wrap` | yes | yes |
 | `link.ld` | yes | no |
-| `ilc.substitutions`, `ilc.snippets`, `ilc.references` | yes | references only |
+| `ilc.substitutions`, `ilc.references` | yes | references only |
 | `ilc.defines`, `ilc.features`, `ilc.direct_pinvoke` | yes | no |
 | `ilc.sources` | no | no |
 | `codegen`, `postlink`, `checks` | yes | no |
@@ -182,7 +182,6 @@ The modules of bflat know these flags. The platforms set them:
 | `no-atomics` | The decoder does not have the A extension. | `nothread` | `sp1`, `openvm` |
 | `noos` | No OS call can be serviced. | `noos` | `sp1`, `openvm` |
 | `no-console` | No host console and no host stdio. | `rhp`, `pal` | `zisk`, `sp1`, `openvm` |
-| `no-fpu` | No floating-point hardware: bflat applies the IL rewrites that remove floating point and that the C# snippets cannot express. | bflat | `zisk`, `zisk_sim`, `sp1`, `openvm` |
 
 A condition on a `platform` name is permitted. But only the package that
 owns the platform must use it: the bindings of bflat-libziskos, for example,
@@ -307,7 +306,6 @@ which archive members lld takes. Refer to the verification in
 ```json
 "ilc": {
   "substitutions": ["substitutions.xml"],
-  "snippets": ["snippets.cs"],
   "sources": ["Helpers.cs"],
   "references": [{ "file": "Nethermind.ZiskBindings.dll", "assembly": "Nethermind.ZiskBindings" }],
   "defines": ["ZKVM_ZISK"],
@@ -319,10 +317,9 @@ which archive members lld takes. Refer to the verification in
 | Key | Meaning | Before schema 2 |
 |-----|---------|-----------------|
 | `substitutions` | ILLink substitution XML files. bflat applies them before the `--substitution` files of the user. | `options.ilc.substitutions` |
-| `snippets` | C# files. bflat compiles them against the implementation assemblies without access checks. Their method bodies replace CoreLib methods. | `options.ilc.snippets` |
 | `sources` | Usual C# files. bflat compiles them into the guest together with the sources of the user. | not possible |
 | `references` | Managed assemblies. The guest compiles against them, and bflat links them. Use `assembly` if the file name is not the assembly name. | schema 1 `dotnet_lib`, `dotnet_assemblyname` |
-| `defines` | Preprocessor symbols for the guest and for the snippets. | `ZKVM_*` in `BuildCommand.cs` |
+| `defines` | Preprocessor symbols for the guest. | `ZKVM_*` in `BuildCommand.cs` |
 | `features` | Feature switches. `--feature` on the command line replaces a value. | `BuildCommand.cs` |
 | `direct_pinvoke` | The same as `-i`. | `__Internal` in `BuildCommand.cs` |
 
@@ -498,7 +495,7 @@ The SP1 platform, shortened:
     "requires": ["nofp", "ubootstrap", "stdcppshim", "rhp", "gs_cookie",
                  "rhp_native", "pal", "eh", "tls", "rng_stupid",
                  "rust_sys", "ugc-zero", "nothread", "noos", "guest_subst"],
-    "flags": ["no-atomics", "noos", "no-console", "no-fpu"],
+    "flags": ["no-atomics", "noos", "no-console"],
     "linker_script": "sp1.ld",
     "entry": "sp1_entry.o"
   }
@@ -666,7 +663,7 @@ same error as a schema 1 manifest without a matching build.
 | ugc-zero | — | normal: 6 `.obj` files from `release/` | 2 | `external`, `codegen.options` (`JitZkNoGcMustInit=1`) | — |
 | nothread | `module.c` | pre-libc, `when: { flag: no-atomics }` | — | — | — |
 | noos | `module.c` | pre-libc, `when: { flag: noos }` | — | — | — |
-| guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.snippets`, `ilc.features` (invariant timezones) | Nothing in it is for one VM. The substitutions that only removed soft-float arithmetic are gone; see [Substitutions](#substitutions). |
+| guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.features` (invariant timezones) | Nothing in it is for one VM. Only the single-hart substitutions stay; see [Substitutions](#substitutions). |
 
 The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
 bflat-sp1 and bflat-openvm. Their unit tests went with them
@@ -707,25 +704,31 @@ image anyway.
 ## Substitutions
 
 The `guest_subst` module (before: `zisk_subst`) has only the substitutions
-that a soft-float guest needs. A substitution stays for one of two reasons:
+for the single hart: the thread-pool tuner, the gate thread,
+`ProcessorIdCache`, `Environment.ProcessorCount`, the `ArrayPool` pressure
+test.
 
-- The guest has one hart: the thread-pool tuner, the gate thread,
-  `ProcessorIdCache`, `Environment.ProcessorCount`, the `ArrayPool`
-  pressure test.
-- The method calls a libm function that `nofp` traps: double and float
-  formatting (`ceil`), `Math.Truncate` and the `DateTime.Add*` and timezone
-  code that calls it (`modf`), `HashHelpers.IsPrime` (`sqrt`).
+Floating point is no longer a reason for a substitution:
 
-These substitutions only removed soft-float arithmetic, and are gone:
+- The guests are soft-float, and `libgcc.a` gives the arithmetic.
+- `nofp` traps only the transcendental functions (`sin`, `pow`, `exp`,
+  `log`, …). It no longer traps the exact operations `ceil`, `floor`,
+  `modf`, `sqrt`, `fma` and `scalbn`. Each has one correctly rounded result.
+- The musl of the layout is built for `rv64im`. Its libm has no F or D
+  instruction, so the image stays free of them.
+
+These substitutions are gone:
 
 | Removed | The code that now runs |
 |---------|------------------------|
+| `Number.FormatFloat`, `Double`/`Single` `ToString` and `TryFormat` | double and float formatting (`ceil`) |
+| `Math.Truncate`, `TimeZoneInfo.TransitionTimeToDateTime`, `AdjustmentRule.HasDaylightSaving` | `DateTime.Add*` and the timezone rules (`modf`) |
 | `Array.CopyImplPrimitiveWiden`, `InvokeUtils.ConvertOrWidenPrimitivesEnumsAndPointersIfPossible` | widening to `float` and `double` in `Array.Copy` and reflection |
 | `IConvertible.ToInt16`/`ToInt32` of `Double` and `Single`, `Convert.ToInt32(double)` | the conversions |
 | `TimeZoneInfo.UtcOffsetOutOfRange`, `AdjustmentRule.ValidateAdjustmentRule` | the range checks |
 | the three readers of `float` and `double` constants in the reflection metadata | `ParameterInfo.DefaultValue` and the constant collections |
-| the snippets for the compat `Random`, `Hashtable`, `ValueType.GetHashCode`, `Double`/`Single` `Equals(object)` and `CompareTo(object)`, `FrozenHashTable.CalcNumBuckets`, `LengthBuckets` | the upstream bodies |
-| the IL rewrites of `Number.FormatBigInteger` and `ConcurrentUnifierW.Container.Resize` | the upstream bodies |
+| all C# snippets: `HashHelpers.IsPrime`, the `TimeZoneInfo` cctor, the compat `Random`, `Hashtable`, `ValueType.GetHashCode`, `Double`/`Single` `Equals(object)` and `CompareTo(object)`, `FrozenHashTable.CalcNumBuckets`, `LengthBuckets` | the upstream bodies |
+| the IL rewrites of `Number..cctor` (`s_sqrtTable`), `Number.FormatBigInteger` and `ConcurrentUnifierW.Container.Resize` | the upstream bodies |
 
 The behavior that changes:
 
@@ -742,13 +745,14 @@ A guest that must have no floating point at all can still use
 substitutions, these checks find more methods. Such a guest adds its own
 `--substitution` file.
 
-The substitution machinery also changed:
+The machinery that only the snippets used is gone:
 
-- The snippet module is `__BflatSnippets` (before: `__ZiskSnippets`).
-- A snippet that has no target in `ZkvmSubstitutions.BuildBodySubstitutions`
-  is an error.
-- A `TimeZoneInfo` cctor with an unknown set of fields is an error. Before,
-  it was a warning that referred to an IL rewrite that did not exist.
+- the `ilc.snippets` manifest key (a manifest that has it is now an error);
+- the Roslyn compilation of the snippets and the map of their targets in
+  `ZkvmSubstitutions.cs`;
+- the `--verify-substitutions` option and the `VerifyZkvmSubstitutions`
+  target of `bflat.csproj`;
+- the `no-fpu` platform flag. Only the `s_sqrtTable` rewrite read it.
 
 ## Decisions
 

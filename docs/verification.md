@@ -32,7 +32,6 @@ which is not driven from this repository.
 | **CBMC proof** | CI | The allocator's bounds properties hold for *all* 64-bit sizes | Pointer arithmetic that wraps for inputs no test would think to try |
 | **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
 | **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for every zkVM target | Renamed musl symbols, unresolved wraps, broken postprocessing |
-| **Substitution check** | Build | Every C#-snippet body substitution still resolves against the runtime's CoreLib | A runtime bump that silently un-does floating-point removal |
 | **Inlined-wrap check** | Build (optimized) | Every `--wrap` target that is a managed method the scanner reached is still emitted, so calls to it remain for the linker to divert | A wrapped method inlined into all its callers, which silently bypasses the wrapper |
 | **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
 | **ISA verification** | Build, opt-in | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |
@@ -122,13 +121,6 @@ The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
 are the layer most exposed to runtime drift, and the failure is silent by
 nature: if a substituted CoreLib method is renamed or re-signatured, the
 entry stops matching and the original body stays in the image.
-The two halves of the machinery are not equally protected.
-
-**C# snippets fail hard.** Their targets are resolved in code
-(`ZkvmSubstitutions.BuildBodySubstitutions`), and a target that no longer
-matches throws with the full list of mismatches rather than being skipped.
-This runs when bflat is built and again on every guest build, which also
-covers a layout someone modified by hand.
 
 **ILLink substitution entries only warn.** A `<method signature=…>` that
 matches nothing produces `IL2009: Could not find method …` and the build
@@ -137,7 +129,9 @@ rendered by ILC and that rendering differs between .NET majors — .NET 11
 spells a method's own generic parameters by name
 (``ValueListBuilder`1<TChar>&``), earlier ILCs leave them empty — so an
 entry written for one major is inert on the other. Read the build output for
-IL2009, or rely on the gates rather than on the entry.
+IL2009.
+
+## Floating-point gates
 
 There are two gates because one is not enough:
 

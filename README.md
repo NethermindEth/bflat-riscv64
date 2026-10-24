@@ -18,7 +18,7 @@ for a target that toolchain does not know about:
 | Stage | Who does the work | What Bflat adds |
 |-------|-------------------|-----------------|
 | C# → IL | Roslyn (`Microsoft.CodeAnalysis.CSharp`) | in-process invocation, no project system |
-| IL → native | Microsoft's ILCompiler (NativeAOT) | zkVM substitutions and C# snippets, target/ABI selection |
+| IL → native | Microsoft's ILCompiler (NativeAOT) | zkVM substitutions, target/ABI selection |
 | link | lld | module injection, `--wrap` redirection, linker scripts |
 | post-link | — | ELF postprocessing for the zkVM loader |
 
@@ -28,13 +28,11 @@ Every adaptation a zkVM target needs is applied *around* the runtime rather
 than inside it, so the toolchain tracks upstream .NET instead of forking it.
 An adaptation belongs to the earliest layer that can express it:
 
-1. **ILC stage — substitutions and snippets.** Managed method bodies are
-   replaced through an ILLink substitutions file
-   (`modules/guest_subst/substitutions.xml`) and whole-body C# snippets
-   (`snippets.cs`) compiled against the guest's own reference set. This
-   is how CoreLib paths leave out the work that has no meaning on one hart,
-   and the libm calls that the `nofp` module traps. Soft-float arithmetic
-   runs as it is.
+1. **ILC stage — substitutions.** Managed method bodies are replaced
+   through an ILLink substitutions file
+   (`modules/guest_subst/substitutions.xml`). This is how CoreLib paths
+   leave out the work that has no meaning on one hart. Soft-float arithmetic
+   and the exact libm operations run as they are.
 2. **Link stage — modules and `--wrap`.** Native objects are injected into
    the link and existing symbols are redirected to them (see
    [Modules](#modules)). Nothing in the runtime source changes; the linker
@@ -137,7 +135,7 @@ platform of a target lists the modules it requires.
 | tls | Simple TLS implementation that does not rely on the ELF format |
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
-| guest_subst | ILC-stage substitutions and C# snippets (no native object) |
+| guest_subst | ILC-stage substitutions (no native object) |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
 C, C++ and assembly modules are unit-tested on the real ISA under qemu. The

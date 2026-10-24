@@ -115,49 +115,31 @@ matching the bflat version and variant.
 
 The target has no FPU. The guests are soft-float: without F and D the JIT
 lowers double arithmetic to calls to the compiler-rt builtins, and bflat
-links `libgcc.a`, which defines them. So floating point runs, and it is not
-a reason to replace a method. Two things are reasons:
+links `libgcc.a`, which defines them. The bundled musl is built for
+`rv64im`, so its libm has no F or D instructions either. The exact
+operations (`sqrt`, `ceil`, `floor`, `modf`, `fma`, `fmod`) run; only the
+transcendental functions trap (see [nofp](modules.md#nofp)), and CoreLib
+does not call them on its ordinary paths. So floating point is not a reason
+to replace a method.
 
-- The guest has one hart. A thread-pool tuner that samples worker counts,
-  or a processor count read from cgroups, does work that has no meaning here.
-- The method calls a libm function that the [nofp](modules.md#nofp) module
-  traps: `sqrt`, `ceil`, `modf` and the rest. For example, a hash helper
-  bounds a loop with `Math.Sqrt`, and `DateTime.AddMilliseconds` calls
-  `Math.Truncate`, which is `modf`.
-
-Rather than patch the runtime, bflat replaces those bodies while ILC
-compiles, by three mechanisms. The `guest_subst` module carries the data:
-
-| Mechanism | Used for | Lives in |
-|-----------|----------|----------|
-| **ILLink substitutions** | Methods that fold to a constant or can be removed outright | `modules/guest_subst/substitutions.xml` |
-| **C# snippets** | Whole-body replacements too complex to express as a constant: `HashHelpers.IsPrime`, the `TimeZoneInfo` cctor | `modules/guest_subst/snippets.cs` |
-| **Targeted IL rewrites** | A deletion that C# cannot express: the fill of the dead `Number.s_sqrtTable` | `ZkvmIL.cs` |
-
-The snippets are ordinary C#, compiled at guest-build time against the
-guest's own reference set with accessibility checks disabled, so a snippet
-may name private nested types. Letting Roslyn produce the replacement body
-is far less error-prone than hand-emitting IL — and the arithmetic is
-written to be exact rather than approximate: `IsPrime`'s `(int)Math.Sqrt`
-bound becomes `divisor <= candidate / divisor`, and a `TimeZoneInfo`
-initializer's `AddMilliseconds(2)` becomes the tick-exact `20_000`.
+The reason is the single hart. A thread-pool tuner that samples worker
+counts, or a processor count read from cgroups, does work that has no
+meaning here. Rather than patch the runtime, bflat applies an ILLink
+substitutions file while ILC compiles: `modules/guest_subst/substitutions.xml`
+stubs those methods to constants. User `--substitution` files are applied
+after it and cannot declare the same method again.
 
 **Drift is the failure mode to design against.** A substituted method that
 is renamed or re-signatured stops matching, and the original stays in the
-image, where it stops the guest on a nofp trap. The C#-snippet map defends
-against it directly — every target must resolve, and every snippet must
-have a target, or the build fails — and donors that reproduce a whole
-method body also verify the original's shape, so the `TimeZoneInfo` cctor
-donor applies only while the original still stores exactly the fields it
-initializes. ILLink entries in the XML carry no such guarantee; read the
-build output for IL2009 (see [verification](verification.md)).
+image. ILLink entries in the XML give no error for this; read the build
+output for IL2009 (see [verification](verification.md)).
 
 **A constant stub cannot be redirected with `--wrap`.** ILC inlines the
 stub into its callers, so no call is left for the linker to divert to a
-native replacement and the stub's constant is what runs. A body that needs
-real logic gets a C# snippet. Optimized builds fail when a `--wrap` target
-is a managed method the scanner reached but codegen never emitted, which is
-what an inlined-everywhere method looks like.
+native replacement and the stub's constant is what runs. Optimized builds
+fail when a `--wrap` target is a managed method the scanner reached but
+codegen never emitted, which is what an inlined-everywhere method looks
+like.
 
 ### zkVM RyuJIT codegen knobs
 
