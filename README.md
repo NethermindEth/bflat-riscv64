@@ -89,8 +89,9 @@ limitation that drives everything below.
 
 A GCC-based Linux riscv64 cross toolchain is used. Compiled and linked code
 targets `rv64ima` with the soft-float `lp64` ABI: modules are built
-`-mabi=lp64`, and floating point is removed by construction (the `nofp`
-module and the ILC substitutions) rather than left to the ABI to police.
+`-mabi=lp64`. Guest floating point is soft-float: `libgcc.a` gives the
+arithmetic and the `rv64im` musl gives the exact libm operations, and the
+`nofp` module traps the transcendental functions.
 C runtime objects from the distribution feed are built for `rv64gc` and
 still advertise a double-float ABI, so Bflat normalizes the ELF ABI markers
 at build time to let `ld.lld` mix them.
@@ -125,8 +126,8 @@ platform of a target lists the modules it requires.
 | gs_cookie | Pins the stack-cookie symbol to a constant (a zkVM has no entropy and no page protection) |
 | nofp | Traps soft-float builtins and the libm surface, so stray floating point fails loudly instead of returning garbage |
 | noos | Defines the OS surface the runtime's Unix PAL reaches for, ahead of musl (platforms without an OS) |
-| nothread | Single-hart replacements for musl's locking and thread primitives (platforms without the A extension) |
-| pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and an FP-free `vfprintf` |
+| nothread | Explicit single-hart replacements for musl's locking and thread primitives (platforms with the `no-atomics` flag) |
+| pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and a small `vfprintf` |
 | rhp | Link-time replacements for internal .NET runtime functions (write barriers, fail-fast, FP-carrying collection helpers) |
 | rhp_native | Assembly replacements for riscv64 runtime helpers (GC reference-assignment barriers) |
 | rng_stupid | Deterministic pseudo-random generator — a zkVM guest must be reproducible |

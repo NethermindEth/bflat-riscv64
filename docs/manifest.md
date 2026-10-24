@@ -170,7 +170,7 @@ matches if one of its items matches.
 | `verbose` | `true`, `false` | `true` with `-v`. Only `codegen.options` and `postlink` can use this key. |
 
 Use `flag` to make a generic module change for a platform. The module does
-not name the platform. Example: `nothread` is necessary for each platform
+not name the platform. Example: `nothread` is linked for each platform
 whose decoder does not have the A extension. Such a platform sets
 `"flags": ["no-atomics"]`. The object of the module sets
 `"when": { "flag": "no-atomics" }`.

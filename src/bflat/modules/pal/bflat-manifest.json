@@ -58,17 +58,17 @@
       },
       {
         "symbol": "vfprintf",
-        "note": "FP-free vfprintf: keeps musl's fmt_fp float formatter out of the link."
+        "note": "A small vfprintf for the conversions that the runtime's diagnostics use: keeps musl's full printf state machine and its float formatter fmt_fp out of the link."
       },
       {
         "symbol": "vfscanf",
-        "note": "musl's scanf/float-parsing members (vfscanf.o, floatscan.o, fmodl.o) are the only libc.a members with real F/D instructions in the stock hard-float Alpine build, and ziskemu rejects any FP in .text regardless of reachability. Redirecting every reference keeps those members out of the link entirely."
+        "note": "musl's scanf/float-parsing members (vfscanf.o, floatscan.o, fmodl.o). The only callers are the cgroup probes, which cannot open their files on a zkVM, so EOF is the correct answer. Redirecting every reference keeps those members out of the link entirely."
       },
       "__isoc99_vfscanf",
       "__floatscan",
       {
         "symbol": "exit",
-        "note": "musl exit()/_Exit()/abort() issue exit_group (syscall 94), which ZisK does not treat as program end; emit the real ZisK exit ecall (a7=93)."
+        "note": "musl exit()/_Exit()/abort() issue exit_group (syscall 94), which a zkVM does not treat as program end; end the guest through zkvm_platform_exit, which the entry object of the platform defines."
       },
       "_Exit",
       "abort",

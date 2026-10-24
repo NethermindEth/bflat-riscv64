@@ -10,7 +10,7 @@
       "group": "pre-libc",
       "order": 10,
       "when": {"flag": "no-atomics"},
-      "note": "Single-hart replacements for musl's locking and thread primitives, which are where its lr/sc/amo* live. The bundled musl is built rv64ima, which is right for ZisK (rv64imafd) and wrong for SP1 and OpenVM (rv64im): SP1's loader panics on the first instruction it cannot decode, and OpenVM turns it into a trap. This works by definition, not by --wrap: a wrap would leave musl's members, and their atomics, in the image. So the object must precede libc.a: the linker takes an archive member only for a symbol that is still undefined. Only platforms with the no-atomics flag link it; ZisK keeps musl's real primitives, because its decoder accepts the A extension."
+      "note": "Single-hart replacements for musl's locking, waiting and thread primitives: a lock is a no-op that succeeds, and a call that blocks ends the guest, because nothing can wake it. The guest has one hart and no threads, and this module says so explicitly. This works by definition, not by --wrap: a wrap would leave musl's members in the image. So the object must precede libc.a: the linker takes an archive member only for a symbol that is still undefined. Only platforms with the no-atomics flag link it; the others keep musl's primitives, which are also correct on one hart."
     }
   ]
 }

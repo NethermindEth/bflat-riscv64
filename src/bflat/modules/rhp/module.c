@@ -33,7 +33,8 @@ __wrap_RhpPInvokeReturn(void *pFrame)
 }
 
 /* Bulk reference copy. uGC has no write barrier, so this is just a move.
- * memmove resolves to the libziskos DMA-accelerated wrapper. */
+ * memmove resolves to the memmove of the link (a package can give an
+ * accelerated one, for example the DMA wrapper of libziskos). */
 /*@ requires len == 0 ||
         (\valid((char *)dest + (0 .. len - 1)) &&
          \valid_read((char *)src + (0 .. len - 1)));
@@ -460,7 +461,3 @@ void __wrap_S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast(void)
     exit(1);
 }
 
-/* LengthBuckets.CreateLengthBucketsArrayIfAppropriate keeps its managed body
- * (5 cold F/D instructions): its int[] return cannot be expressed as an ILC
- * stub value, and body="remove" would mark it no-return, poisoning callers
- * with trap-after-call codegen (learned the hard way). */

@@ -122,8 +122,9 @@ __wrap_open(const char *path, int flags, int mode)
 }
 
 
-/* The downward bump pointer lives in a FIXED-address cell (top 8 bytes of RAM,
- * 0xbffbfff8 on ZisK, 0xbffefff8 elsewhere) provided by the linker script (g_zk_bump_ptr), so JIT-emitted
+/* The downward bump pointer lives in a FIXED-address cell (the top 8 bytes of
+ * RAM, at the address that the linker script of the platform gives
+ * g_zk_bump_ptr), so JIT-emitted
  * inline allocation can reference it by a hardcoded constant address and share
  * it with this C allocator. zkVM RAM is zero at boot, so it starts as 0 and is
  * lazily initialised to _kernel_heap_top on first use, exactly as before. */
@@ -524,12 +525,12 @@ __wrap_signal(int signum, void *handler)
 }
 
 /*
- * FP-free vfprintf. musl's real vfprintf lives in a translation unit that also
- * defines fmt_fp (the %f/%e/%g/%a float formatter), whose hardware F/D
- * instructions are the last floating-point code in the rv64ima image. Every
- * printf/fprintf/snprintf/vsnprintf routes through vfprintf, so wrapping it
- * (and never referencing __real_vfprintf) keeps that whole object - fmt_fp
- * included - out of the link.
+ * A small vfprintf. musl's real vfprintf lives in a translation unit that also
+ * defines fmt_fp (the %f/%e/%g/%a float formatter) and the full printf state
+ * machine. The guest needs neither. Every printf/fprintf/snprintf/vsnprintf
+ * routes through vfprintf, so wrapping it (and never referencing
+ * __real_vfprintf) keeps that whole object out of the link, and what is left
+ * is a formatter short enough to read and to fuzz.
  *
  * This reimplementation covers the conversions the runtime's diagnostic paths
  * use (crash dumps, libunwind logging, allocator warnings): %c %s %d/%i %u
@@ -966,9 +967,9 @@ __wrap_memalign(unsigned long align, unsigned long size)
 }
 
 /* Allocation for a runtime that cannot handle NULL from its allocator: a
- * platform binds that runtime's allocator hook to this function (the ZisK
- * platform binds the ziskos Rust allocator, inline_bump_alloc_aligned, whose
- * NULL goes to a panic handler that spins until the emulator's step limit).
+ * platform binds that runtime's allocator hook to this function (for example,
+ * the ZisK platform binds the ziskos Rust allocator, whose NULL goes to a
+ * panic handler that spins until the emulator's step limit).
  * Note the argument order: size first, as those hooks have it. */
 /*@ // Never returns NULL: on exhaustion it halts the guest instead.
     requires align <= 8 || (align & (align - 1)) == 0;
@@ -995,9 +996,9 @@ zkvm_alloc_or_abort(uint32_t bytes, uint32_t align)
 /*
  * Per-call heap arena for the zkVM accelerator API (zkvm_accelerators.h).
  *
- * The ziskos Rust code behind some of these functions allocates scratch
- * memory - the modexp limb vectors, the MSM and pairing buffers - from the
- * bump heap above, which never frees. A block calling an accelerator tens of
+ * A bindings library can allocate scratch memory behind some of these
+ * functions - ziskos, for example, allocates the modexp limb vectors and the
+ * MSM and pairing buffers - from the bump heap above, which never frees. A block calling an accelerator tens of
  * thousands of times
  * exhausts the heap: a 200M-gas block of minimum-cost MODEXP calls runs out
  * after ~72k calls. Upstream ziskos solves the same problem in its staticlib
@@ -1064,14 +1065,11 @@ zk_accel_leave(uint8_t *mark)
         return status;                                                         \
     }
 
-/* Only the functions that allocate are wrapped: for the rest the arena is pure
- * overhead, up to 0.7% of a block made of cheap SHA-256 calls. Measured with
- * ziskemu execution counts (libziskos 1.3.1-alpha), counting entries into the
- * allocator bridge per call: modexp ~22, the two pairings 7, KZG 3, the MSMs
- * 2. sha256, ripemd160, blake2f, both ECDSA checks, the curve additions and
- * multiplications and the map-to-curve functions never allocate. keccak256
- * and secp256k1_verify could not be measured - no guest calls them - so they
- * stay wrapped. A libziskos upgrade has to repeat the measurement. */
+/* An arena is defined here for each function that some bindings library is
+ * known to allocate in; for the rest it is pure overhead, up to 0.7% of a
+ * block made of cheap SHA-256 calls. The bindings manifest of a package
+ * decides which of these are wrapped, and the package records how it measured
+ * that (bflat-libziskos: ziskemu counts of allocator calls per call). */
 ZK_ACCEL_ARENA(zkvm_bls12_g1_msm)
 ZK_ACCEL_ARENA(zkvm_bls12_g2_msm)
 ZK_ACCEL_ARENA(zkvm_bls12_pairing)
@@ -1082,15 +1080,13 @@ ZK_ACCEL_ARENA(zkvm_modexp)
 ZK_ACCEL_ARENA(zkvm_secp256k1_verify)
 
 /*
- * musl's scanf/float-parsing cluster (vfscanf.o -> floatscan.o -> fmodl.o)
- * is the only part of the stock hard-float (rv64gc) Alpine libc.a whose
- * members carry real F/D instructions - and ziskemu translates the guest's
- * whole .text, so one fld anywhere kills the image even if unreachable.
- * Wrapping the entry points keeps those archive members out of the link
+ * musl's scanf/float-parsing cluster (vfscanf.o -> floatscan.o -> fmodl.o).
+ * The only in-image callers are the CGroup probes (InitializeCGroup and
+ * friends), which on a zkVM can never open their /proc and /sys inputs, so
+ * EOF ("matched nothing") is the honest answer. Wrapping the entry points
+ * says that in a few lines and keeps those archive members out of the link
  * entirely: every reference is redirected here, so the linker never pulls
- * the members in. The only in-image callers are the CGroup probes
- * (InitializeCGroup and friends), which on zisk can never open their
- * /proc//sys inputs anyway - EOF ("matched nothing") is the honest answer.
+ * the members in.
  */
 /*@ // EOF, no conversions performed, nothing consumed or written.
     assigns \nothing;
@@ -1114,10 +1110,9 @@ __wrap___isoc99_vfscanf(void *stream, const char *fmt, void *ap)
     return __wrap_vfscanf(stream, fmt, ap);
 }
 
-/* strtod-family backend; only linked via wrappers that never run on zisk.
- * Returns 0 ("no number parsed"); soft-float long double, no F/D regs. */
-/*@ // "No number parsed". The zero is a soft-float long double built in
-    // integer registers - no F/D instructions are emitted for it.
+/* strtod-family backend; only linked via wrappers that never run on a zkVM.
+ * Returns 0 ("no number parsed"). */
+/*@ // "No number parsed".
     assigns \nothing;
     ensures \result == 0;
 */
