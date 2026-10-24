@@ -649,7 +649,7 @@ same error as a schema 1 manifest without a matching build.
 
 | Module | sources | objects and group | link.wrap | Other sections | Platform-specific parts to move out |
 |--------|---------|-------------------|-----------|----------------|-------------------------------------|
-| nofp | `module.c` | early | 50 libm and soft-float names | The stock musl target also links `module.o`, without wraps. `bflat.csproj` copies it to `lib/linux/riscv64/musl`. | — |
+| nofp | `module.c` | early | 38 transcendental libm names and `asprintf` | Only the platforms link it. Before, the stock musl target also linked `module.o`, without wraps; the object has only `__wrap_*` stubs now, so nothing used it. | — |
 | ubootstrap | `module.cpp` | whole-archive | — | `ilc.features` (invariant globalization), `ilc.direct_pinvoke` (`__Internal`) | — |
 | stdcppshim | `module.cpp` | whole-archive | — | — | — |
 | rhp | `module.c` | whole-archive | 19. One has `eh: failfast`. Six have `flag: no-console`. | — | — |

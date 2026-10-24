@@ -1213,15 +1213,21 @@ internal sealed class ManifestLink
             AppendOptions(ld, m);
     }
 
+    /// <summary>The wrapped symbols that the link command has so far.</summary>
+    public IReadOnlyCollection<string> WrittenWraps => _wrapsWritten;
+
+    /// <summary>Writes a linker wrap for each symbol.</summary>
+    public static void AppendWraps(System.Text.StringBuilder ld, IEnumerable<string> symbols)
+    {
+        foreach (string symbol in symbols)
+            ld.Append($"--wrap={symbol} ");
+    }
+
     private void AppendOptions(System.Text.StringBuilder ld, BflatManifest m)
     {
         if (!_optionsWritten.Add(m))
             return;
-        foreach (string symbol in Wraps(m))
-        {
-            if (_wrapsWritten.Add(symbol))
-                ld.Append($"--wrap={symbol} ");
-        }
+        AppendWraps(ld, Wraps(m).Where(_wrapsWritten.Add));
         foreach (string option in LdOptions(m, LibPath))
             ld.Append(option + " ");
     }
