@@ -30,10 +30,11 @@ An adaptation belongs to the earliest layer that can express it:
 
 1. **ILC stage — substitutions and snippets.** Managed method bodies are
    replaced through an ILLink substitutions file
-   (`modules/zisk_subst/zisk.substitutions.xml`) and whole-body C# snippets
-   (`zisk.snippets.cs`) compiled against the guest's own reference set. This
-   is how floating point leaves CoreLib paths that would otherwise emit F/D
-   instructions on an FPU-less target.
+   (`modules/guest_subst/substitutions.xml`) and whole-body C# snippets
+   (`snippets.cs`) compiled against the guest's own reference set. This
+   is how CoreLib paths leave out the work that has no meaning on one hart,
+   and the libm calls that the `nofp` module traps. Soft-float arithmetic
+   runs as it is.
 2. **Link stage — modules and `--wrap`.** Native objects are injected into
    the link and existing symbols are redirected to them (see
    [Modules](#modules)). Nothing in the runtime source changes; the linker
@@ -136,7 +137,7 @@ platform of a target lists the modules it requires.
 | tls | Simple TLS implementation that does not rely on the ELF format |
 | ubootstrap | Bootstrap re-implementation for riscv64 |
 | ugc-zero | Wrapper module for garbage collection |
-| zisk_subst | ILC-stage substitutions and C# snippets (no native object) |
+| guest_subst | ILC-stage substitutions and C# snippets (no native object) |
 
 Every function in the C modules carries a Frama-C (ACSL) contract, and the
 C, C++ and assembly modules are unit-tested on the real ISA under qemu. The

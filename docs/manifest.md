@@ -306,8 +306,8 @@ which archive members lld takes. Refer to the verification in
 
 ```json
 "ilc": {
-  "substitutions": ["zisk.substitutions.xml"],
-  "snippets": ["zisk.snippets.cs"],
+  "substitutions": ["substitutions.xml"],
+  "snippets": ["snippets.cs"],
   "sources": ["Helpers.cs"],
   "references": [{ "file": "Nethermind.ZiskBindings.dll", "assembly": "Nethermind.ZiskBindings" }],
   "defines": ["ZKVM_ZISK"],
@@ -497,7 +497,7 @@ The SP1 platform, shortened:
     "base": { "os": "linux", "arch": "riscv64", "libc": "musl" },
     "requires": ["nofp", "ubootstrap", "stdcppshim", "rhp", "gs_cookie",
                  "rhp_native", "pal", "eh", "tls", "rng_stupid",
-                 "rust_sys", "ugc-zero", "nothread", "noos", "zisk_subst"],
+                 "rust_sys", "ugc-zero", "nothread", "noos", "guest_subst"],
     "flags": ["no-atomics", "noos", "no-console", "no-fpu"],
     "linker_script": "sp1.ld",
     "entry": "sp1_entry.o"
@@ -666,7 +666,7 @@ same error as a schema 1 manifest without a matching build.
 | ugc-zero | — | normal: 6 `.obj` files from `release/` | 2 | `external`, `codegen.options` (`JitZkNoGcMustInit=1`) | — |
 | nothread | `module.c` | pre-libc, `when: { flag: no-atomics }` | — | — | — |
 | noos | `module.c` | pre-libc, `when: { flag: noos }` | — | — | — |
-| zisk_subst | — | — | — | `ilc.substitutions`, `ilc.snippets`, `ilc.features` (invariant timezones) | The ZisK-only snippets move to bflat-libziskos. The parts that all FPU-less targets need stay in a module. |
+| guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.snippets`, `ilc.features` (invariant timezones) | Nothing in it is for one VM. The substitutions that only removed soft-float arithmetic are gone; see [Substitutions](#substitutions). |
 
 The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
 bflat-sp1 and bflat-openvm. Their unit tests went with them
@@ -703,6 +703,52 @@ come after the first object of their package. The entry objects that the
 packages build have the same code and relocations as before; they no longer
 have the local symbol `BFLAT_DOTNET`, which `--discard-all` removed from the
 image anyway.
+
+## Substitutions
+
+The `guest_subst` module (before: `zisk_subst`) has only the substitutions
+that a soft-float guest needs. A substitution stays for one of two reasons:
+
+- The guest has one hart: the thread-pool tuner, the gate thread,
+  `ProcessorIdCache`, `Environment.ProcessorCount`, the `ArrayPool`
+  pressure test.
+- The method calls a libm function that `nofp` traps: double and float
+  formatting (`ceil`), `Math.Truncate` and the `DateTime.Add*` and timezone
+  code that calls it (`modf`), `HashHelpers.IsPrime` (`sqrt`).
+
+These substitutions only removed soft-float arithmetic, and are gone:
+
+| Removed | The code that now runs |
+|---------|------------------------|
+| `Array.CopyImplPrimitiveWiden`, `InvokeUtils.ConvertOrWidenPrimitivesEnumsAndPointersIfPossible` | widening to `float` and `double` in `Array.Copy` and reflection |
+| `IConvertible.ToInt16`/`ToInt32` of `Double` and `Single`, `Convert.ToInt32(double)` | the conversions |
+| `TimeZoneInfo.UtcOffsetOutOfRange`, `AdjustmentRule.ValidateAdjustmentRule` | the range checks |
+| the three readers of `float` and `double` constants in the reflection metadata | `ParameterInfo.DefaultValue` and the constant collections |
+| the snippets for the compat `Random`, `Hashtable`, `ValueType.GetHashCode`, `Double`/`Single` `Equals(object)` and `CompareTo(object)`, `FrozenHashTable.CalcNumBuckets`, `LengthBuckets` | the upstream bodies |
+| the IL rewrites of `Number.FormatBigInteger` and `ConcurrentUnifierW.Container.Resize` | the upstream bodies |
+
+The behavior that changes:
+
+- These methods run. Before, the removed ones threw.
+- The upstream bodies run, with their exact semantics: `Random(seed).Next(n)`
+  scales the sample in `double` as upstream does, `Hashtable` uses the load
+  factor that it gets, and a struct with a `-0.0` field has the same hash
+  code as one with `+0.0`.
+- The image gets the soft-float calls of these methods. Use bflat-ts to
+  measure the size and the cycles.
+
+A guest that must have no floating point at all can still use
+`--error-on-float` and `--error-on-float-binary`. With the smaller set of
+substitutions, these checks find more methods. Such a guest adds its own
+`--substitution` file.
+
+The substitution machinery also changed:
+
+- The snippet module is `__BflatSnippets` (before: `__ZiskSnippets`).
+- A snippet that has no target in `ZkvmSubstitutions.BuildBodySubstitutions`
+  is an error.
+- A `TimeZoneInfo` cctor with an unknown set of fields is an error. Before,
+  it was a warning that referred to an IL rewrite that did not exist.
 
 ## Decisions
 

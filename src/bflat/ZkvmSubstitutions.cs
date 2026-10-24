@@ -49,16 +49,15 @@ using ILLink.Shared;
 // replaced, by what, and on which runtime versions.
 //
 // Two mechanisms are driven from here:
-//   * whole-body C# snippets (modules/zisk_subst/zisk.snippets.cs), compiled
+//   * whole-body C# snippets (modules/guest_subst/snippets.cs), compiled
 //     at guest-build time against the guest's own reference set and mapped
 //     onto their targets by BuildBodySubstitutions;
 //   * the known-dead floating-point list, which tells the --error-on-float
 //     gate that a conversion it found sits in a block the target never runs.
 //
 // A target that no longer resolves is a hard error, not a skipped entry: the
-// FP-carrying original would otherwise stay in an FPU-less image and surface
-// as a rejected opcode in the emulator. The IL machinery this file uses lives
-// in ZkvmIL.cs.
+// original would otherwise stay in the image and stop the guest on a nofp trap
+// at run time. The IL machinery this file uses lives in ZkvmIL.cs.
 
 class ZkvmSubstitutions
 {
@@ -125,7 +124,7 @@ class ZkvmSubstitutions
                 options = (CSharpCompilationOptions)withBinderFlags.Invoke(options, new[] { ignoreAccessibility });
             }
 
-            var compilation = CSharpCompilation.Create("__ZiskSnippets", trees, metadataReferences, options);
+            var compilation = CSharpCompilation.Create("__BflatSnippets", trees, metadataReferences, options);
             string path = Path.GetTempFileName();
             using (var fs = File.Create(path))
             {
@@ -147,16 +146,15 @@ class ZkvmSubstitutions
         }
     }
 
-    // Maps CoreLib methods that carry floating point to the C# snippet methods
-    // (in __ZiskSnippets.Snippets) that replace their bodies, by name/signature.
-    // Targets absent from the closure (e.g. LengthBuckets when Immutable is not
-    // referenced) resolve to null and are simply skipped. Extend as snippets grow.
+    // Maps CoreLib methods to the C# snippet methods (in __BflatSnippets.Snippets)
+    // that replace their bodies, by name/signature. Targets absent from the
+    // closure (e.g. the Immutable copy of HashHelpers when Immutable is not
+    // referenced) are skipped. Every snippet must have an entry here.
     internal static Dictionary<MethodDesc, MethodDesc> BuildBodySubstitutions(CompilerTypeSystemContext ctx, EcmaModule snippetsModule)
     {
         var map = new Dictionary<MethodDesc, MethodDesc>();
-        var snippetType = (MetadataType)snippetsModule.GetType("__ZiskSnippets", "Snippets");
+        var snippetType = (MetadataType)snippetsModule.GetType("__BflatSnippets", "Snippets");
         var int32 = ctx.GetWellKnownType(WellKnownType.Int32);
-        var single = ctx.GetWellKnownType(WellKnownType.Single);
 
         // Every mismatch found is collected and reported together: a CoreLib
         // bump that moves three methods should show all three, not the first.
@@ -166,17 +164,17 @@ class ZkvmSubstitutions
         {
             foreach (MethodDesc m in snippetType.GetMethods())
                 if (m.Name.StringEquals(name)) return m;
-            drift.Add($"snippet '{name}' is missing from zisk.snippets.cs");
+            drift.Add($"snippet '{name}' is missing from the snippet sources");
             return null;
         }
 
         // A substitution whose target no longer resolves is a SILENT hole: the
-        // FP-carrying original body stays in the image and only surfaces much
-        // later (--error-on-float, or the emulator rejecting an F/D opcode).
-        // That already happened once - Number.FormatFloat's signature changed
-        // in .NET 11, the entry stopped matching, and floating point came back
-        // (see the note in zisk.substitutions.xml). So a missing target is
-        // fatal, and the few genuinely conditional ones must say so.
+        // original body stays in the image and only surfaces much later, when
+        // the guest reaches the libm call and stops on the nofp trap. A similar
+        // hole already happened once - Number.FormatFloat's signature changed
+        // in .NET 11 and its XML entry stopped matching (see the note in
+        // substitutions.xml). So a missing target is fatal, and the few
+        // genuinely conditional ones must say so.
         void Add(MethodDesc target, MethodDesc snippet, string what)
         {
             if (target == null)
@@ -214,82 +212,10 @@ class ZkvmSubstitutions
             catch { return null; }
         }
 
-        // System.Random legacy compat PRNG (private nested impl types).
-        var random = (MetadataType)ctx.SystemModule.GetType("System", "Random");
-        var seedImpl = random.GetNestedType("CompatSeedImpl");
-        var derivedImpl = random.GetNestedType("CompatDerivedImpl");
-        Add(Method(seedImpl, "Next", int32), Snippet("RandomSeedNext1"),
-            "Random.CompatSeedImpl.Next(int)");
-        Add(Method(seedImpl, "Next", int32, int32), Snippet("RandomSeedNext2"),
-            "Random.CompatSeedImpl.Next(int,int)");
-        Add(Method(derivedImpl, "Next", int32), Snippet("RandomDerivedNext1"),
-            "Random.CompatDerivedImpl.Next(int)");
-        Add(Method(derivedImpl, "Next", int32, int32), Snippet("RandomDerivedNext2"),
-            "Random.CompatDerivedImpl.Next(int,int)");
-
-        // System.Collections.Hashtable ctor/rehash family (float _loadFactor).
-        var htType = Type(ctx.SystemModule, "System.Collections", "Hashtable");
-        var ieqCmp = Type(ctx.SystemModule, "System.Collections", "IEqualityComparer");
-        if (htType == null)
-        {
-            drift.Add("System.Collections.Hashtable: type not found in CoreLib");
-        }
-        else
-        {
-            Add(Method(htType, ".ctor"), Snippet("HashtableCtor0"),
-                "Hashtable..ctor()");
-            Add(Method(htType, ".ctor", int32), Snippet("HashtableCtorCap"),
-                "Hashtable..ctor(int)");
-            Add(Method(htType, ".ctor", int32, single), Snippet("HashtableCtorCapLf"),
-                "Hashtable..ctor(int,float)");
-            Add(Method(htType, ".ctor", int32, single, ieqCmp), Snippet("HashtableCtorCapLfCmp"),
-                "Hashtable..ctor(int,float,IEqualityComparer)");
-            Add(Method(htType, ".ctor", ieqCmp), Snippet("HashtableCtorCmp"),
-                "Hashtable..ctor(IEqualityComparer)");
-            Add(Method(htType, ".ctor", int32, ieqCmp), Snippet("HashtableCtorCapCmp"),
-                "Hashtable..ctor(int,IEqualityComparer)");
-            Add(Method(htType, "rehash", int32), Snippet("HashtableRehash"),
-                "Hashtable.rehash(int)");
-        }
-
-        // System.ValueType.GetHashCode helper (Single/Double struct fields).
-        // RegularGetValueTypeHashCode has ref/byref params not conveniently
-        // nameable as TypeDesc[] here; match by name + parameter count (3) instead.
-        var vtType = Type(ctx.SystemModule, "System", "ValueType");
-        MethodDesc vtHash = null;
-        if (vtType != null)
-        {
-            foreach (MethodDesc m in vtType.GetMethods())
-                if (m.Name.StringEquals("RegularGetValueTypeHashCode") && m.Signature.Length == 3)
-                    vtHash = m;
-        }
-        Add(vtHash, Snippet("ValueTypeRegularHashCode"),
-            "ValueType.RegularGetValueTypeHashCode(3 params)");
-
-        // System.Double / System.Single: the object overloads of Equals and
-        // CompareTo. They cannot be body="remove"d (see the note in
-        // zisk.substitutions.xml - they are what ValueType.Equals and the
-        // generic comparers reach for), and the originals compare in FP
-        // registers, so they are the one FP source that survives into an
-        // ordinary guest. The snippets redo the same IEEE comparison on the raw
-        // bit patterns. The by-value overloads are deliberately NOT listed: see
-        // the comment above the snippets.
-        var objectType = ctx.GetWellKnownType(WellKnownType.Object);
-        var doubleType = Type(ctx.SystemModule, "System", "Double");
-        var singleType = Type(ctx.SystemModule, "System", "Single");
-        Add(Method(doubleType, "Equals", objectType), Snippet("DoubleEqualsObject"),
-            "Double.Equals(object)");
-        Add(Method(doubleType, "CompareTo", objectType), Snippet("DoubleCompareToObject"),
-            "Double.CompareTo(object)");
-        Add(Method(singleType, "Equals", objectType), Snippet("SingleEqualsObject"),
-            "Single.Equals(object)");
-        Add(Method(singleType, "CompareTo", objectType), Snippet("SingleCompareToObject"),
-            "Single.CompareTo(object)");
-
         // System.Collections.HashHelpers.IsPrime (one copy per assembly that
-        // compiles the shared source in) and FrozenHashTable.CalcNumBuckets.
-        // Whole bodies, not constant stubs plus --wrap to C: ILC inlines a
-        // constant stub into its callers, which leaves no call to divert.
+        // compiles the shared source in). A whole body, not a constant stub plus
+        // --wrap to C: ILC inlines a constant stub into its callers, which
+        // leaves no call to divert.
         // CoreLib always has its copy; the other types resolve only when the
         // guest references their assembly, but once they do the method must.
         var hashHelpersIsPrime = Snippet("HashHelpersIsPrime");
@@ -302,37 +228,14 @@ class ZkvmSubstitutions
                 Add(Method(hashHelpers, "IsPrime", int32), hashHelpersIsPrime,
                     $"{assembly} HashHelpers.IsPrime(int)");
         }
-        var frozenHashTable = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "FrozenHashTable");
-        if (frozenHashTable != null)
-        {
-            var intSpan = ((MetadataType)ctx.SystemModule.GetType("System", "ReadOnlySpan`1")).MakeInstantiatedType(int32);
-            Add(Method(frozenHashTable, "CalcNumBuckets", intSpan, ctx.GetWellKnownType(WellKnownType.Boolean)),
-                Snippet("FrozenHashTableCalcNumBuckets"),
-                "FrozenHashTable.CalcNumBuckets(ReadOnlySpan<int>,bool)");
-        }
-
-        // System.Collections.Frozen.LengthBuckets. The whole assembly is absent
-        // unless the guest references Immutable, so the TYPE may legitimately
-        // not resolve - but once it does, the method must.
-        var lbType = Type(Module("System.Collections.Immutable"), "System.Collections.Frozen", "LengthBuckets");
-        if (lbType != null)
-        {
-            MethodDesc lbMethod = null;
-            foreach (MethodDesc m in lbType.GetMethods())
-                if (m.Name.StringEquals("CreateLengthBucketsArrayIfAppropriate"))
-                    lbMethod = m;
-            Add(lbMethod, Snippet("LengthBucketsNone"),
-                "LengthBuckets.CreateLengthBucketsArrayIfAppropriate");
-        }
 
         // System.TimeZoneInfo..cctor: the donor rebuilds the whole cctor with the
         // s_daylightRuleMarker DateTime constructed tick-exactly in integers (the
-        // stock body's DateTime.MinValue.AddMilliseconds(2) is its only FP).
+        // stock body's DateTime.MinValue.AddMilliseconds(2) reaches libm modf).
         // Drift guard: substitute only while the original cctor still stores
         // exactly the five fields the donor initializes - a CoreLib that adds,
-        // renames or removes an initializer is refused loudly here, leaving the
-        // original (FP-carrying) body for --error-on-float / the emulator to
-        // reject, instead of silently dropping the new initializer.
+        // renames or removes an initializer is refused loudly here instead of
+        // silently dropping the new initializer.
         var tzType = Type(ctx.SystemModule, "System", "TimeZoneInfo");
         MethodDesc tzCctor = tzType?.GetStaticConstructor();
         if (tzCctor == null)
@@ -372,39 +275,47 @@ class ZkvmSubstitutions
             else
             {
                 // An unknown field set means a runtime this donor pair has not
-                // been reviewed against. Not fatal: CustomILProvider's targeted
-                // rewrite replaces just the AddMilliseconds(2) subexpression and
-                // does not care about the surrounding initializers, so the FP
-                // still goes - and --error-on-float on the guest build is what
-                // proves it, rather than a guess here. But it does mean a donor
-                // needs writing, so say so loudly.
-                Console.Error.WriteLine(
-                    "warning: TimeZoneInfo..cctor stores an unknown field set [" +
+                // been reviewed against. The original cctor would stop every
+                // guest that touches TimeZoneInfo on the modf trap, so this is
+                // drift like any other.
+                drift.Add(
+                    "TimeZoneInfo..cctor stores an unknown field set [" +
                     string.Join(", ", stored) + "]; expected either [" +
                     string.Join(", ", common) + "] or [" +
-                    string.Join(", ", withDateBounds) + "]. No donor applied - " +
-                    "falling back to the targeted IL rewrite. Add a donor variant " +
-                    "for this runtime in zisk.snippets.cs.");
+                    string.Join(", ", withDateBounds) + "]. Add a donor variant " +
+                    "for this runtime in snippets.cs");
             }
         }
 
+        // A snippet that nothing maps to is dead weight at best and, at worst,
+        // a substitution its author believes is applied.
+        var mapped = new HashSet<MethodDesc>(map.Values);
+        foreach (MethodDesc m in snippetType.GetMethods())
+            if (m is EcmaMethod { IsPublic: true } && !mapped.Contains(m) && !IsDonorVariant(m.Name.ToString()))
+                drift.Add($"snippet '{m.Name}' has no target in ZkvmSubstitutions.BuildBodySubstitutions");
+
         if (drift.Count != 0)
         {
-            // Hard failure by design. Each of these substitutions exists to keep
-            // floating point out of an FPU-less image; a skipped one leaves the
-            // original body in place, and the failure then shows up as an F/D
-            // opcode the emulator rejects - far from here, in a guest that looked
+            // Hard failure by design. Each of these substitutions keeps a libm
+            // call that nofp traps out of the image; a skipped one leaves the
+            // original body in place, and the failure then shows up as a guest
+            // that stops with status 255 - far from here, in a guest that looked
             // like it built fine. Refusing to produce that binary is the point.
             throw new InvalidOperationException(
                 "zkVM body substitutions no longer match this CoreLib:" +
                 Environment.NewLine + "  " +
                 string.Join(Environment.NewLine + "  ", drift) + Environment.NewLine +
-                "Each entry means the FP-carrying original body would have been " +
-                "kept. Update zisk.snippets.cs / ZkvmSubstitutions.BuildBodySubstitutions for " +
-                "this runtime version.");
+                "Each entry means the original body would have been kept. Update " +
+                "snippets.cs / ZkvmSubstitutions.BuildBodySubstitutions for this " +
+                "runtime version.");
         }
 
         return map;
+
+        // The TimeZoneInfo..cctor donors: exactly one of them applies to a
+        // given CoreLib, so the other one is unmapped by design.
+        static bool IsDonorVariant(string name) =>
+            name == "TimeZoneInfoCctor" || name == "TimeZoneInfoCctorWithDateBounds";
     }
     // Methods whose IL genuinely contains an FP conversion, but only inside a
     // block the JIT proves unreachable on this target (a disabled-feature guard

@@ -113,36 +113,44 @@ matching the bflat version and variant.
 
 ## Stage 1.5 — ILC-stage substitutions
 
-The target has no FPU, and the prover rejects an F/D opcode wherever it
-appears — including in code that never executes, because the transpiler
-translates the whole `.text`. Several CoreLib methods carry floating point
-for reasons that are meaningless here: a thread-pool tuner sampling worker
-counts, `Hashtable`'s `float` load factor, a hash helper bounding a loop
-with `Math.Sqrt`. Rather than patch the runtime, those bodies are replaced
-while ILC is compiling, by three mechanisms:
+The target has no FPU. The guests are soft-float: without F and D the JIT
+lowers double arithmetic to calls to the compiler-rt builtins, and bflat
+links `libgcc.a`, which defines them. So floating point runs, and it is not
+a reason to replace a method. Two things are reasons:
+
+- The guest has one hart. A thread-pool tuner that samples worker counts,
+  or a processor count read from cgroups, does work that has no meaning here.
+- The method calls a libm function that the [nofp](modules.md#nofp) module
+  traps: `sqrt`, `ceil`, `modf` and the rest. For example, a hash helper
+  bounds a loop with `Math.Sqrt`, and `DateTime.AddMilliseconds` calls
+  `Math.Truncate`, which is `modf`.
+
+Rather than patch the runtime, bflat replaces those bodies while ILC
+compiles, by three mechanisms. The `guest_subst` module carries the data:
 
 | Mechanism | Used for | Lives in |
 |-----------|----------|----------|
-| **ILLink substitutions** | Methods that fold to a constant or can be removed outright | `modules/zisk_subst/zisk.substitutions.xml` |
-| **C# snippets** | Whole-body replacements too complex to express as a constant — the compat PRNG, the `Hashtable` ctor family, `ValueType` hashing | `modules/zisk_subst/zisk.snippets.cs` |
-| **Targeted IL rewrites** | The handful of cases where only a subexpression is FP-carrying | `ZkvmIL.cs` |
+| **ILLink substitutions** | Methods that fold to a constant or can be removed outright | `modules/guest_subst/substitutions.xml` |
+| **C# snippets** | Whole-body replacements too complex to express as a constant: `HashHelpers.IsPrime`, the `TimeZoneInfo` cctor | `modules/guest_subst/snippets.cs` |
+| **Targeted IL rewrites** | A deletion that C# cannot express: the fill of the dead `Number.s_sqrtTable` | `ZkvmIL.cs` |
 
 The snippets are ordinary C#, compiled at guest-build time against the
 guest's own reference set with accessibility checks disabled, so a snippet
 may name private nested types. Letting Roslyn produce the replacement body
 is far less error-prone than hand-emitting IL — and the arithmetic is
-written to be exact rather than approximate: `Hashtable`'s `0.72f` load
-factor becomes integer `× 72 / 100`, and a `TimeZoneInfo` initializer's
-`AddMilliseconds(2)` becomes the tick-exact `20_000`.
+written to be exact rather than approximate: `IsPrime`'s `(int)Math.Sqrt`
+bound becomes `divisor <= candidate / divisor`, and a `TimeZoneInfo`
+initializer's `AddMilliseconds(2)` becomes the tick-exact `20_000`.
 
 **Drift is the failure mode to design against.** A substituted method that
-is renamed or re-signatured stops matching, and the FP-carrying original
-stays in the image. The C#-snippet map defends against it directly — every
-target must resolve or the build fails — and donors that reproduce a whole
+is renamed or re-signatured stops matching, and the original stays in the
+image, where it stops the guest on a nofp trap. The C#-snippet map defends
+against it directly — every target must resolve, and every snippet must
+have a target, or the build fails — and donors that reproduce a whole
 method body also verify the original's shape, so the `TimeZoneInfo` cctor
 donor applies only while the original still stores exactly the fields it
-initializes. ILLink entries in the XML carry no such guarantee; the
-[ISA gates](verification.md) are the check that holds.
+initializes. ILLink entries in the XML carry no such guarantee; read the
+build output for IL2009 (see [verification](verification.md)).
 
 **A constant stub cannot be redirected with `--wrap`.** ILC inlines the
 stub into its callers, so no call is left for the linker to divert to a

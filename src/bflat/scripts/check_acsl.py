@@ -34,7 +34,7 @@ SKIPPED = {
     "stdcppshim": "C++ (ACSL++ annotations are documentation-only)",
     "ubootstrap": "C++ (ACSL++ annotations are documentation-only)",
     "rhp_native": "assembly",
-    "zisk_subst": "no native sources (ILC substitutions module)",
+    "guest_subst": "no native sources (ILC substitutions module)",
     "ugc-zero": "prebuilt objects only",
 }
 
