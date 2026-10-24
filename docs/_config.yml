@@ -58,6 +58,8 @@ nav:
         url: /modules/
       - title: Manifest format
         url: /manifest/
+      - title: Package signatures
+        url: /signing/
       - title: Build & use
         url: /build/
       - title: Verification

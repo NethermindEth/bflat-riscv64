@@ -6,7 +6,8 @@
        It is a separate program because it must run before bflat can: the
        bflat build lays the built modules into its compiler layout. It
        shares the manifest parser (BflatManifest.cs) with bflat, so the
-       format has one reader. -->
+       format has one reader, and the signature check (PackageSignature.cs),
+       which the bflat build runs on the dotnet-riscv downloads. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <!-- Any SDK that builds bflat builds this; LatestMajor lets an
@@ -23,6 +24,7 @@
 
   <ItemGroup>
     <Compile Include="..\bflat\BflatManifest.cs" Link="BflatManifest.cs" />
+    <Compile Include="..\bflat\PackageSignature.cs" Link="PackageSignature.cs" />
   </ItemGroup>
 
 </Project>

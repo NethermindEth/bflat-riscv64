@@ -91,6 +91,12 @@ mismatch fails the image build instead of the first use.
 The module test, fuzzing and proof suites are described on the
 [Verification](verification.md) page.
 
+The build checks the signature of the dotnet-riscv release that it
+downloads, with the public keys in `BFLAT_SIGNING_PUBLIC_KEY`, and writes
+these keys into the bflat binary. Without the variable, nothing is checked
+and the build says so. Set `-p:AllowUnsignedRuntime=true` to use a release
+that has no signature. See [Package signatures](signing.md).
+
 ## Build a C# program for Zisk
 
 bflat knows no zkVM by itself. Each zkVM target is a **platform** that its
@@ -127,6 +133,7 @@ Optional but useful flags:
 | `--error-on-float-binary` | Fail if the *linked binary* contains any F/D instruction. Catches what the IL scan cannot see — comparisons, and native objects. |
 | `--error-on-compressed` | Fail if the linked binary contains a compressed (C) instruction. |
 | `--error-on-atomic` | Fail if the linked binary contains an atomic (A) instruction: `lr`/`sc`, `amo*`. |
+| `--allow-unsigned` | Accept an `--extlib` package that has no signature, with a warning. A bad signature is still an error. |
 | `--substitution <file>` | Apply an extra ILLink substitutions file on top of the built-in zkVM set. |
 | `-x` | Print the ILC and linker commands as they run. |
 
@@ -183,6 +190,12 @@ Its static libraries are added to the link line, its `ilc.references` are
 referenced and AOT-compiled along with the user code. Paths are relative to
 the manifest. bflat also reads the format of before (no `schema` key; one
 `builds[]` entry per arch/os/libc), which cannot define a platform.
+
+A `.nupkg` must be signed with a key that bflat trusts, and a
+`.bflat.manifest` from a URL is treated as unsigned. A local
+`.bflat.manifest` is not checked. `--allow-unsigned` accepts an unsigned
+package with a warning; a bad signature is always an error. See
+[Package signatures](signing.md).
 
 ## Targeting the simulator
 

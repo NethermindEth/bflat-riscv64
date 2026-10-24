@@ -30,6 +30,14 @@
       <_Parameter1>BflatVariant</_Parameter1>
       <_Parameter2>$(Variant)</_Parameter2>
     </AssemblyAttribute>
+    <!-- The public keys that the signatures of extlib packages must come
+         from (docs/signing.md). CI takes them from the GitHub Actions
+         variable BFLAT_SIGNING_PUBLIC_KEY; a build without it checks no
+         signature and says so. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
+      <_Parameter1>BflatSigningPublicKey</_Parameter1>
+      <_Parameter2>$(BFLAT_SIGNING_PUBLIC_KEY)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>
@@ -68,17 +76,13 @@
     <_CompilerNupkgVersionMarker>$(_CompilerNupkgLocalPath).$(BlobsVersion).version</_CompilerNupkgVersionMarker>
   </PropertyGroup>
 
-  <Target Name="CreateCompilerLayout"
-          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
-    <!-- The native modules: bflat-modules reads each module's
-         bflat-manifest.json and copies it, with the files it names, to
-         lib/modules/<name>/ (see docs/manifest.md). Built here and run with
-         the SDK's own host, because bflat itself is not usable before its
-         layout exists. The global properties of a BuildLayouts pass
-         (OutputPath and friends) are for bflat, not for the tool. Restore
-         runs as its own pass (a new session id forces a fresh evaluation),
-         because the tool is not a reference of bflat and so the bflat
-         restore does not cover it. -->
+  <!-- bflat-modules, built and run with the SDK's own host, because bflat
+       itself is not usable before its layout exists. The global properties
+       of a BuildLayouts pass (OutputPath and friends) are for bflat, not for
+       the tool. Restore runs as its own pass (a new session id forces a
+       fresh evaluation), because the tool is not a reference of bflat and so
+       the bflat restore does not cover it. -->
+  <Target Name="BuildBflatModulesTool" Returns="@(_BflatModulesTool)">
     <PropertyGroup>
       <_BflatModulesProject>$(MSBuildThisFileDirectory)..\bflat-modules\bflat-modules.csproj</_BflatModulesProject>
       <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Variant;DotnetVersion;Flavor;Platform</_BflatModulesRemoved>
@@ -97,6 +101,13 @@
       <_DotnetHost>$(DOTNET_HOST_PATH)</_DotnetHost>
       <_DotnetHost Condition="'$(_DotnetHost)' == ''">dotnet</_DotnetHost>
     </PropertyGroup>
+  </Target>
+
+  <Target Name="CreateCompilerLayout"
+          DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs;BuildBflatModulesTool">
+    <!-- The native modules: bflat-modules reads each module's
+         bflat-manifest.json and copies it, with the files it names, to
+         lib/modules/<name>/ (see docs/manifest.md). -->
     <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; pack &quot;$(MSBuildThisFileDirectory)modules&quot; &quot;$(OutputPath)lib/modules&quot;"
           EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)bflat-manifest.schema.json"
@@ -214,6 +225,85 @@
                Condition="Exists('$(_NuGetCacheEntry)')" />
 
     <Touch Files="$(_CompilerNupkgVersionMarker)" AlwaysCreate="true" />
+  </Target>
+
+  <!--
+    The signature of the dotnet-riscv release (docs/signing.md). The release
+    has bflat-signature.sha256, the SHA-256 of each asset, and its signature
+    bflat-signature.sha256.sig. Each download is checked against the list
+    before NuGet restores it or the build unzips it, with the keys that this
+    bflat also trusts for packages (BFLAT_SIGNING_PUBLIC_KEY: base64 DER
+    public keys, separated by commas).
+
+    Without the keys nothing is checked, and the build says so. A release
+    without a signature is an error unless AllowUnsignedRuntime=true. The
+    check runs again when a download changes (the .verified stamp).
+  -->
+  <PropertyGroup>
+    <_ReleaseSignatureList>$(DownloadCachePath)bflat-signature-$(BlobsVersion).sha256</_ReleaseSignatureList>
+    <_ReleaseSignature>$(_ReleaseSignatureList).sig</_ReleaseSignature>
+    <_ReleaseSignatureStamp>$(DownloadCachePath)bflat-signature-$(BlobsVersion).verified</_ReleaseSignatureStamp>
+  </PropertyGroup>
+
+  <!-- Each download, with the name of its release asset. -->
+  <ItemGroup>
+    <_ReleaseAsset Include="@(RuntimeArtifact);@(Blob)">
+      <Asset>%(Identity).zip</Asset>
+    </_ReleaseAsset>
+    <_ReleaseDownload Include="@(_ReleaseAsset->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')" />
+    <_ReleaseDownload Include="$(_CompilerNupkgLocalPath)">
+      <Asset>$(_CompilerNupkgName)</Asset>
+    </_ReleaseDownload>
+  </ItemGroup>
+
+  <Target Name="DownloadReleaseSignature"
+          Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and (!Exists('$(_ReleaseSignatureList)') or !Exists('$(_ReleaseSignature)'))">
+    <DownloadFile SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/bflat-signature.sha256"
+                  Retries="3"
+                  DestinationFolder="$(DownloadCachePath)"
+                  DestinationFileName="bflat-signature-$(BlobsVersion).sha256"
+                  ContinueOnError="true" />
+    <DownloadFile SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/bflat-signature.sha256.sig"
+                  Retries="3"
+                  DestinationFolder="$(DownloadCachePath)"
+                  DestinationFileName="bflat-signature-$(BlobsVersion).sha256.sig"
+                  ContinueOnError="true" />
+  </Target>
+
+  <Target Name="VerifyReleaseDownloads"
+          BeforeTargets="Restore;ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs"
+          DependsOnTargets="DownloadCompilerNupkg;DownloadRuntimeArtifacts;DownloadBlobs;DownloadReleaseSignature;_CheckReleaseIsSigned;_VerifyReleaseDownloads" />
+
+  <Target Name="_CheckReleaseIsSigned">
+    <PropertyGroup>
+      <_ReleaseIsSigned Condition="Exists('$(_ReleaseSignatureList)') and Exists('$(_ReleaseSignature)')">true</_ReleaseIsSigned>
+    </PropertyGroup>
+    <Message Importance="High"
+             Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' == ''"
+             Text="BFLAT_SIGNING_PUBLIC_KEY is not set: the dotnet-riscv downloads are not checked, and this bflat checks no package signature." />
+    <Error Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' != 'true' and '$(AllowUnsignedRuntime)' != 'true'"
+           Text="The dotnet-riscv release $(RuntimeReleaseTag) has no bflat-signature.sha256 and bflat-signature.sha256.sig. Use a signed release, or set AllowUnsignedRuntime=true." />
+    <Message Importance="High"
+             Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' != 'true'"
+             Text="AllowUnsignedRuntime=true: the dotnet-riscv release $(RuntimeReleaseTag) is not signed and is used without a check." />
+  </Target>
+
+  <!-- The tool is built inside the target, not as a dependency, so that an
+       up-to-date check builds nothing. -->
+  <Target Name="_VerifyReleaseDownloads"
+          Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' == 'true'"
+          Inputs="@(_ReleaseDownload);$(_ReleaseSignatureList);$(_ReleaseSignature)"
+          Outputs="$(_ReleaseSignatureStamp)">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="BuildBflatModulesTool">
+      <Output TaskParameter="TargetOutputs" ItemName="_VerifyTool" />
+    </MSBuild>
+    <PropertyGroup>
+      <_VerifyHost>$(DOTNET_HOST_PATH)</_VerifyHost>
+      <_VerifyHost Condition="'$(_VerifyHost)' == ''">dotnet</_VerifyHost>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_VerifyHost)&quot; &quot;@(_VerifyTool)&quot; verify-release &quot;$(_ReleaseSignatureList)&quot; &quot;$(_ReleaseSignature)&quot; @(_ReleaseDownload->'&quot;%(FullPath)=%(Asset)&quot;', ' ')"
+          EnvironmentVariables="BFLAT_SIGNING_PUBLIC_KEY=$(BFLAT_SIGNING_PUBLIC_KEY);DOTNET_ROLL_FORWARD=LatestMajor" />
+    <Touch Files="$(_ReleaseSignatureStamp)" AlwaysCreate="true" />
   </Target>
 
   <Target Name="ExtractHostCompiler"

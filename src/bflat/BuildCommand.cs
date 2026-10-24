@@ -118,6 +118,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "file.xml",
     };
 
+    private static Option<bool> AllowUnsignedOption = new Option<bool>("--allow-unsigned", "Accept an --extlib package that is not signed (a bad signature is always an error)");
     private static Option<string[]> ExtLibOption = new Option<string[]>("--extlib", "Link external library: repo:version (GitHub release with single .nupkg), path/URL to .nupkg, or path/URL to .bflat.manifest")
     {
         ArgumentHelpName = "repo:version|pkg.nupkg|pkg.bflat.manifest"
@@ -167,6 +168,7 @@ internal class BuildCommand : CommandBase
             CommonOptions.ExtraLd,
             CommonOptions.KeepObjectOption,
             ExtLibOption,
+            AllowUnsignedOption,
             SymChartOption,
             WrapCheckOption,
             ErrorOnFloatOption,
@@ -467,11 +469,13 @@ internal class BuildCommand : CommandBase
         string[] extLibSpecs = result.GetValueForOption(ExtLibOption) ?? Array.Empty<string>();
         string extLibTempDir = Path.Combine(Path.GetTempPath(), "bflat-extlibs");
         var packages = new List<(string Spec, List<BflatManifest> Manifests)>();
+        PackageTrust trust = null;
         foreach (var spec in extLibSpecs)
         {
             try
             {
-                List<string> manifestPaths = ExtLibResolver.ResolveManifests(spec, extLibTempDir, verbose).GetAwaiter().GetResult();
+                trust ??= PackageTrust.FromBuild(result.GetValueForOption(AllowUnsignedOption));
+                List<string> manifestPaths = ExtLibResolver.ResolveManifests(spec, extLibTempDir, verbose, trust).GetAwaiter().GetResult();
                 packages.Add((spec, ExtLibResolver.LoadPackage(manifestPaths, buildTarget.Arch, buildTarget.Os, libc)));
             }
             catch (Exception ex)

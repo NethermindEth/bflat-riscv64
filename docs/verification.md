@@ -32,6 +32,7 @@ which is not driven from this repository.
 | **CBMC proof** | CI | The allocator's bounds properties hold for *all* 64-bit sizes | Pointer arithmetic that wraps for inputs no test would think to try |
 | **C# analyzers** | CI | The driver compiles clean under every .NET analyzer, on both .NET versions | Dead conditions, leaked handles, ignored results |
 | **Build & smoke** | CI | The driver, all modules and the Docker images build; a guest links for every zkVM target | Renamed musl symbols, unresolved wraps, broken postprocessing |
+| **Package signatures** | Build, guest build | The dotnet-riscv release and each `--extlib` `.nupkg` come from our CI: their signature is valid for a trusted key, and every file agrees with the signed list ([details](signing.md)) | A changed or replaced download |
 | **Inlined-wrap check** | Build (optimized) | Every `--wrap` target that is a managed method the scanner reached is still emitted, so calls to it remain for the linker to divert | A wrapped method inlined into all its callers, which silently bypasses the wrapper |
 | **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
 | **ISA verification** | Build, opt-in | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |
