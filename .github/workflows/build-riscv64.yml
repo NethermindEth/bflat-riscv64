@@ -29,6 +29,14 @@ on:
         default: main
         required: false
 
+# The public key of the package signatures (docs/signing.md). The bflat
+# build checks the dotnet-riscv downloads with it and writes it into the
+# bflat binary, which then checks the --extlib packages. A public key is not
+# a secret, so it is a variable, not a secret. Without it the build checks
+# nothing and says so.
+env:
+  BFLAT_SIGNING_PUBLIC_KEY: ${{ vars.BFLAT_SIGNING_PUBLIC_KEY }}
+
 jobs:
   legs:
     runs-on: ubuntu-latest

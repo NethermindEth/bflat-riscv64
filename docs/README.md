@@ -28,6 +28,7 @@ docs/
 ├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
 ├── modules.md           Each link-time module explained
 ├── build.md             Building the driver (.NET version, variant) and using it
+├── signing.md           The signatures of the downloaded packages and of the dotnet-riscv release
 └── verification.md      Contracts, tests, fuzzing, proofs and the CI gates
 ```
 

@@ -42,6 +42,17 @@ using System.Text;
 //     adds itself), the ISA, the RyuJIT options, the ILC inputs and the
 //     post-link steps. It uses the same code as bflat, so it answers "what
 //     does this platform build, and in which order" without a guest build.
+//
+// bflat-modules verify-release <list> <signature> <file>=<asset-name>...
+//     Checks downloaded release assets against the signed list of their
+//     release (docs/signing.md), with the trusted keys in the environment
+//     variable BFLAT_SIGNING_PUBLIC_KEY. bflat.csproj runs it for the
+//     dotnet-riscv assets before it uses them.
+//
+// bflat-modules verify-nupkg <package.nupkg>...
+//     Checks the signature inside each package, with the same keys and the
+//     same code that bflat uses for an --extlib package. An unsigned package
+//     is an error.
 internal static class Program
 {
     private static int Main(string[] args)
@@ -54,10 +65,18 @@ internal static class Program
                 ["plan", string src, string outFile] => Plan(src, outFile),
                 ["pack", string src, string outDir] => Pack(src, outDir),
                 ["link", string dir, string platform, .. string[] rest] => Link(dir, platform, rest),
+                ["verify-release", string list, string signature, .. string[] files] when files.Length > 0 =>
+                    VerifyRelease(list, signature, files),
+                ["verify-nupkg", .. string[] packages] when packages.Length > 0 => VerifyNupkg(packages),
                 _ => Usage(),
             };
         }
         catch (ManifestException ex)
+        {
+            Console.Error.WriteLine($"bflat-modules: {ex.Message}");
+            return 1;
+        }
+        catch (PackageSignatureException ex)
         {
             Console.Error.WriteLine($"bflat-modules: {ex.Message}");
             return 1;
@@ -71,7 +90,46 @@ internal static class Program
         Console.Error.WriteLine("       bflat-modules pack <modules-dir> <layout-modules-dir>");
         Console.Error.WriteLine("       bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...]");
         Console.Error.WriteLine("                          [--remove-eh] [-O0] [-v] [--compiler <capability>]...");
+        Console.Error.WriteLine("       bflat-modules verify-release <list> <signature> <file>=<asset-name>...");
+        Console.Error.WriteLine("       bflat-modules verify-nupkg <package.nupkg>...");
         return 2;
+    }
+
+    private static List<byte[]> TrustedKeys()
+    {
+        List<byte[]> keys = PackageSignature.ParseKeys(Environment.GetEnvironmentVariable(PackageSignature.KeysVariable));
+        if (keys.Count == 0)
+            throw new PackageSignatureException($"{PackageSignature.KeysVariable} is not set");
+        return keys;
+    }
+
+    private static int VerifyNupkg(string[] packages)
+    {
+        List<byte[]> keys = TrustedKeys();
+        foreach (string package in packages)
+        {
+            if (PackageSignature.VerifyNupkg(package, keys) != PackageSignature.Status.Valid)
+                throw new PackageSignatureException($"{package}: the package is not signed");
+            Console.WriteLine($"verified {package}");
+        }
+        return 0;
+    }
+
+    private static int VerifyRelease(string list, string signature, string[] files)
+    {
+        List<byte[]> keys = TrustedKeys();
+        var pairs = new List<(string Path, string Name)>();
+        foreach (string file in files)
+        {
+            int eq = file.LastIndexOf('=');
+            if (eq <= 0 || eq == file.Length - 1)
+                throw new PackageSignatureException($"'{file}' is not <file>=<asset-name>");
+            pairs.Add((file[..eq], file[(eq + 1)..]));
+        }
+        PackageSignature.VerifyFiles(File.ReadAllBytes(list), File.ReadAllBytes(signature), keys, pairs, list);
+        foreach ((string path, string name) in pairs)
+            Console.WriteLine($"verified {name} ({path})");
+        return 0;
     }
 
     // The module build compiles for this target only. A source condition

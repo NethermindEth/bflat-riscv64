@@ -35,6 +35,10 @@ using Internal.TypeSystem;
 //      package directory (an extracted nupkg, a package build's output/) works
 //      through any one of its manifests
 //
+// A .nupkg must be signed, and so must a .bflat.manifest from a URL, which
+// cannot carry a signature (see PackageTrust and docs/signing.md). A local
+// .bflat.manifest is the developer's own build and is not checked.
+//
 // A package can hold several manifests: for example the platform of a zkVM
 // and the platform of its simulator. BuildCommand selects among them.
 //
@@ -100,7 +104,7 @@ internal static class ExtLibResolver
 
     // Resolve a single --extlib spec and return the paths of its manifests.
     // tempDir is used for downloads and nupkg extractions.
-    public static async Task<List<string>> ResolveManifests(string spec, string tempDir, bool verbose)
+    public static async Task<List<string>> ResolveManifests(string spec, string tempDir, bool verbose, PackageTrust trust)
     {
         Directory.CreateDirectory(tempDir);
 
@@ -109,12 +113,13 @@ internal static class ExtLibResolver
 
         // Case 1: GitHub repo:version
         if (IsGitHubRepoWithVersion(spec))
-            return await ResolveFromGitHubRelease(spec, tempDir, verbose, httpClient);
+            return await ResolveFromGitHubRelease(spec, tempDir, verbose, httpClient, trust);
 
         // Case 2: .nupkg (URL or local path)
         if (spec.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
         {
             string nupkgPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
+            trust.CheckNupkg(nupkgPath, spec);
             string extractDir = ExtractNupkg(nupkgPath, verbose);
             return FindManifestsInDirectory(extractDir);
         }
@@ -122,6 +127,8 @@ internal static class ExtLibResolver
         // Case 3: .bflat.manifest (URL or local path)
         if (spec.EndsWith(".bflat.manifest", StringComparison.OrdinalIgnoreCase))
         {
+            if (IsUrl(spec))
+                trust.CheckUnsignable(spec);
             string manifestPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
             var manifests = new List<string> { manifestPath };
             if (!IsUrl(spec))
@@ -222,7 +229,7 @@ internal static class ExtLibResolver
 
     private static async Task<List<string>> ResolveFromGitHubRelease(
         string spec, string tempDir, bool verbose,
-        HttpClient httpClient)
+        HttpClient httpClient, PackageTrust trust)
     {
         // Split "https://github.com/owner/repo:version" at the version colon
         int colonPos = spec.IndexOf(':', spec.IndexOf("//") + 2);
@@ -285,6 +292,7 @@ internal static class ExtLibResolver
             Console.WriteLine($"Downloaded to {nupkgPath}");
 
         // Extract and locate the manifest
+        trust.CheckNupkg(nupkgPath, spec);
         string extractDir = ExtractNupkg(nupkgPath, verbose);
         return FindManifestsInDirectory(extractDir);
     }
@@ -293,11 +301,18 @@ internal static class ExtLibResolver
     // Case 2: .nupkg helpers
     // -------------------------------------------------------------------------
 
-    // Extract a .nupkg (ZIP) into a sibling "{nupkgPath}.extracted/" directory.
-    // Returns the extraction directory.  Re-uses a cached extraction if present.
+    // Extract a .nupkg (ZIP) into a sibling "{nupkgPath}.<hash>.extracted/"
+    // directory. Returns the extraction directory. The name has the hash of
+    // the package, so a cached extraction is reused only for the same
+    // package bytes that were just checked: a new download with the same
+    // file name gets its own directory. The extraction goes to a temporary
+    // directory first, so an interrupted one is never reused.
     private static string ExtractNupkg(string nupkgPath, bool verbose)
     {
-        string extractDir = nupkgPath + ".extracted";
+        string hash;
+        using (FileStream s = File.OpenRead(nupkgPath))
+            hash = PackageSignature.Sha256Hex(s)[..16];
+        string extractDir = $"{nupkgPath}.{hash}.extracted";
 
         if (Directory.Exists(extractDir))
         {
@@ -309,8 +324,17 @@ internal static class ExtLibResolver
         if (verbose)
             Console.WriteLine($"Extracting {nupkgPath}...");
 
-        Directory.CreateDirectory(extractDir);
-        ZipFile.ExtractToDirectory(nupkgPath, extractDir, overwriteFiles: true);
+        string partialDir = $"{extractDir}.{Guid.NewGuid():N}.partial";
+        ZipFile.ExtractToDirectory(nupkgPath, partialDir);
+        try
+        {
+            Directory.Move(partialDir, extractDir);
+        }
+        catch (IOException) when (Directory.Exists(extractDir))
+        {
+            // Another bflat extracted the same package at the same time.
+            Directory.Delete(partialDir, recursive: true);
+        }
 
         if (verbose)
             Console.WriteLine($"Extracted to {extractDir}");
@@ -425,5 +449,77 @@ internal static class ExtLibResolver
         if (verbose)
             Console.WriteLine($"Found dotnet library: {absPath}");
         return absPath;
+    }
+}
+
+// The trusted signing keys of this bflat and what to do with a package that
+// is not signed (docs/signing.md). The keys come from the build of bflat
+// (the AssemblyMetadata "BflatSigningPublicKey", from the environment
+// variable BFLAT_SIGNING_PUBLIC_KEY). A bad signature is always an error.
+// An unsigned package is an error unless --allow-unsigned is given. A bflat
+// built without a key checks nothing and says so.
+internal sealed class PackageTrust
+{
+    private readonly IReadOnlyList<byte[]> _keys;
+    private readonly bool _allowUnsigned;
+    private bool _warnedNoKeys;
+
+    public PackageTrust(IReadOnlyList<byte[]> keys, bool allowUnsigned)
+    {
+        _keys = keys;
+        _allowUnsigned = allowUnsigned;
+    }
+
+    public static string BuiltInKeys()
+    {
+        foreach (var attr in typeof(PackageTrust).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false))
+        {
+            var metadata = (System.Reflection.AssemblyMetadataAttribute)attr;
+            if (metadata.Key == "BflatSigningPublicKey")
+                return metadata.Value;
+        }
+        return null;
+    }
+
+    public static PackageTrust FromBuild(bool allowUnsigned)
+        => new PackageTrust(PackageSignature.ParseKeys(BuiltInKeys()), allowUnsigned);
+
+    /// <summary>Checks the signature of a package; throws if it may not be used.</summary>
+    public void CheckNupkg(string nupkgPath, string spec)
+    {
+        if (NoKeys())
+            return;
+        if (PackageSignature.VerifyNupkg(nupkgPath, _keys) == PackageSignature.Status.Unsigned)
+            Unsigned(spec);
+    }
+
+    /// <summary>A package that cannot carry a signature, such as a manifest from a URL.</summary>
+    public void CheckUnsignable(string spec)
+    {
+        if (NoKeys())
+            return;
+        Unsigned(spec);
+    }
+
+    private bool NoKeys()
+    {
+        if (_keys.Count != 0)
+            return false;
+        if (!_warnedNoKeys)
+        {
+            Console.Error.WriteLine(
+                "warning: this bflat has no trusted signing key (it was built without " +
+                $"{PackageSignature.KeysVariable}), so it does not check the signatures of --extlib packages");
+            _warnedNoKeys = true;
+        }
+        return true;
+    }
+
+    private void Unsigned(string spec)
+    {
+        if (!_allowUnsigned)
+            throw new PackageSignatureException(
+                $"'{spec}' is not signed. Use a signed .nupkg, or give --allow-unsigned to use it anyway.");
+        Console.Error.WriteLine($"warning: '{spec}' is not signed; --allow-unsigned accepts it");
     }
 }

@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Help;
@@ -22,6 +23,7 @@ using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 
 class Program
 {
@@ -58,6 +60,17 @@ class Program
             {
                 foreach (var attr in Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>())
                 {
+                    if (attr.Key == "BflatSigningPublicKey")
+                    {
+                        Console.WriteLine("Trusted package keys (SHA-256 of the key):");
+                        List<byte[]> keys = PackageSignature.ParseKeys(attr.Value);
+                        if (keys.Count == 0)
+                            Console.WriteLine("  none: signatures are not checked");
+                        foreach (byte[] key in keys)
+                            Console.WriteLine($"  {Convert.ToHexString(SHA256.HashData(key)).ToLowerInvariant()}");
+                        continue;
+                    }
+
                     string friendlyName = attr.Key switch
                     {
                         "BflatRuntimeVersion" => ".NET Runtime Version",
