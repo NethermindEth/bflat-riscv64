@@ -121,7 +121,7 @@ Two properties are proved rather than sampled:
 The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
 are the layer most exposed to runtime drift, and the failure is silent by
 nature: if a substituted CoreLib method is renamed or re-signatured, the
-entry stops matching and the original FP-carrying body stays in the image.
+entry stops matching and the original body stays in the image.
 The two halves of the machinery are not equally protected.
 
 **C# snippets fail hard.** Their targets are resolved in code
@@ -132,7 +132,7 @@ covers a layout someone modified by hand.
 
 **ILLink substitution entries only warn.** A `<method signature=…>` that
 matches nothing produces `IL2009: Could not find method …` and the build
-continues, with the FP-carrying original left in place. The signature is
+continues, with the original left in place. The signature is
 rendered by ILC and that rendering differs between .NET majors — .NET 11
 spells a method's own generic parameters by name
 (``ValueListBuilder`1<TChar>&``), earlier ILCs leave them empty — so an

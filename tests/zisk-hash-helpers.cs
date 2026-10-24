@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 
 // Build with --libc zisk -Ot and run under ziskemu with a step limit. HashHelpers.IsPrime has an
-// integer body from zisk.snippets.cs; while it was a constant stub that ILC inlined, GetPrime above
+// integer body from guest_subst's snippets.cs; while it was a constant stub that ILC inlined, GetPrime above
 // its primes table counted to int.MaxValue without testing anything. Expected values are upstream's.
 internal static class Program
 {

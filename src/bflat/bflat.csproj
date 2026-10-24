@@ -18,7 +18,7 @@
 
   <ItemGroup>
     <!-- Module payloads are data shipped into the compiler layout, never
-         part of bflat's own compilation (zisk_subst's snippets reference
+         part of bflat's own compilation (guest_subst's snippets reference
          CoreLib internals that only exist in the guest's reference set). -->
     <Compile Remove="modules\**\*.cs" />
   </ItemGroup>

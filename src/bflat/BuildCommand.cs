@@ -898,12 +898,12 @@ internal class BuildCommand : CommandBase
         };
 
         // zkVM body-substitution machinery, declared by modules in the ilc
-        // section of their manifests (e.g. zisk_subst): substitutions XML
+        // section of their manifests (e.g. guest_subst): substitutions XML
         // for ILC and C# snippet sources compiled against the same references,
         // with accessibility checks ignored so they can touch CoreLib
         // internals/privates; the resulting module is registered so the type
         // system resolves its methods.
-        const string snippetsModuleName = "__ZiskSnippets";
+        const string snippetsModuleName = "__BflatSnippets";
         string snippetsModulePath = null;
         List<string> moduleSubstitutionFiles = new List<string>();
         // --verify-substitutions without a platform checks the substitutions
@@ -1183,9 +1183,9 @@ internal class BuildCommand : CommandBase
         IReadOnlyDictionary<ModuleDesc, IReadOnlySet<string>> resourceBlocks = default;
 
         // Built-in substitutions for the zkVM targets, declared by modules
-        // (zisk_subst's zisk.substitutions.xml): thread-pool tuning and similar
-        // machinery that is provably dead on a single-threaded guest but drags
-        // floating-point code into the rv64ima image. Applied before user
+        // (guest_subst's substitutions.xml): thread-pool tuning and similar
+        // machinery that is provably dead on a single-threaded guest, and the
+        // CoreLib methods that reach a libm function nofp traps. Applied before user
         // files; the parser rejects duplicate method entries, so user files
         // extend rather than override this set.
         foreach (string substitutionFile in moduleSubstitutionFiles)
@@ -1432,16 +1432,6 @@ internal class BuildCommand : CommandBase
 #endif
 
             ilProvider = new SubstitutedILProvider(unsubstitutedILProvider, substitutionProvider, devirtualizationManager, metadataManager, scanResults.GetAnalysisCharacteristics());
-
-            if (noFpu)
-            {
-                // Codegen-only: rewrite the ConcurrentUnifier growth ratio to
-                // integer math AFTER scanning. Relies on RewrittenMethodIL
-                // correctly forwarding GetMethodILDefinition for this shared
-                // generic method (without which the generic dictionary layout
-                // is corrupted). See UnifierResizeILProvider.
-                ilProvider = new UnifierResizeILProvider(ilProvider);
-            }
 
             // Use a more precise IL provider that uses whole program analysis for dead branch elimination
             builder.UseILProvider(ilProvider);
@@ -1975,7 +1965,7 @@ internal class BuildCommand : CommandBase
                 Console.Error.WriteLine(
                     $"error: {inlinedWrapTargets.Count} --wrap target(s) are managed methods that every caller " +
                     "inlined, so no call is left to redirect and the managed body runs instead of the wrapper. " +
-                    "Replace the body itself (e.g. a zisk_subst C# snippet) instead of wrapping it:");
+                    "Replace the body itself (e.g. a guest_subst C# snippet) instead of wrapping it:");
                 foreach (string target in inlinedWrapTargets)
                     Console.Error.WriteLine($"  {target}");
                 return 1;

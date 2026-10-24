@@ -108,76 +108,9 @@ sealed class RewrittenMethodIL : MethodIL
 }
 
 /// <summary>
-/// Rewrites the double growth-ratio in ConcurrentUnifierW(Keyed)`2.Container.Resize
-/// (live/len &lt; 0.75) into the exactly equivalent integer predicate
-/// live*4 &lt; len*3, dropping the only FP instructions from that shared generic
-/// method. Applied ONLY to the post-scan (codegen) IL provider: Resize is a
-/// shared generic body, so the scanner must see the ORIGINAL IL to compute the
-/// correct generic-dictionary dependencies (WeakReference&lt;T&gt; etc.). The
-/// rewrite touches no tokens and no generic operations, so scan- and codegen-IL
-/// stay dependency-identical - the same split SubstitutedILProvider relies on
-/// for dead-branch elimination.
-/// </summary>
-sealed class UnifierResizeILProvider : ILProvider
-{
-    private readonly ILProvider _inner;
-
-    public UnifierResizeILProvider(ILProvider inner) => _inner = inner;
-
-    public override MethodIL GetMethodIL(MethodDesc method)
-    {
-        MethodIL body = _inner.GetMethodIL(method);
-        if (body == null ||
-            method.OwningType is not MetadataType cont ||
-            !cont.Name.StringEquals("Container") ||
-            cont.ContainingType is not MetadataType unifier ||
-            !unifier.Name.StringStartsWith("ConcurrentUnifierW") ||
-            !method.Name.StringEquals("Resize"))
-        {
-            return body;
-        }
-
-        // The FP growth check is the instruction run
-        //   ldloc.0; conv.r8; ldarg.0; ldfld _entries; ldlen; conv.i4; conv.r8;
-        //   div; ldc.r8 0.75; bge.un.s   (live/len < 0.75 grows the table)
-        // Rewrite the compare into the tick-exact integer predicate live*4 < len*3
-        // (== live/len < 0.75) and flip the branch to its non-.un form. Same total
-        // length and same branch target, so the shared-generic dictionary deps the
-        // scanner computed from the original body are untouched.
-        var ed = new ILEditor(body);
-        ILOpcode[] ratio =
-        {
-            ILOpcode.ldloc_0, ILOpcode.conv_r8, ILOpcode.ldarg_0, ILOpcode.ldfld,
-            ILOpcode.ldlen, ILOpcode.conv_i4, ILOpcode.conv_r8, ILOpcode.div,
-            ILOpcode.ldc_r8, ILOpcode.bge_un_s,
-        };
-        if (!ed.FindSequence(ratio, out int[] at, out _))
-            return body;
-
-        int start = at[0];                  // ldloc.0
-        int entriesTok = ed.TokenAt(at[3]); // ldfld _entries
-        int bge = at[9];                    // bge.un.s opcode byte
-
-        byte[] repl = new ILSnippet()
-            .Op(ILOpcode.ldloc_0).Op(ILOpcode.conv_i8).LdcI4(4).Op(ILOpcode.conv_i8).Op(ILOpcode.mul)   // live*4
-            .Op(ILOpcode.ldarg_0).Token(ILOpcode.ldfld, entriesTok).Op(ILOpcode.ldlen).Op(ILOpcode.conv_i4)
-            .Op(ILOpcode.conv_i8).LdcI4(3).Op(ILOpcode.conv_i8).Op(ILOpcode.mul)                         // len*3
-            .ToArray();
-        // Replace the double ratio compare [start, bge) with the integer form
-        // (Replace nop-pads the slack) and flip bge.un.s -> bge.s in place.
-        if (!ed.Replace(start, bge, repl) || !ed.SetOpcode(bge, ILOpcode.bge_s))
-            return body;
-
-        // Integer form holds live*4 while computing len*3: one slot deeper than
-        // the original double ratio peak.
-        return ed.ToIL(extraMaxStack: 1);
-    }
-}
-
-/// <summary>
 /// Instruction-boundary-aware editor over a method body's IL. The surgical zkVM
 /// rewrites below express their edits in terms of DECODED instructions - find by
-/// opcode/operand, nop or overwrite whole instructions - instead of raw byte
+/// opcode/operand, nop whole instructions - instead of raw byte
 /// pattern matches and byte pokes. Decoding guarantees a constant that happens to
 /// share an opcode's byte value (e.g. a 0x80 inside a ldc.r8 operand) is never
 /// mistaken for that opcode, and that an edit never splits an instruction - the
@@ -255,38 +188,8 @@ sealed class ILEditor
         return _il[o] | (_il[o + 1] << 8) | (_il[o + 2] << 16) | (_il[o + 3] << 24);
     }
 
-    /// <summary>double operand of a ldc.r8 at the given start offset.</summary>
-    public double ReadR8At(int insnOffset) => BitConverter.ToDouble(_il, OperandOffset(insnOffset));
-
     /// <summary>Resolves a token that came from a real instruction operand (never null-throws).</summary>
     public object Resolve(int token) => _body.GetObject(token, NotFoundBehavior.ReturnNull);
-
-    /// <summary>
-    /// Finds the unique run of decoded instructions whose opcodes equal <paramref name="seq"/>.
-    /// Returns the run's instruction start offsets (one per opcode) and the byte offset
-    /// just past the last one, or false if the run is absent or occurs more than once
-    /// (ambiguity is refused - safer than rewriting the wrong site).
-    /// </summary>
-    public bool FindSequence(ILOpcode[] seq, out int[] offsets, out int end)
-    {
-        offsets = null; end = -1;
-        int foundIdx = -1;
-        for (int i = 0; i + seq.Length <= _opcodes.Count; i++)
-        {
-            bool ok = true;
-            for (int j = 0; j < seq.Length; j++)
-                if (_opcodes[i + j] != seq[j]) { ok = false; break; }
-            if (!ok) continue;
-            if (foundIdx >= 0) return false; // ambiguous
-            foundIdx = i;
-        }
-        if (foundIdx < 0) return false;
-        offsets = new int[seq.Length];
-        for (int j = 0; j < seq.Length; j++) offsets[j] = _offsets[foundIdx + j];
-        int lastIdx = foundIdx + seq.Length;
-        end = lastIdx < _offsets.Count ? _offsets[lastIdx] : _il.Length;
-        return true;
-    }
 
     private bool IsBoundary(int offset) => offset == _il.Length || _offsets.BinarySearch(offset) >= 0;
 
@@ -298,81 +201,8 @@ sealed class ILEditor
         return true;
     }
 
-    /// <summary>
-    /// Replaces the whole instructions in [from, to) with <paramref name="snippet"/>,
-    /// padding any leftover bytes up to <paramref name="to"/> with nops. Both ends
-    /// must be instruction boundaries and the snippet must fit.
-    /// </summary>
-    public bool Replace(int from, int to, byte[] snippet)
-    {
-        if (!IsBoundary(from) || !IsBoundary(to) || snippet.Length > to - from) return false;
-        Array.Copy(snippet, 0, _il, from, snippet.Length);
-        for (int p = from + snippet.Length; p < to; p++) _il[p] = (byte)ILOpcode.nop;
-        return true;
-    }
-
-    /// <summary>Replaces one instruction's opcode with a same-size single-byte opcode.</summary>
-    public bool SetOpcode(int insnOffset, ILOpcode op)
-    {
-        if (!IsBoundary(insnOffset) || (int)op > 0xFF) return false;
-        _il[insnOffset] = (byte)op;
-        return true;
-    }
-
     public RewrittenMethodIL ToIL(Dictionary<int, object> extraTokens = null, int extraMaxStack = 0)
         => new RewrittenMethodIL(_body, _il, extraTokens, extraMaxStack);
-}
-
-/// <summary>
-/// Builds a short, branch-free run of IL as a byte array from named opcodes and
-/// typed operands - so the zkVM rewrites express their integer replacement bodies
-/// as readable instructions instead of hand-written opcode bytes. Only the
-/// single-byte opcodes and the LdcI4/LdcI8/token operands the rewrites need are
-/// supported.
-/// </summary>
-sealed class ILSnippet
-{
-    private readonly List<byte> _b = new List<byte>();
-
-    public ILSnippet Op(ILOpcode op)
-    {
-        if ((int)op > 0xFF) throw new NotSupportedException("ILSnippet emits single-byte opcodes only");
-        _b.Add((byte)op);
-        return this;
-    }
-
-    public ILSnippet LdcI4(int v)
-    {
-        switch (v)
-        {
-            case -1: return Op(ILOpcode.ldc_i4_m1);
-            case 0: return Op(ILOpcode.ldc_i4_0);
-            case 1: return Op(ILOpcode.ldc_i4_1);
-            case 2: return Op(ILOpcode.ldc_i4_2);
-            case 3: return Op(ILOpcode.ldc_i4_3);
-            case 4: return Op(ILOpcode.ldc_i4_4);
-            case 5: return Op(ILOpcode.ldc_i4_5);
-            case 6: return Op(ILOpcode.ldc_i4_6);
-            case 7: return Op(ILOpcode.ldc_i4_7);
-            case 8: return Op(ILOpcode.ldc_i4_8);
-        }
-        if (v >= sbyte.MinValue && v <= sbyte.MaxValue) { Op(ILOpcode.ldc_i4_s); _b.Add((byte)(sbyte)v); return this; }
-        Op(ILOpcode.ldc_i4); AddInt32(v); return this;
-    }
-
-    public ILSnippet LdcI8(long v)
-    {
-        Op(ILOpcode.ldc_i8);
-        for (int i = 0; i < 8; i++) _b.Add((byte)(v >> (8 * i)));
-        return this;
-    }
-
-    /// <summary>Emits a token-carrying opcode (call/newobj/ldfld/...) with its 4-byte token.</summary>
-    public ILSnippet Token(ILOpcode op, int token) { Op(op); AddInt32(token); return this; }
-
-    private void AddInt32(int v) { for (int i = 0; i < 4; i++) _b.Add((byte)(v >> (8 * i))); }
-
-    public byte[] ToArray() => _b.ToArray();
 }
 
 /// <summary>
@@ -427,33 +257,18 @@ class CustomILProvider : ILProvider
         if (BodySubstitutions != null && BodySubstitutions.TryGetValue(method, out MethodDesc snippet))
             return new SubstituteBodyMethodIL(method, inner.GetMethodIL(snippet));
 
-        // zkVM (rv64ima) IL rewrites the C# snippets cannot express. Most FP
-        // elimination is done by whole-body C# snippets (see the zisk.snippets.cs
-        // resource, compiled by ZkvmSubstitutions.CompileSnippets and applied through
-        // BodySubstitutions above): Hashtable ctors/rehash, ValueType hashing,
-        // Random sampling, LengthBuckets and the whole TimeZoneInfo..cctor (a
-        // drift-guarded donor - see ZkvmSubstitutions) all live there
-        // now. What remains here are the two cases a snippet cannot express:
-        //   * Number..cctor - a DELETION (drop the dead float-table fill), with
-        //     no replacement logic to write in C#;
-        //   * ConcurrentUnifierW`2.Container.Resize - a SHARED GENERIC body the
-        //     scanner must see in its ORIGINAL form to compute correct generic-
-        //     dictionary dependencies, so it is rewritten codegen-only (and
-        //     token-free) by UnifierResizeILProvider (snippets apply in BOTH
-        //     phases and would introduce a call token the scanner never saw).
-
         // System.Number..cctor (.NET 11) builds s_sqrtTable = new SqrtCoefficients[256],
         // where SqrtCoefficients is a {single, single, double} struct; the 256 elements
         // are filled inline with 768 ldc.r4/ldc.r8 constants (the DiyFp128 sqrt
-        // polynomial used only by float FORMATTING). RyuJIT materializes each float
-        // constant with flw/fld + fsw/fsd - this is the dominant FP in a .NET 11 image
-        // (~1536 instructions). The table's sole reader is Number.DiyFp128Sqrt, reachable
-        // only through Number.FormatFloat, which zisk.substitutions.xml removes - so the
-        // table is dead. Keep the allocation (a zeroed SqrtCoefficients[256] - harmless
-        // even if ever indexed) but nop out the constant-filling body between the newarr
-        // and the stsfld: the array stays on the stack across the nops, so the store is
-        // still balanced, and no float constant survives. No-op on runtimes without
-        // s_sqrtTable (e.g. .NET 10), so the rewrite is safe to always apply.
+        // polynomial used only by float FORMATTING). The table's sole reader is
+        // Number.DiyFp128Sqrt, reachable only through Number.FormatFloat, which
+        // guest_subst's substitutions.xml removes - so the table is dead, and every
+        // guest that formats a number runs this cctor. Keep the allocation (a zeroed
+        // SqrtCoefficients[256] - harmless even if ever indexed) but nop out the
+        // constant-filling body between the newarr and the stsfld: the array stays on
+        // the stack across the nops, so the store is still balanced. A C# snippet
+        // cannot express this deletion. No-op on runtimes without s_sqrtTable (e.g.
+        // .NET 10), so the rewrite is safe to always apply.
         if (zkvmTarget &&
             method.OwningType is MetadataType numType &&
             numType.Namespace.StringEquals("System") &&
@@ -490,45 +305,6 @@ class CustomILProvider : ILProvider
                 return ed.ToIL();
             return body;
         }
-
-        // System.Number.FormatBigInteger<TChar> (System.Runtime.Numerics) is the
-        // decimal formatter behind BigInteger.ToString - and, through it,
-        // Nethermind's UInt256.ToString/Int256.ToString, i.e. an ordinary leaf
-        // formatting path, not a diagnostic one. Its ONLY floating point is a
-        // buffer-size estimate:
-        //
-        //     double ratio = 1.070328873472 * <call> / 32;      // ~log10(2)/limb
-        //     int resultLength = (int)(value._bits.Length * ratio) + 1;
-        //
-        // which lowers to fcvt.d.w + fld + fmul.d + fcvt.w.d + feq.d. The estimate
-        // only has to be an UPPER bound (it sizes a rented buffer; the digits
-        // written are counted separately), so it is rewritten to fixed-point
-        // integer arithmetic with the constant rounded UP - never smaller than the
-        // double result, at most a handful of limbs larger.
-        //
-        // A whole-body snippet cannot express this: the method is ~1100 bytes of IL
-        // and generic over TChar. The rewrite is token-free (it reuses the existing
-        // call/ldfld operands and adds only ldc.i4 constants), so the scanner sees
-        // no member it did not already see and shared-generic dictionary lookups
-        // are unaffected. If the pattern stops matching the FP simply survives and
-        // the binary ISA gate fails the build, which is the intended failure mode.
-        if (zkvmTarget &&
-            method.OwningType is MetadataType bigIntNumberType &&
-            bigIntNumberType.Namespace.StringEquals("System") &&
-            bigIntNumberType.Name.StringEquals("Number") &&
-            method.Name.StringEquals("FormatBigInteger"))
-        {
-            MethodIL body = inner.GetMethodIL(method);
-            var ed = new ILEditor(body);
-            return RewriteBigIntegerLengthEstimate(ed) ? ed.ToIL() : body;
-        }
-
-        // NOTE: ValueType.RegularGetValueTypeHashCode (Single/Double struct fields
-        // hashed by value through FP registers), the whole System.Collections.
-        // Hashtable ctor/rehash family (the `float _loadFactor` load factor) and
-        // System.Random's compat-PRNG double sampling are all eliminated by
-        // whole-body C# snippets now (zisk.snippets.cs / BodySubstitutions) rather
-        // than hand-emitted IL - Roslyn guarantees each replacement body is valid.
 
         if (method.OwningType is MetadataType owningType &&
             owningType.Namespace.StringEquals("System") &&
@@ -581,85 +357,6 @@ class CustomILProvider : ILProvider
         }
 
         return inner.GetMethodIL(method);
-    }
-
-    /// <summary>
-    /// Rewrites FormatBigInteger's double buffer-size estimate to fixed-point
-    /// integer arithmetic, in place. Returns false - leaving the body untouched,
-    /// so the FP survives for the ISA gate to reject - unless the exact known
-    /// instruction run is found and its constants are in the expected shape.
-    /// </summary>
-    private static bool RewriteBigIntegerLengthEstimate(ILEditor ed)
-    {
-        // ldc.r8 c1 ; call limbBits ; conv.r8 ; mul ; ldc.r8 c2 ; div ; stloc.2
-        //   ; ldarg.1 ; ldfld _bits ; ldlen ; conv.i4 ; conv.r8 ; ldloc.2 ; mul ; conv.i4
-        // i.e. (int)(_bits.Length * (c1 * limbBits / c2)).
-        ILOpcode[] pattern =
-        {
-            ILOpcode.ldc_r8, ILOpcode.call, ILOpcode.conv_r8, ILOpcode.mul,
-            ILOpcode.ldc_r8, ILOpcode.div, ILOpcode.stloc_2,
-            ILOpcode.ldarg_1, ILOpcode.ldfld, ILOpcode.ldlen, ILOpcode.conv_i4,
-            ILOpcode.conv_r8, ILOpcode.ldloc_2, ILOpcode.mul, ILOpcode.conv_i4,
-        };
-        if (!ed.FindSequence(pattern, out int[] at, out int end))
-            return false;
-
-        double c1 = ed.ReadR8At(at[0]);
-        double c2 = ed.ReadR8At(at[4]);
-        if (!(c1 > 0) || !(c2 > 0))
-            return false;
-
-        // Per-limb digit ratio. Anything outside (0,1) is not the shape this
-        // rewrite was reviewed against, so refuse rather than guess.
-        double ratio = c1 / c2;
-        if (!(ratio > 0) || ratio >= 1)
-            return false;
-
-        // K / 2^shift >= ratio, so the integer estimate is never BELOW the double
-        // one (a buffer that is a few limbs too large is harmless; too small is
-        // not). Largest shift whose K still fits an ldc.i4 operand.
-        int shift = 31;
-        long k;
-        while (true)
-        {
-            k = (long)Math.Ceiling(ratio * (1L << shift));
-            if (k > 0 && k <= int.MaxValue)
-                break;
-            if (--shift < 8)
-                return false;
-        }
-
-        // Reused verbatim, so no new token enters the body.
-        int limbBitsCall = ed.TokenAt(at[1]);
-        int bitsField = ed.TokenAt(at[8]);
-
-        var il = new List<byte>(32);
-        void Emit(ILOpcode op) => il.Add((byte)op);
-        void EmitToken(int token) => il.AddRange(BitConverter.GetBytes(token));
-
-        Emit(ILOpcode.call); EmitToken(limbBitsCall);   // limbBits
-        Emit(ILOpcode.conv_i8);
-        Emit(ILOpcode.ldarg_1);
-        Emit(ILOpcode.ldfld); EmitToken(bitsField);     // value._bits
-        Emit(ILOpcode.ldlen);
-        Emit(ILOpcode.conv_i4);
-        Emit(ILOpcode.conv_i8);
-        // Checked: for the real constants (limbBits = 32, K < 2^27) no int32
-        // length can overflow int64, but a CoreLib that grows limbBits could.
-        // An OverflowException is loud; a wrapped product would silently
-        // undersize the buffer, which is the one outcome that must not happen.
-        Emit(ILOpcode.mul_ovf);                         // limbBits * length
-        Emit(ILOpcode.ldc_i4); EmitToken((int)k);
-        Emit(ILOpcode.conv_i8);
-        Emit(ILOpcode.mul_ovf);                         // * K
-        Emit(ILOpcode.ldc_i4_s); il.Add((byte)shift);
-        Emit(ILOpcode.shr);                             // >> shift
-        Emit(ILOpcode.conv_i4);
-
-        // 27 bytes into the 39 the original run occupies; Replace nop-pads the
-        // rest, and the stack shape (one int32 produced) is unchanged, as is
-        // MaxStack. The double local the original stored simply goes unused.
-        return ed.Replace(at[0], end, il.ToArray());
     }
 }
 

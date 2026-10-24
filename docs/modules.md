@@ -34,7 +34,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 | [eh](#eh) | Synthetic program headers for the unwinder | No loader, so nothing maps the real ones |
 | [tls](#tls) | A single thread-local block | One thread, no dynamic loader |
 | [nofp](#nofp) | Soft-float and libm entry points that trap loudly | No floating-point hardware |
-| [zisk_subst](#zisk-subst) | ILC-stage substitutions and C# snippets — data, not an object file | Managed code that carries FP |
+| [guest_subst](#guest-subst) | ILC-stage substitutions and C# snippets — data, not an object file | One hart; libm calls that nofp traps |
 | [rng_stupid](#rng-stupid) | Deterministic PRNG | No `/dev/urandom`; proofs must reproduce |
 | [gs_cookie](#gs-cookie) | Stack cookie pinned to a constant | No clock for entropy, no page protection |
 | [stdcppshim](#stdcppshim) | `operator new` / `new[]` | Runtime's C++ needs them without libc++ |
@@ -44,7 +44,7 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 ## Results
 
 No upstream source is modified to make C# run in a zkVM: every adaptation is
-an object the linker pulls in, or — for `zisk_subst` — data the driver
+an object the linker pulls in, or — for `guest_subst` — data the driver
 applies one stage earlier. The same set carries Nethermind's
 [StatelessExecutor](https://github.com/NethermindEth/nethermind) end to end
 through a zkVM prover.
@@ -607,16 +607,18 @@ runtime's GC discovery into this shim.
 
 ---
 
-## zisk_subst — ILC-stage substitutions
-{: #zisk-subst }
+## guest_subst — ILC-stage substitutions
+{: #guest-subst }
 
-The odd one out: it ships no object file. `zisk_subst` carries the data
-that removes floating point from *managed* code before it is ever compiled
-to RISC-V64 —
-[`zisk.substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/zisk_subst/zisk.substitutions.xml)
+The odd one out: it ships no object file. `guest_subst` carries the data
+that changes *managed* code before it is ever compiled to RISC-V64 —
+[`substitutions.xml`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/substitutions.xml)
 (an ILLink substitutions file) and
-[`zisk.snippets.cs`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/zisk_subst/zisk.snippets.cs)
-(whole-body C# replacements). Both are copied into the layout and consumed
+[`snippets.cs`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/modules/guest_subst/snippets.cs)
+(whole-body C# replacements). An entry is there for one of two reasons:
+the guest has one hart, or the method calls a libm function that
+[nofp](#nofp) traps. Soft-float arithmetic runs, so floating point alone
+is not a reason. All four platforms require the module. Both are copied into the layout and consumed
 by the driver at guest-build time; the mechanism is described under
 [Stage 1.5](architecture.md#stage-15--ilc-stage-substitutions).
 
