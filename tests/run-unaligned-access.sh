@@ -6,11 +6,15 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
+# bflat knows no zkVM: each target is a platform in its bflat-* package.
+# BFLAT_PLATFORMS is a directory with the platform files (platform/build.sh of
+# bflat-libziskos, bflat-sp1 and bflat-openvm can all write into one).
+platforms="${BFLAT_PLATFORMS:?set BFLAT_PLATFORMS to a directory with the platform manifests}"
 
 status=0
 for libc in zisk openvm sp1; do
     bflat build --arch riscv64 --os linux --stdlib dotnet --libc "$libc" \
-        --no-pie --no-pthread -Ot -o "$work_dir/$libc.elf" "$test_dir/unaligned-access.cs"
+        --extlib "$platforms/$libc.bflat.manifest" --no-pie --no-pthread -Ot -o "$work_dir/$libc.elf" "$test_dir/unaligned-access.cs"
     llvm-objdump -d --no-show-raw-insn "$work_dir/$libc.elf" > "$work_dir/$libc.dis"
     body="$(awk '/^[0-9a-f]+ <.*ReadWord.*>:$/ { on = 1; next } on && /^$/ { exit } on' "$work_dir/$libc.dis")"
     [ -n "$body" ] || { echo "$libc: ReadWord not found" >&2; exit 1; }

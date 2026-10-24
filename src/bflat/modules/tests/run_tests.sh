@@ -189,75 +189,9 @@ for v in 10 11 ; do
 		"${obj}"
 done
 
-# The zkvm modules define _start and call __libc_start_main - both clash
-# with crt1.o/libc in a hosted test binary. Rename them in a private copy
-# of the object (the same --redefine-sym trick the zisk crt1 build uses),
-# so the test drives the module's bootstrap explicitly while keeping a
-# working libc underneath.
-prepare_zkvm_obj()
-{
-	local mod="$1" obj="${OUT_DIR}/${1}_module.o"
-	${CC} -c "${MOD_DIR}/${mod}/module.S" -o "${obj}" || return 1
-	${OBJCOPY} \
-		--redefine-sym _start=zkvm_module_start \
-		--redefine-sym __libc_start_main=test_libc_start_main \
-		"${obj}" || return 1
-	echo "${obj}"
-}
-
-# _start for every zkvm target: the linker-script symbols it dereferences
-# (_init_stack_top, _global_pointer) are pointed at real arrays in the test.
-# The halt sequence after the start-up call is never reached - the stub exits
-# first - so the targets' differing exit protocols do not need emulating.
-#
-# The three targets hand off differently, and the test needs to know which
-# stub to expect: zisk calls __libc_start_main (zisk_sim links the same
-# entry point), openvm calls
-# noos_start_main, sp1 calls sp1-zkvm's __start (and reaches the .NET side
-# later, through __wrap_main -> noos_main).
-#
-# zkvm_sp1 is built TWICE. sp1-zkvm's __start comes from the bindings
-# library, which a guest built without --extlib does not link, so the
-# module's reference to it is weak and _start falls back to
-# noos_start_main. The nobind binary simply leaves __start undefined and
-# expects that fallback - the case that broke the CI sample guests when the
-# reference was still strong.
-STACK_TOP="zkvm_test_stack+65536"
-for m in zkvm_zisk zkvm_sp1 zkvm_sp1_nobind zkvm_openvm ; do
-	src="${m}"
-	case "${m}" in
-	zkvm_sp1)        entry="-DZKVM_ENTRY_SP1=1" ;;
-	zkvm_sp1_nobind) entry="-DZKVM_ENTRY_SP1=1 -DZKVM_ENTRY_SP1_NOBIND=1"
-	                 src="zkvm_sp1" ;;
-	zkvm_openvm)     entry="-DZKVM_ENTRY_NOOS=1" ;;
-	*)               entry="-DZKVM_ENTRY_LIBC=1" ;;
-	esac
-	if ! obj="$(prepare_zkvm_obj "${src}")" ; then
-		echo "BUILD FAIL: ${m} asm"
-		failures=$((failures + 1))
-		continue
-	fi
-	run_one "test_start_${m}" \
-		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" ${entry} \
-		"${TESTS_DIR}/test_zkvm_start.c" "${obj}" \
-		-Wl,--defsym,_init_stack_top=${STACK_TOP} \
-		-Wl,--defsym,_global_pointer=zkvm_test_gp
-done
-
-# __wrap_memcpy, __wrap_memmove and __wrap_memset, linked from the same
-# renamed entry-module objects.
-for m in zkvm_sp1 zkvm_openvm ; do
-	if ! obj="$(prepare_zkvm_obj "${m}")" ; then
-		echo "BUILD FAIL: ${m} asm"
-		failures=$((failures + 1))
-		continue
-	fi
-	run_one "test_mem_${m}" \
-		${CC} ${CFLAGS} -DZKVM_MODULE_NAME="\"${m}\"" \
-		"${TESTS_DIR}/test_zkvm_mem.c" "${obj}" \
-		-Wl,--defsym,_init_stack_top=zkvm_test_stack+16 \
-		-Wl,--defsym,_global_pointer=zkvm_test_gp
-done
+# The zkVM entry points and their tests (test_entry.c, test_mem.c) are in
+# the platform packages: tests/platform/run.sh in bflat-libziskos,
+# bflat-sp1 and bflat-openvm.
 
 echo "--------------------------------------------------"
 if [ "${failures}" != "0" ] ; then

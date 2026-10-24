@@ -34,9 +34,9 @@ static void ZkvmThrow(IntPtr exceptionObj)
    .NET console path (`SystemNative_Write` / `__stdio_write`) is wrapped to a
    no-op, so `Console` output is invisible. `sys_write` (from `libziskos`, the
    same call behind `Nethermind.Zkvm.Abstractions.IO.PrintLine`) reaches the
-   real zkVM stdout. It is only linked when you pass `--extlib`; without any
-   external library, a one-byte store to `UART_ADDR` (`0xa0000200`) reaches
-   the same place.
+   real zkVM stdout. It is only linked with the bindings library of the
+   package; with the platform files alone, a one-byte store to `UART_ADDR`
+   (`0xa0000200`) reaches the same place.
 
 2. **Exit with the native `exit()`, not `Environment.Exit`.** The zkVM only
    ends on a Zisk exit ecall (`a7 = 93`); `pal`'s `__wrap_exit` emits it.
@@ -54,7 +54,7 @@ provided by the `rhp` / `pal` modules and the bflat linker wiring.
 $ bflat build exhandler.cs --os linux --libc zisk --stdlib dotnet \
       --no-pthread --no-pie --no-stacktrace-data --remove-eh \
       --extlib https://github.com/NethermindEth/bflat-libziskos:v1.0.0-preview.27
-$ ziskemu -e ./exhandler.patched          # or run inside Zisk
+$ ziskemu -e ./exhandler                  # or run inside Zisk
 ```
 
 ## Expected output

@@ -34,10 +34,6 @@ SKIPPED = {
     "stdcppshim": "C++ (ACSL++ annotations are documentation-only)",
     "ubootstrap": "C++ (ACSL++ annotations are documentation-only)",
     "rhp_native": "assembly",
-    "zkvm_zisk": "assembly",
-    "zkvm_zisk_sim": "linker script only (entry point is zkvm_zisk's)",
-    "zkvm_sp1": "assembly",
-    "zkvm_openvm": "assembly",
     "zisk_subst": "no native sources (ILC substitutions module)",
     "ugc-zero": "prebuilt objects only",
 }

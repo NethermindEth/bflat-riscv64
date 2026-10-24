@@ -26,8 +26,8 @@ bit-for-bit reproducible. Each module closes one of those gaps.
 |--------|------------------|-----------------------|
 | [ubootstrap](#ubootstrap) | Runtime entry point — brings .NET up and calls `Main` | No glibc-style startup / OS loader |
 | [noos](#noos) | Displaces the musl members the runtime's Unix PAL drags in | No kernel, no processes, no filesystem, no loader |
-| [zkvm_zisk · zkvm_zisk_sim](#zkvm-zisk) | `_start` + the memory layout the prover expects | No kernel; fixed prover memory map |
-| [zkvm_sp1 · zkvm_openvm](#zkvm-sp1) | The same, for SP1 and OpenVM | Each VM's own map and halt protocol |
+| [zisk · zisk_sim platforms](#zkvm-zisk) | `_start` + the memory layout the prover expects (in bflat-libziskos) | No kernel; fixed prover memory map |
+| [sp1 · openvm platforms](#zkvm-sp1) | The same, for SP1 and OpenVM (in bflat-sp1, bflat-openvm) | Each VM's own map and halt protocol |
 | [pal](#pal) | env, scheduling, files, time, memory, clean exit | No OS to answer syscalls |
 | [rhp](#rhp) | Allocation, dispatch, exception/exit handling | Single-threaded, never-collecting runtime |
 | [rhp_native](#rhp-native) | GC ref-assign + dispatch trampoline (asm) | No write barrier; bespoke dispatch |
@@ -132,12 +132,17 @@ replacement for musl's `__libc_start_main`, used by OpenVM's `_start`, and
 `__wrap_main` because SP1 halts with `main`'s return value. Both set the
 thread pointer, run `.init_array` and enter `uBootstrap_main`.
 
-## zkvm_zisk / zkvm_zisk_sim — entry point and memory map
+## zisk / zisk_sim platforms — entry point and memory map
 {: #zkvm-zisk }
 
-**Files:** `modules/zkvm_zisk/{module.S,script.ld}`, `modules/zkvm_zisk_sim/script.ld`
+**Files:** `platform/{entry.S,zisk.ld,zisk_sim.ld}` and the platform
+manifests `platform/zisk.bflat.manifest`, `platform/zisk_sim.bflat.manifest`
+in [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos).
+These are not bflat modules: bflat knows no zkVM, and every target is a
+platform in its package. This page describes them because every guest links
+one.
 
-Two siblings sharing one entry point: `zkvm_zisk/module.S` is a tiny
+Two siblings sharing one entry point: `entry.S` is a tiny
 `_start` written in assembly that sets `gp`, `sp`, and tail-calls
 `__libc_start_main(uBootstrap_main, …)`. `zisk_sim` links it unchanged and
 brings only its own memory map.
@@ -176,10 +181,14 @@ so the Linux loader maps it as zero pages (`p_memsz > p_filesz`), matching
 zkVM RAM being zero at boot — so `g_zk_bump_ptr` starts at `0` and is
 lazily initialised exactly as on real zisk, and the binary stays small.
 
-## zkvm_sp1 / zkvm_openvm — entry point and memory map
+## sp1 / openvm platforms — entry point and memory map
 {: #zkvm-sp1 }
 
-**Files:** `modules/zkvm_sp1/{module.S,script.ld}`, `modules/zkvm_openvm/{module.S,script.ld}`
+**Files:** `platform/{entry.S,sp1.ld,sp1.bflat.manifest}` in
+[bflat-sp1](https://github.com/NethermindEth/bflat-sp1) and
+`platform/{entry.S,openvm.ld,openvm.bflat.manifest}` in
+[bflat-openvm](https://github.com/NethermindEth/bflat-openvm). As for ZisK,
+these are platforms in their packages, not bflat modules.
 
 A `_start` that sets `gp`/`sp`, plus a linker script describing the prover's
 address space. Neither VM sets `sp` for the guest, so `_start` has to,
@@ -213,8 +222,8 @@ binding's name, in its own section so `--gc-sections` drops it — and with it
 the reference to the bindings library — in a guest built without `--extlib`.
 
 **Each entry module also carries the target's `memcpy`**, as `__wrap_memcpy`
-behind `--wrap=memcpy` (declared in `pal`'s `bflat-manifest.json` for the
-`zkvm_sp1` and `zkvm_openvm` platforms). musl's generic C `memcpy` moves 32-bit words, and neither VM has
+behind `--wrap=memcpy` (declared in the platform manifest, next to the
+entry point that defines it). musl's generic C `memcpy` moves 32-bit words, and neither VM has
 Zisk's DMA copy. Both versions move 64-bit words, but they follow different
 alignment rules. SP1 rejects misaligned accesses, so its version aligns the
 destination and merges a misaligned source from aligned words. OpenVM's rv64
@@ -283,7 +292,7 @@ separate, non-executable segment.
 `InvalidMemoryAccess` for any `LH`/`LW`/`LD`/`SH`/`SW`/`SD` off its boundary.
 OpenVM's rv64 load/store adapters accept any address and read or write a
 second memory block when an access straddles one, so `--libc openvm` gets
-wide unaligned accesses like ZisK. For SP1 `BuildCommand` forces
+wide unaligned accesses like ZisK. The SP1 platform manifest forces
 `JitNoUnalignedAccess=1`, the same expansion `--no-unaligned-access`
 asks for by hand, **and** `JitRiscV64StrictAlign=1`. The first covers the
 accesses the JIT knows are unaligned; the second covers the ones it cannot
@@ -296,14 +305,14 @@ block took more than 200k misaligned accesses across 44 sites.
 **The inline allocator, and why each target names its own cell.** dotnet-riscv
 fixup 26 replaces the object-allocation helper call with an inline bump on the
 cell, emitted as a bare constant with no relocation. The address is not baked
-into the JIT: it comes from `JitZkBumpAddr`, which `BuildCommand` sets per
+into the JIT: it comes from `JitZkBumpAddr`, which each platform manifest sets per
 target: `bffbfff8` for `zisk` and `zisk_sim`, whose RAM ends below ZisK 1.4's
 library RAM, and `bffefff8` for SP1 and OpenVM. A VM whose guest memory ends
 lower still (OpenVM's rv32 line, at `0x20000000`) needs `1ffefff8` instead.
 The knob defaults to 0 and then nothing is inlined, so a plain riscv64 target
 (`musl`, `glibc`) is never handed an absolute guest address to write to.
 
-The value must equal `g_zk_bump_ptr` in the target's `script.ld`. The cell 8
+The value must equal `g_zk_bump_ptr` in the platform's linker script. The cell 8
 bytes below it, `g_zk_heap_floor`, holds the lowest address the heap may reach;
 the inline sequence loads it and fail-fasts rather than bumping down into
 `.bss`, `.data` and the stack when the heap is exhausted. That guard is a single

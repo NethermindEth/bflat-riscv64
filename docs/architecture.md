@@ -41,7 +41,10 @@ a **link step** that swaps unsupported OS and runtime calls for zkVM-safe
 ones, an **ELF postprocessor** that satisfies the prover's loader, and
 **target-specific memory layouts**. Those stages run only for the zkVM
 targets — `--libc zisk`, `zisk_sim`, `sp1` and `openvm`; for every other
-target bflat behaves like upstream.
+target bflat behaves like upstream. bflat knows none of these targets by
+name: each is a platform that its bflat-* package defines (bflat-libziskos,
+bflat-sp1, bflat-openvm), and `--extlib` gives the package. The
+[manifest format](manifest.md) page describes what a platform declares.
 
 Keeping them outside .NET is the point: the runtime stays an official build
 — upstream sources, upstream build system, plus a handful of riscv64 fixes
@@ -209,18 +212,20 @@ overflows the fixed ZisK ROM.
 
 The final ELF is produced by `ld.lld` (Clang's linker, shipped with
 bflat). The command line for `--libc zisk` looks roughly like this. The
-module part comes from the manifests in `lib/modules/` (`<m>` below): the
-platform manifest (`zkvm_zisk`) gives the linker script and the entry point,
-and each module that it requires gives its objects, their link group and
-their wraps. The other zkVM targets differ in the platform manifest, so in
-the first two lines and in the wraps that a module declares for one
-platform only. `bflat-modules link <layout>/lib/modules zisk` prints the
-exact module part for a platform:
+platform part comes from the package (`<pkg>` below): the bindings manifest
+(`libziskos`) gives its library and wraps, the platform manifest (`zisk`)
+the linker script and the entry point. The module part comes from the
+manifests in `lib/modules/` (`<m>` below): each module that the platform
+requires gives its objects, their link group and their wraps. The other
+zkVM targets differ in the package. `bflat-modules link <layout>/lib/modules
+<pkg>/zisk.bflat.manifest <pkg>/libziskos.bflat.manifest` prints the exact
+result for a platform:
 
 ```bash
 ld.lld -static -nostdlib -m elf64lriscv \
-    -T <m>/zkvm_zisk/script.ld \
-    <m>/zkvm_zisk/module.o \
+    <pkg>/libziskos.a --wrap=memcpy ... --wrap=zkvm_keccak256 ... \
+    -T <pkg>/zisk.ld \
+    <pkg>/zisk_entry.o \
     <m>/nofp/module.o \
     --whole-archive \
         <m>/ubootstrap/module.o \
@@ -267,8 +272,10 @@ the [manifest format](manifest.md) page describes the conditions.
 
 ## Stage 3 — Postprocessing (Zisk only)
 
-For `--libc zisk`, the linked ELF is fed through `scripts/patch_elf.py`
-with the following options:
+A platform can list post-link steps (its `postlink` section); bflat runs
+them in place, and the only tool is `scripts/patch_elf.py`, which bflat
+ships. The `zisk` platform feeds the linked ELF through it with the
+following options:
 
 ```
 --fix-init-array  --fix-tdata  --trim-bss     # --remove-eh is opt-in
@@ -284,15 +291,15 @@ concrete loader behaviour Zisk wouldn't otherwise accept:
 | `--remove-eh` | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | Opt-in: those tables are what the unwinder reads, so this trades exception handling for image size |
 | `--trim-bss` | Removes the `.bss` section header | Linker scripts already provide explicit heap symbols; trimming `.bss` removes a region the prover would otherwise account for |
 
-For `--libc zisk_sim` the postprocessor is **not** run. The simulator
+The `zisk_sim` platform has no post-link step. The simulator
 target is meant to debug under GDB / QEMU on real hardware, where these
 loader quirks don't apply.
 
 ## Stage 4 — Boot
 
 When the binary starts (real, simulated, or proven), the entry point is
-`_start` from the target's entry module — `modules/zkvm_zisk{,_sim}/module.S`,
-`modules/zkvm_sp1/module.S` or `modules/zkvm_openvm/module.S`:
+`_start` from the platform's entry point — `platform/entry.S` in
+bflat-libziskos (for `zisk` and `zisk_sim`), bflat-sp1 or bflat-openvm:
 
 1. Set `gp` to `_global_pointer` and `sp` to `_init_stack_top` (both
    provided by the linker script).

@@ -4,9 +4,13 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
+# bflat knows no zkVM: each target is a platform in its bflat-* package.
+# BFLAT_PLATFORMS is a directory with the platform files (platform/build.sh of
+# bflat-libziskos, bflat-sp1 and bflat-openvm can all write into one).
+platforms="${BFLAT_PLATFORMS:?set BFLAT_PLATFORMS to a directory with the platform manifests}"
 
 bflat build --arch riscv64 --os linux --stdlib dotnet --libc zisk \
-    --no-pie --no-pthread -Ot -o "$work_dir/bitmanip.elf" "$test_dir/zisk-bitmanip.cs"
+    --extlib "$platforms/zisk.bflat.manifest" --no-pie --no-pthread -Ot -o "$work_dir/bitmanip.elf" "$test_dir/zisk-bitmanip.cs"
 ziskemu -e "$work_dir/bitmanip.elf" -n 1000000 --steps -o "$work_dir/output.bin"
 python3 - "$work_dir/output.bin" <<'PY'
 import pathlib

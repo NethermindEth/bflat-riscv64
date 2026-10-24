@@ -23,6 +23,11 @@ on:
         description: Publish Docker image
         type: boolean
         required: false
+      packages_ref:
+        description: Branch of bflat-libziskos, bflat-sp1 and bflat-openvm to take the zkVM platforms from
+        type: string
+        default: main
+        required: false
 
 jobs:
   legs:
@@ -326,14 +331,34 @@ jobs:
             ${{ matrix.image }}:test \
             bash -lc "bflat --info && bflat --info | grep -A1 '^Variant' | grep -q '${{ matrix.variant }}'"
 
+      # bflat knows no zkVM: each target is a platform (entry point, memory
+      # map, manifest) in its bflat-* package. Only the platform part of each
+      # package is built here - it needs nothing but binutils - into one
+      # directory; the guests below do not use the bindings libraries.
+      - name: Build the zkVM platforms
+        env:
+          PACKAGES_REF: ${{ inputs.packages_ref || 'main' }}
+        run: |
+          set -e
+          for repo in bflat-libziskos bflat-sp1 bflat-openvm; do
+            git clone --depth 1 --branch "$PACKAGES_REF" "https://github.com/NethermindEth/$repo.git" "/tmp/$repo"
+            "/tmp/$repo/platform/build.sh" "$PWD/platforms"
+          done
+          ls -l platforms
+
+      # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
       - name: Smoke test bflat (every zkVM target)
         run: |
           set -e
           for libc in zisk zisk_sim sp1 openvm; do
             echo "::group::Smoke build for libc=$libc"
-            docker run --rm --platform linux/amd64 \
-              ${{ matrix.image }}:test \
-              bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'"
+            id=$(docker create --platform linux/amd64 ${{ matrix.image }}:test \
+              bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --extlib /platforms/$libc.bflat.manifest --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'")
+            docker cp platforms/. "$id:/platforms"
+            rc=0
+            docker start -a "$id" || rc=$?
+            docker rm "$id" > /dev/null
+            [ "$rc" = 0 ] || exit "$rc"
             echo "::endgroup::"
           done
 
@@ -343,8 +368,9 @@ jobs:
         if: matrix.variant == 'perf'
         run: |
           set -e
-          id=$(docker create --platform linux/amd64 ${{ matrix.image }}:test bash /t/run-unaligned-access.sh)
+          id=$(docker create --platform linux/amd64 -e BFLAT_PLATFORMS=/platforms ${{ matrix.image }}:test bash /t/run-unaligned-access.sh)
           docker cp tests/. "$id:/t"
+          docker cp platforms/. "$id:/platforms"
           rc=0
           docker start -a "$id" || rc=$?
           docker rm "$id" > /dev/null

@@ -17,34 +17,31 @@ lead: >
 | guest | The program that bflat builds. |
 | manifest | A JSON file in the format that this page describes. |
 | module | A directory in `src/bflat/modules/`. A module has one manifest. |
-| package | A bflat-* repository (for example bflat-sp1) and its release. A package has one manifest. |
+| package | A bflat-* repository (for example bflat-sp1) and its release. A package has one or more manifests: for example a platform and the bindings of its accelerators. |
 | platform | A manifest that has a `platform` object. A platform is a target that the user can select, for example SP1. |
 | layout | The directory tree of an installed bflat. |
 | condition | An object that tells when a manifest item applies. |
 
 ## Status
 
-bflat reads schema 2 for the modules and the platforms in this repository,
-and for `--extlib` packages. bflat parses and validates all sections. It
-acts on some sections only. A manifest that uses a section that bflat does
-not act on yet causes an error. bflat does not ignore the section.
+bflat reads schema 2 for the modules in this repository and for `--extlib`
+packages. bflat knows no zkVM: the four zkVM targets are platforms in their
+packages. bflat parses and validates all sections. A manifest that uses a
+section that bflat does not act on in that kind of build causes an error.
+bflat does not ignore the section.
 
-| Section | Modules and platforms | `--extlib` packages |
-|---------|-----------------------|---------------------|
-| `sources`, `external` | yes: `bflat-modules plan` | not used (the package build owns them) |
+| Section | Platform builds (platform, modules, packages) | Stock targets with `--extlib` |
+|---------|-----------------------------------------------|-------------------------------|
+| `sources`, `external` | modules: `bflat-modules plan`; packages: not used (the package build owns them) | not used |
 | `objects` | yes: all groups | yes, but without `group` and `order` |
 | `link.wrap` | yes | yes |
 | `link.ld` | yes | no |
-| `ilc.substitutions`, `ilc.snippets` | yes | no |
-| `ilc.references` | no | yes |
-| `ilc.sources`, `ilc.defines`, `ilc.features`, `ilc.direct_pinvoke` | no | no |
-| `codegen`, `postlink`, `checks` | no | no |
+| `ilc.substitutions`, `ilc.snippets`, `ilc.references` | yes | references only |
+| `ilc.defines`, `ilc.features`, `ilc.direct_pinvoke` | yes | no |
+| `ilc.sources` | no | no |
+| `codegen`, `postlink`, `checks` | yes | no |
 | `tests` | validated only | not used |
-| `platform` | yes: `requires`, `flags`, `linker_script`, `entry`, `aliases.libc` | no |
-
-Platform data that is not in manifests yet (ISA, JIT options, `ZKVM_*`
-defines, `patch_elf` passes) is still in `BuildCommand.cs`. Refer to
-[What is still in BuildCommand.cs](#what-is-still-in-buildcommandcs).
+| `platform` | yes | not used |
 
 ## Formats that schema 2 replaced
 
@@ -65,7 +62,8 @@ defines, `patch_elf` passes) is still in `BuildCommand.cs`. Refer to
    must not contain data about a specific module or target.
 2. **bflat does not know the name of a zkVM.** The bflat-* package of a
    target (ZisK, SP1, OpenVM) contains the platform manifest of that target.
-   bflat knows only the format and the stock NativeAOT targets.
+   bflat knows only the format, the generic modules and the stock NativeAOT
+   targets.
 3. **One parser reads the format.** The parser is `src/bflat/BflatManifest.cs`.
    bflat and the `bflat-modules` program both compile this file. The build
    scripts get data from `bflat-modules`. They do not read JSON themselves.
@@ -79,13 +77,18 @@ defines, `patch_elf` passes) is still in `BuildCommand.cs`. Refer to
 |----------|------|--------|
 | Module, in the source tree | `src/bflat/modules/<name>/bflat-manifest.json` | `bflat-modules` |
 | Module, in the layout | `lib/modules/<name>/bflat-manifest.json`, next to the built files of the module | bflat, when it builds a guest |
-| Package, in the source tree | `bflat-manifest.json` at the root of the repository | the build of the package |
-| Package, in a release or nupkg | `<name>.bflat.manifest`, next to its files | bflat, through `--extlib` |
+| Package, in the source tree | `bflat-manifest.json` (the bindings) at the root of the repository; `platform/<name>.bflat.manifest` (the platforms) | the build of the package |
+| Package, in a release or nupkg | `<name>.bflat.manifest` for each manifest, next to its files in one directory | bflat, through `--extlib` |
 | Schema | `src/bflat/bflat-manifest.schema.json`; in the layout, `bflat-manifest.schema.json` at the root | editors, CI |
 
 A relative path in a manifest starts at **the directory that contains the
 manifest**. A path must use `/` as the separator. An absolute path is an
 error.
+
+`--extlib` with a local `.bflat.manifest` path reads **every**
+`*.bflat.manifest` in that directory. Thus `--extlib .../libsp1.bflat.manifest`
+also loads `sp1.bflat.manifest`, the platform. A `.nupkg` gives all its
+manifests.
 
 ## Top level
 
@@ -158,11 +161,13 @@ matches if one of its items matches.
 | `arch` | `x64`, `x86`, `arm64`, `riscv64` | `--arch`, or `base.arch` of the selected platform |
 | `os` | `linux`, `windows`, `uefi` | `--os`, or `base.os` of the selected platform |
 | `libc` | `glibc`, `musl`, `bionic`, `shcrt`, `none` | `--libc`, or `base.libc` of the selected platform |
-| `platform` | the `name` of a platform manifest, for example `zkvm_zisk` | the selected platform. A stock target has no platform, so the key never matches. |
+| `platform` | the `name` of a platform manifest, for example `zisk` | the selected platform. A stock target has no platform, so the key never matches. |
 | `flag` | flag names that platforms define | `flags` of the selected platform |
 | `eh` | `unwind`, `failfast` (one value only) | `--remove-eh` |
 | `stdlib` | `dotnet`, `zero`, `none` | `--stdlib` |
-| `optimize` | `true`, `false` | `true` if the optimization level is not `-O0`. Only `codegen.options` can use this key. |
+| `compiler` | capability names | what the compiler package of this bflat can do. Today the only capability is `zb-lowering-fixes`: the package has the widening-cast and Zb lowering fixes of dotnet-riscv#9 (the .NET 11 perf variant). |
+| `optimize` | `true`, `false` | `true` if the optimization level is not `-O0`. Only `codegen.options` and `postlink` can use this key. |
+| `verbose` | `true`, `false` | `true` with `-v`. Only `codegen.options` and `postlink` can use this key. |
 
 Use `flag` to make a generic module change for a platform. The module does
 not name the platform. Example: `nothread` is necessary for each platform
@@ -170,18 +175,19 @@ whose decoder does not have the A extension. Such a platform sets
 `"flags": ["no-atomics"]`. The object of the module sets
 `"when": { "flag": "no-atomics" }`.
 
-The platforms of this repository set these flags:
+The modules of bflat know these flags. The platforms set them:
 
-| Flag | Meaning | Platforms |
-|------|---------|-----------|
-| `no-atomics` | The decoder does not have the A extension. | `zkvm_sp1`, `zkvm_openvm` |
-| `noos` | No OS call can be serviced. | `zkvm_sp1`, `zkvm_openvm` |
-| `no-console` | No host console and no host stdio. | `zkvm_zisk`, `zkvm_sp1`, `zkvm_openvm` |
+| Flag | Meaning | Reader | Platforms |
+|------|---------|--------|-----------|
+| `no-atomics` | The decoder does not have the A extension. | `nothread` | `sp1`, `openvm` |
+| `noos` | No OS call can be serviced. | `noos` | `sp1`, `openvm` |
+| `no-console` | No host console and no host stdio. | `rhp`, `pal` | `zisk`, `sp1`, `openvm` |
+| `no-fpu` | No floating-point hardware: bflat applies the IL rewrites that remove floating point and that the C# snippets cannot express. | bflat | `zisk`, `zisk_sim`, `sp1`, `openvm` |
 
 A condition on a `platform` name is permitted. But only the package that
-owns the platform must use it. Today `pal` uses it for the wraps that only
-one platform needs. These wraps move to the platform manifests in a later
-step.
+owns the platform must use it: the bindings of bflat-libziskos, for example,
+apply with `"when": { "platform": "zisk" }`. The modules of bflat do not use
+it.
 
 You can put a condition at the top level of a manifest (`when`) and on each
 list item. A key that bflat does not know is an error.
@@ -267,12 +273,10 @@ bflat writes the wraps and the `link.ld` options of a manifest directly
 after the first object of that manifest. For the platform, this is the entry
 object.
 
-**Verification.** For each platform, with and without `--remove-eh`, the
-schema-2 link command has the same files in the same sequence as the link
-command before schema 2. It also has the same `--wrap` options in the same
-sequence. One difference is permitted: the two uGC wraps now come after the
-first uGC object, not before it. lld applies `--wrap` to the full link. Thus
-the position of a `--wrap` between the files has no effect.
+lld applies `--wrap` to the full link. Thus the position of a `--wrap`
+between the files has no effect: only the files and their sequence decide
+which archive members lld takes. Refer to the verification in
+[What left BuildCommand.cs](#what-left-buildcommandcs).
 
 ### `link`: wraps and other linker options
 
@@ -327,50 +331,63 @@ its own `when`.
 
 ### `codegen`: instruction set, ABI and compiler options
 
-Status: not implemented. bflat rejects a manifest with this section.
-
 ```json
 "codegen": {
-  "isa": { "disable": ["c", "a", "f", "d", "zba", "zbb", "zbs", "zicond"] },
+  "isa": {
+    "disable": ["c", "a", "f", "d", "zba", "zbb", "zbs", "zicond"],
+    "enable": [{ "value": "zba", "when": { "compiler": "zb-lowering-fixes" } }]
+  },
   "abi": "lp64",
   "options": [
     "EnableRiscV64Compressed=0",
     "EnableRiscV64Atomic=0",
-    { "value": "JitZkBumpAddr=bffefff8", "note": "Must equal g_zk_bump_ptr in script.ld" },
+    { "value": "JitZkBumpAddr=bffefff8", "note": "Must equal g_zk_bump_ptr in the linker script" },
     { "value": "RiscV64ElideLeafRaSave=1", "when": { "optimize": true } }
   ]
 }
 ```
 
-- `isa.disable` and `isa.enable` contain extension names. If the compiler
+- `isa.disable` and `isa.enable` contain extension names. Each item can
+  have its own `when`. If an extension is in both lists, `enable` wins.
+  bflat writes the changes as for `-m`: `-ext` for each disabled extension,
+  `ext` for each enabled one, in the sequence of the lists. If the compiler
   package does not know a name, bflat skips it. Thus one manifest works with
-  different compiler versions. bflat applies the `-m` option of the user
-  after the manifest.
-- `abi: "lp64"` selects the soft-float ABI
-  (`TargetAbi.NativeAotRiscV64SoftFloat`). It also starts the change of the
-  ELF float-ABI marker in crt, libc and the runtime files (`PatchRiscvAbi*`).
-  This change depends only on the ABI. It does not depend on a zkVM.
+  different compiler versions. bflat applies the manifest after the `-m`
+  option of the user. `BFLAT_NO_ZK_ISA_REDUCTION=1` turns this off.
+- Without F and D, the compiler selects the soft-float ABI itself
+  (`TargetAbi.NativeAotRiscV64SoftFloat`). `abi: "lp64"` says that the
+  platform links with the lp64 float-ABI marker: bflat changes the marker
+  of crt, libc, the runtime files and the `.a` files of the packages
+  (`PatchRiscvAbi*`), and links the soft-float builtins (`libgcc.a`).
 - `options` contains RyuJIT options. They are the same as `--codegenopt`.
   Write numbers in hex without `0x`, because RyuJIT reads them in this
   format. bflat and the schema reject a value with `0x`.
 
 If two manifests give different values to the same option, bflat stops with
-an error. The `--codegenopt` option of the user replaces the value of all
-manifests.
+an error. If they give the same value, bflat writes the option one time. The
+`--codegenopt` option of the user comes last, so it replaces the value of
+all manifests.
+
+bflat writes two options for every riscv64 target: `JitNoUnalignedAccess`
+and `JitRiscV64StrictAlign`, both `0` by default. A platform that gives them
+replaces the default (SP1 sets both to `1`). `--no-unaligned-access` sets
+`JitNoUnalignedAccess=1` for any target.
 
 ### `postlink`: changes to the linked image
 
-Status: not implemented. bflat rejects a manifest with this section.
-
 ```json
 "postlink": [
-  { "tool": "patch_elf", "args": ["--fix-init-array", "--fix-tdata", "--trim-bss"] },
-  { "tool": "patch_elf", "args": ["--remove-eh"], "when": { "eh": "failfast" } }
+  { "tool": "patch_elf", "args": [
+      "--fix-init-array", "--fix-tdata",
+      { "value": "--remove-eh", "when": { "eh": "failfast" } },
+      "--trim-bss",
+      { "value": "--print-fn-boundaries", "when": { "verbose": true } } ] }
 ]
 ```
 
-bflat runs the steps in sequence. Each step changes the output file in
-place.
+bflat runs the steps in sequence, after the link. Each step changes the
+output file in place: what `-o` names is the image that the zkVM runs. An
+argument can have its own `when`. If a step fails, the build fails.
 
 `tool` is the name of a tool that is **built into bflat**. The only tool is
 `patch_elf`. A package cannot add a tool and cannot run a program. If a
@@ -378,15 +395,14 @@ package needs a new step, add the step to bflat.
 
 ### `checks`: checks of the full image
 
-Status: not implemented. bflat rejects a manifest with this section.
-
 ```json
 "checks": { "float": true, "compressed": true, "atomic": true }
 ```
 
-These keys set the default value of `--error-on-float-binary`,
-`--error-on-compressed` and `--error-on-atomic` for each guest of this
-platform. `"il_float": true` sets `--error-on-float`, which checks the IL.
+These keys turn on `--error-on-float-binary`, `--error-on-compressed` and
+`--error-on-atomic` for each guest of this platform. `"il_float": true` turns
+on `--error-on-float`, which checks the IL. The platforms of today do not use
+this section, so the checks stay opt-in, as before.
 
 ### `tests`: module unit tests
 
@@ -442,62 +458,85 @@ objects.
 ## Platform
 
 A manifest with a `platform` object is a target that the user can select
-(a `ZkvmTarget`).
+(a `ZkvmTarget`). The package that owns the target contains it, in
+`platform/` of the repository:
 
-Today the four platforms are modules of this repository:
-`zkvm_zisk`, `zkvm_zisk_sim`, `zkvm_sp1` and `zkvm_openvm`. The target state
-is that the package that owns a target contains its platform manifest. For
-example, bflat-sp1 contains the SP1 platform. This example shows the target
-state:
+| Platform | `--libc` | Package | Files |
+|----------|----------|---------|-------|
+| `zisk` | `zisk` | bflat-libziskos | `zisk.bflat.manifest`, `zisk_entry.o`, `zisk.ld` |
+| `zisk_sim` | `zisk_sim` | bflat-libziskos | `zisk_sim.bflat.manifest`, `zisk_sim.ld`, and `zisk_entry.o` of `zisk` |
+| `sp1` | `sp1` | bflat-sp1 | `sp1.bflat.manifest`, `sp1_entry.o`, `sp1.ld` |
+| `openvm` | `openvm` | bflat-openvm | `openvm.bflat.manifest`, `openvm_entry.o`, `openvm.ld` |
+
+`platform/build.sh` of each package builds these files. It needs only the
+RISC-V binutils. The bindings library of the package (for example
+`libsp1.a`) has its own manifest, which applies with
+`"when": { "platform": "sp1" }`.
+
+The SP1 platform, shortened:
 
 ```json
 {
   "schema": 2,
   "name": "sp1",
-  "version": "1.0.0-preview.6",
+  "version": "1.0.0",
+  "link": { "wrap": ["main", "memcpy", "memmove", "memset"] },
+  "ilc": { "defines": ["ZKVM_SP1"] },
+  "codegen": {
+    "abi": "lp64",
+    "isa": { "disable": ["c", "a", "f", "d", "zba", "zbb", "zbs", "zicond"] },
+    "options": [
+      { "value": "RiscV64ElideLeafRaSave=1", "when": { "optimize": true } },
+      "EnableRiscV64Compressed=0", "EnableRiscV64Atomic=0",
+      "JitZkBumpAddr=bffefff8", "JitNoUnalignedAccess=1", "JitRiscV64StrictAlign=1"
+    ]
+  },
+  "postlink": [{ "tool": "patch_elf", "args": ["--nop-fences", "--nop-zero-words"] }],
   "platform": {
     "aliases": { "libc": "sp1" },
     "base": { "os": "linux", "arch": "riscv64", "libc": "musl" },
     "requires": ["nofp", "ubootstrap", "stdcppshim", "rhp", "gs_cookie",
                  "rhp_native", "pal", "eh", "tls", "rng_stupid",
                  "rust_sys", "ugc-zero", "nothread", "noos", "zisk_subst"],
-    "flags": ["no-atomics", "noos", "no-console"],
-    "linker_script": "script.ld",
+    "flags": ["no-atomics", "noos", "no-console", "no-fpu"],
+    "linker_script": "sp1.ld",
     "entry": "sp1_entry.o"
-  },
-  "objects":  [{ "file": "libsp1.a" }],
-  "ilc":      { "defines": ["ZKVM_SP1"], "direct_pinvoke": ["__Internal"] },
-  "codegen":  { "abi": "lp64", "isa": { "disable": ["c","a","f","d","zba","zbb","zbs","zicond"] },
-                "options": ["JitZkBumpAddr=bffefff8", "JitNoUnalignedAccess=1",
-                            "JitRiscV64StrictAlign=1", "EnableRiscV64Compressed=0",
-                            "EnableRiscV64Atomic=0", "JitZkNoGcMustInit=1"] },
-  "postlink": [{ "tool": "patch_elf", "args": ["--nop-fences", "--nop-zero-words"] }],
-  "checks":   { "float": true, "compressed": true, "atomic": true }
+  }
 }
 ```
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `aliases.libc` | no | `--libc <value>` selects this platform. Thus `--libc sp1` continues to work after the target moves into its package. Two platforms must not have the same alias. |
-| `base` | yes | The stock target that the platform uses for the sysroot, the runtime files and crt. Conditions read `base.arch`, `base.os` and `base.libc`. |
+| `aliases.libc` | no | `--libc <value>` selects this platform. Two platforms must not have the same alias. |
+| `base` | yes | The stock target that the platform uses for the sysroot, the runtime files and crt. Conditions read `base.arch`, `base.os` and `base.libc`. bflat links platforms for linux/riscv64 only. |
 | `requires` | no | The modules from the layout that the guest needs. bflat uses a module only if the platform requires it. A required module must not be a platform. |
-| `flags` | no | Names that modules can test with `when.flag`. |
+| `flags` | no | Names that modules (and bflat) can test with `when.flag`. |
 | `linker_script` | yes | bflat gives it to the linker as `-T`. |
-| `entry` | yes | The object file that defines `_start`. It can be a file of a different module: `zkvm_zisk_sim` uses `../zkvm_zisk/module.o`. |
+| `entry` | yes | The object file that defines `_start`. bflat links it after the linker script; the platform's wraps and `link.ld` options follow it. |
 
-The user selects a platform with its `--libc` alias. bflat looks for the
-alias in `lib/modules` of the layout. Then bflat loads the manifests in this
-sequence (the load order):
+The user selects a platform with its `--libc` alias:
+
+```console
+$ bflat build app.cs --os linux --libc sp1 --extlib path/to/libsp1.bflat.manifest
+```
+
+bflat reads the manifests of every `--extlib` package first, and looks for
+the alias in them (and in `lib/modules` of the layout). If `--libc` is not a
+stock libc and no manifest has the alias, the build stops with an error.
+Then bflat loads the manifests in this sequence (the load order):
 
 1. The platform manifest.
 2. Each module in `requires`, in the sequence of the list.
+3. The manifests of the `--extlib` packages whose `when` holds, in
+   command-line order. bflat skips the platforms that are not selected, for
+   example `zisk_sim` in a `--libc zisk` build.
 
-bflat does not merge the `--extlib` packages into the platform link yet. It
-links their objects and wraps in their position from before schema 2, in
-front of the linker script.
+Each `--extlib` package must give at least one manifest to the build, as
+before schema 2.
 
-Plans: a `--platform <spec>` option, and platforms from `--extlib`
-packages.
+For a platform build, bflat links musl's `crt1.o` with `_start` renamed
+(`lib/linux/riscv64/musl/crt1-platform.o`), so that the entry of the
+platform defines `_start`.
 
 ### Address constants
 
@@ -556,11 +595,11 @@ the layout.
 | `bflat-modules check <modules-dir>` | Reads each manifest. Makes sure that the sources, the ILC files, the test files and the linker scripts exist, that each required module exists, and that the `--libc` aliases are unique. Needs no toolchain. |
 | `bflat-modules plan <modules-dir> <out-file>` | Writes the module build as shell commands (`module_begin`, `module_fetch_release`, `module_cc`, `module_cxx`, `module_as`, `module_end`). `build.sh modules` runs this command and then executes the file. `build.sh` defines the commands, so the toolchain and its flags stay in `build.sh`. |
 | `bflat-modules pack <modules-dir> <layout-modules-dir>` | Makes sure that each file in `objects`, `ilc` and `platform` exists. Copies each manifest and its files to `<layout-modules-dir>/<name>/`. A file of a different module must be a file that this module ships. `bflat.csproj` runs this command when it makes the layout. |
-| `bflat-modules link <layout-modules-dir> <libc> [--remove-eh]` | Shows the part of the link command that the manifests give for a platform. It uses the same code as bflat. |
+| `bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...] [--remove-eh] [-O0] [-v] [--compiler <capability>]` | Shows what the manifests give a guest build on a platform: the ISA, the ABI, the RyuJIT options, the defines, the feature switches, the ILC files, the post-link steps and the link command (with placeholders for the parts that bflat adds itself). It uses the same code as bflat. |
 
 To add a module, add a directory with a manifest and add the name of the
-module to `requires` of each platform that needs it. No other file needs a
-change.
+module to `requires` of each platform that needs it (in the platform
+packages). No other file of bflat needs a change.
 
 ## Schema 1 compatibility
 
@@ -571,56 +610,71 @@ because package builds add some (`sp1_ref`, `zisk_ref_hash`).
 
 | Schema 1 | Schema 2 |
 |----------|----------|
-| `arch`, `os`, `libc` on a build entry | `when` on the manifest. For a platform, use `platform` (for example `"platform": "zkvm_zisk"`) in place of `libc`. |
+| `arch`, `os`, `libc` on a build entry | `when` on the manifest. For a platform, use `platform` (for example `"platform": "zisk"`) in place of `libc`. |
 | `static_lib` | `objects: ["…"]` |
 | `dotnet_lib` and `dotnet_assemblyname` | `ilc.references: [{ "file": …, "assembly": … }]` |
 | `wrap_symbols` | `link.wrap` |
 | `package_version` | `version` |
 | other keys that a build adds | `metadata` |
 
-A schema-2 package manifest that does not apply (its `when` is false) causes
-the same error as a schema-1 manifest without a matching build.
+A schema 1 manifest cannot define a platform. bflat still links it in a
+platform build, with its objects in front of the linker script, where they
+went before schema 2. A package whose manifests all do not apply causes the
+same error as a schema 1 manifest without a matching build.
 
 ## How the modules map to schema 2
 
 | Module | sources | objects and group | link.wrap | Other sections | Platform-specific parts to move out |
 |--------|---------|-------------------|-----------|----------------|-------------------------------------|
 | nofp | `module.c` | early | 50 libm and soft-float names | The stock musl target also links `module.o`, without wraps. `bflat.csproj` copies it to `lib/linux/riscv64/musl`. | — |
-| ubootstrap | `module.cpp` | whole-archive | — | — | — |
+| ubootstrap | `module.cpp` | whole-archive | — | `ilc.features` (invariant globalization), `ilc.direct_pinvoke` (`__Internal`) | — |
 | stdcppshim | `module.cpp` | whole-archive | — | — | — |
 | rhp | `module.c` | whole-archive | 19. One has `eh: failfast`. Six have `flag: no-console`. | — | — |
 | gs_cookie | `module.c` | whole-archive | `__security_cookie` | — | — |
 | rhp_native | `module.S` | whole-archive | 4 | — | — |
-| pal | `module.c` | whole-archive | 53. One has `flag: no-console`. 13 have a `platform` condition. | — | The ZisK accelerator arena wraps, and the SP1 and OpenVM wraps of `main`, `memcpy`, `memmove` and `memset`. Later also the ZisK exit ecall, the SP1 syscalls and digest, and the console code. |
+| pal | `module.c` | whole-archive | 40. One has `flag: no-console`. | — | The code for one VM in `module.c`: the ZisK exit ecall and accelerator arenas, the SP1 syscalls and digest, the console code. Their wraps are already in the packages. |
 | eh | `module.c` | whole-archive | `dl_iterate_phdr` | — | — |
 | tls | `module.c` | whole-archive | 4 | — | — |
 | rng_stupid | `module.c` | normal | 4 | — | — |
 | rust_sys | `module.c` | normal | `sys_alloc_aligned` | — | — |
-| ugc-zero | — | normal: 6 `.obj` files from `release/` | 2 | `external` | — |
+| ugc-zero | — | normal: 6 `.obj` files from `release/` | 2 | `external`, `codegen.options` (`JitZkNoGcMustInit=1`) | — |
 | nothread | `module.c` | pre-libc, `when: { flag: no-atomics }` | — | — | — |
 | noos | `module.c` | pre-libc, `when: { flag: noos }` | — | — | — |
-| zisk_subst | — | — | — | `ilc.substitutions`, `ilc.snippets` | The ZisK-only snippets move to bflat-libziskos. The parts that all FPU-less targets need stay in a module. |
-| zkvm_zisk, zkvm_zisk_sim, zkvm_sp1, zkvm_openvm | `module.S` (not zisk_sim) | — | — | `platform` | They move to bflat-libziskos, bflat-sp1 and bflat-openvm. |
+| zisk_subst | — | — | — | `ilc.substitutions`, `ilc.snippets`, `ilc.features` (invariant timezones) | The ZisK-only snippets move to bflat-libziskos. The parts that all FPU-less targets need stay in a module. |
 
-## What is still in BuildCommand.cs
+The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
+bflat-sp1 and bflat-openvm. Their unit tests went with them
+(`tests/platform/` of each package).
 
-This table shows the platform data in `BuildCommand.cs` and the schema-2
-section that is to replace it.
+## What left BuildCommand.cs
 
-| In `BuildCommand.cs` | In schema 2 | Status |
-|----------------------|-------------|--------|
-| the fixed link order of the modules | `objects.group` and `objects.order` | done |
-| the nothread and noos check `libc == sp1 or openvm` | `flag` conditions | done |
-| `--libc zisk_sim` uses the ZisK entry point | `entry` of `zkvm_zisk_sim` | done |
-| the six uGC object names | `objects` of `ugc-zero` | done |
-| `IsZkvm(libc)` (23 calls) | the selected platform and its `flags` | open |
-| `ZKVM_ZISK`, `ZKVM_SP1`, `ZKVM_OPENVM` | `ilc.defines` | open |
-| ISA reduction; Zba, Zbb and Zbs for ZisK | `codegen.isa` | open |
-| `TargetAbi.NativeAotRiscV64SoftFloat` and the ABI marker change | `codegen.abi: "lp64"` | open |
-| approximately 25 JIT options with `libc` checks (`JitZkBumpAddr`, `JitZkCsrPInvokes`, `JitRiscV64StrictAlign`, …) | `codegen.options` | open |
-| `System.TimeZoneInfo.Invariant`, invariant globalization | `ilc.features` | open |
-| `__Internal` direct P/Invoke | `ilc.direct_pinvoke` | open |
-| `patch_elf` passes for zisk and sp1 | `postlink` | open |
+| In `BuildCommand.cs` before | Now |
+|-----------------------------|-----|
+| `IsZkvm(libc)` (23 calls) and the `libc == "zisk"`/`"sp1"`/`"openvm"` tests | the selected platform, its `flags` and its `codegen.abi` |
+| the fixed link order of the modules | `objects.group` and `objects.order` |
+| the entry points and linker scripts in `lib/linux/riscv64/<libc>` | `platform.entry` and `platform.linker_script` in the packages |
+| `--libc zisk_sim` uses the ZisK entry point | `entry` of the `zisk_sim` platform |
+| the six uGC object names | `objects` of `ugc-zero` |
+| `ZKVM_ZISK`, `ZKVM_SP1`, `ZKVM_OPENVM` | `ilc.defines` |
+| ISA reduction; Zba, Zbb and Zbs for ZisK (`ZISK_BITMANIP_SUPPORTED`) | `codegen.isa`, with the `zb-lowering-fixes` compiler capability |
+| the ABI marker change and `libgcc.a` for the zkVM targets | `codegen.abi: "lp64"` |
+| approximately 25 JIT options with `libc` checks | `codegen.options` |
+| `System.TimeZoneInfo.Invariant`, invariant globalization | `ilc.features` |
+| `__Internal` direct P/Invoke | `ilc.direct_pinvoke` |
+| `patch_elf` passes for zisk and sp1 | `postlink` |
+
+**Verification.** For each platform, the ISA string, the effective RyuJIT
+options, the defines, the feature switches, the direct P/Invoke list and the
+`patch_elf` arguments are the same as before, in all 16 combinations of
+`-O0`, `--remove-eh`, `-v` and the `zb-lowering-fixes` capability. The link
+command has the same files in the same sequence and the same set of
+`--wrap` options. The sequence of the `--wrap` options is the same, except
+for the 13 wraps that moved to the packages (the ZisK accelerator arenas,
+and `main`, `memcpy`, `memmove` and `memset` of SP1 and OpenVM): they now
+come after the first object of their package. The entry objects that the
+packages build have the same code and relocations as before; they no longer
+have the local symbol `BFLAT_DOTNET`, which `--discard-all` removed from the
+image anyway.
 
 ## Decisions
 
@@ -631,3 +685,7 @@ section that is to replace it.
    [Module build and layout](#module-build-and-layout-bflat-modules).
 3. **Post-link tools: only built-in tools.** A package cannot add a tool.
    Refer to [`postlink`](#postlink-changes-to-the-linked-image).
+4. **`--extlib` is required for a zkVM target.** bflat ships no platform;
+   the platform comes from its package. A guest that does not use the
+   accelerators can be built with the platform files alone
+   (`platform/build.sh` of the package).

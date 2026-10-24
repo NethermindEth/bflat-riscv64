@@ -717,8 +717,8 @@ __wrap_syscall(long number, ...)
 
 /* Which zkVM this image is being linked for. pal.o is built once and shared
  * by every zkVM target, so the target-specific halt and console protocols are
- * selected at LINK time: each entry-point module (modules/zkvm_<target>/
- * module.S) defines one of these as an absolute symbol, and the weak
+ * selected at LINK time: each platform's entry point (platform/entry.S in
+ * its bflat-* package) defines one of these as an absolute symbol, and the weak
  * references below are non-NULL only in that link. No definition at all -
  * ZisK and the ZisK simulator, plus the host test/fuzz builds - means the
  * ZisK protocol, so those targets are bit-for-bit unaffected. The addresses
@@ -732,9 +732,10 @@ __wrap_syscall(long number, ...)
 extern void zkvm_halt(unsigned char exit_code) __attribute__((weak));
 
 /* OpenVM's custom-0 instructions (TERMINATE, the PrintStr phantom) live in
- * modules/zkvm_openvm/module.S, so that no other target's image carries an
- * encoding it cannot decode (SP1 transpiles every word of .text up front and
- * rejects custom opcodes). Weak: only the OpenVM entry module defines them. */
+ * the OpenVM entry point (platform/entry.S in bflat-openvm), so that no other
+ * target's image carries an encoding it cannot decode (SP1 transpiles every
+ * word of .text up front and rejects custom opcodes). Weak: only the OpenVM
+ * entry point defines them. */
 extern void zkvm_openvm_terminate(long code) __attribute__((weak, noreturn));
 extern void zkvm_openvm_print(const char *buf, long len) __attribute__((weak));
 
