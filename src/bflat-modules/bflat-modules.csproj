@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- bflat-modules: builds and packs the native modules in
+       src/bflat/modules from their bflat-manifest.json files.
+
+       It is a separate program because it must run before bflat can: the
+       bflat build lays the built modules into its compiler layout. It
+       shares the manifest parser (BflatManifest.cs) with bflat, so the
+       format has one reader. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Any SDK that builds bflat builds this; LatestMajor lets an
+         SDK-11-only machine run it. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisMode>All</AnalysisMode>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\bflat\BflatManifest.cs" Link="BflatManifest.cs" />
+  </ItemGroup>
+
+</Project>

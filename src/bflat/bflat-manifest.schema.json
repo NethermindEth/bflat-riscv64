@@ -5,25 +5,82 @@
   "description": "Describes a bflat module, a bflat-* package or a platform. See docs/manifest.md. Schema 1 manifests (no \"schema\" key) are not covered by this file.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "name"],
+  "required": [
+    "schema",
+    "name"
+  ],
   "properties": {
-    "$schema": { "type": "string" },
-    "schema": { "const": 2 },
-    "name": { "$ref": "#/$defs/name" },
-    "version": { "type": "string", "minLength": 1 },
-    "description": { "type": "string" },
-    "note": { "$ref": "#/$defs/note" },
-    "when": { "$ref": "#/$defs/condition" },
-    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
-    "objects": { "type": "array", "items": { "$ref": "#/$defs/object" } },
-    "link": { "$ref": "#/$defs/link" },
-    "ilc": { "$ref": "#/$defs/ilc" },
-    "codegen": { "$ref": "#/$defs/codegen" },
-    "postlink": { "type": "array", "items": { "$ref": "#/$defs/postlinkStep" } },
-    "checks": { "$ref": "#/$defs/checks" },
-    "tests": { "type": "array", "items": { "$ref": "#/$defs/test" } },
-    "external": { "$ref": "#/$defs/external" },
-    "platform": { "$ref": "#/$defs/platform" }
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": 2
+    },
+    "name": {
+      "$ref": "#/$defs/name"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "note": {
+      "$ref": "#/$defs/note"
+    },
+    "metadata": {
+      "description": "Free strings that a package build adds (for example the upstream commit). bflat ignores them.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "when": {
+      "$ref": "#/$defs/condition"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/object"
+      }
+    },
+    "link": {
+      "$ref": "#/$defs/link"
+    },
+    "ilc": {
+      "$ref": "#/$defs/ilc"
+    },
+    "codegen": {
+      "$ref": "#/$defs/codegen"
+    },
+    "postlink": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/postlinkStep"
+      }
+    },
+    "checks": {
+      "$ref": "#/$defs/checks"
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/test"
+      }
+    },
+    "external": {
+      "$ref": "#/$defs/external"
+    },
+    "platform": {
+      "$ref": "#/$defs/platform"
+    }
   },
   "$defs": {
     "name": {
@@ -42,31 +99,146 @@
       "description": "Relative to the directory that holds the manifest.",
       "type": "string",
       "minLength": 1,
-      "not": { "pattern": "^/" }
+      "not": {
+        "pattern": "^/"
+      }
     },
     "strings": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-
-    "arch": { "enum": ["x64", "x86", "arm64", "riscv64"] },
-    "os": { "enum": ["linux", "windows", "uefi"] },
-    "libc": { "enum": ["glibc", "musl", "bionic", "shcrt", "none"] },
-    "eh": { "enum": ["unwind", "failfast"] },
-    "stdlib": { "enum": ["dotnet", "zero", "none"] },
+    "arch": {
+      "enum": [
+        "x64",
+        "x86",
+        "arm64",
+        "riscv64"
+      ]
+    },
+    "os": {
+      "enum": [
+        "linux",
+        "windows",
+        "uefi"
+      ]
+    },
+    "libc": {
+      "enum": [
+        "glibc",
+        "musl",
+        "bionic",
+        "shcrt",
+        "none"
+      ]
+    },
+    "eh": {
+      "enum": [
+        "unwind",
+        "failfast"
+      ]
+    },
+    "stdlib": {
+      "enum": [
+        "dotnet",
+        "zero",
+        "none"
+      ]
+    },
     "condition": {
       "description": "All keys must match. A list value matches any of its items.",
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "arch": { "anyOf": [{ "$ref": "#/$defs/arch" }, { "type": "array", "items": { "$ref": "#/$defs/arch" }, "minItems": 1 }] },
-        "os": { "anyOf": [{ "$ref": "#/$defs/os" }, { "type": "array", "items": { "$ref": "#/$defs/os" }, "minItems": 1 }] },
-        "libc": { "anyOf": [{ "$ref": "#/$defs/libc" }, { "type": "array", "items": { "$ref": "#/$defs/libc" }, "minItems": 1 }] },
-        "platform": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "array", "items": { "$ref": "#/$defs/name" }, "minItems": 1 }] },
-        "flag": { "anyOf": [{ "$ref": "#/$defs/flagName" }, { "type": "array", "items": { "$ref": "#/$defs/flagName" }, "minItems": 1 }] },
-        "eh": { "$ref": "#/$defs/eh" },
-        "stdlib": { "anyOf": [{ "$ref": "#/$defs/stdlib" }, { "type": "array", "items": { "$ref": "#/$defs/stdlib" }, "minItems": 1 }] }
+        "arch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/arch"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/arch"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "os": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/os"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/os"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "libc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/libc"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/libc"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/name"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "flag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/flagName"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/flagName"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "eh": {
+          "$ref": "#/$defs/eh"
+        },
+        "stdlib": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stdlib"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/stdlib"
+              },
+              "minItems": 1
+            }
+          ]
+        }
       }
     },
     "codegenCondition": {
@@ -75,29 +247,68 @@
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "arch": { "$ref": "#/$defs/condition/properties/arch" },
-        "os": { "$ref": "#/$defs/condition/properties/os" },
-        "libc": { "$ref": "#/$defs/condition/properties/libc" },
-        "platform": { "$ref": "#/$defs/condition/properties/platform" },
-        "flag": { "$ref": "#/$defs/condition/properties/flag" },
-        "eh": { "$ref": "#/$defs/condition/properties/eh" },
-        "stdlib": { "$ref": "#/$defs/condition/properties/stdlib" },
-        "optimize": { "type": "boolean" }
+        "arch": {
+          "$ref": "#/$defs/condition/properties/arch"
+        },
+        "os": {
+          "$ref": "#/$defs/condition/properties/os"
+        },
+        "libc": {
+          "$ref": "#/$defs/condition/properties/libc"
+        },
+        "platform": {
+          "$ref": "#/$defs/condition/properties/platform"
+        },
+        "flag": {
+          "$ref": "#/$defs/condition/properties/flag"
+        },
+        "eh": {
+          "$ref": "#/$defs/condition/properties/eh"
+        },
+        "stdlib": {
+          "$ref": "#/$defs/condition/properties/stdlib"
+        },
+        "optimize": {
+          "type": "boolean"
+        }
       }
     },
-
+    "buildCondition": {
+      "description": "A source condition: the module build knows no guest, so only arch and os.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "arch": {
+          "$ref": "#/$defs/condition/properties/arch"
+        },
+        "os": {
+          "$ref": "#/$defs/condition/properties/os"
+        }
+      }
+    },
     "fileItem": {
       "description": "A file, as a string or as an object with a condition.",
       "anyOf": [
-        { "$ref": "#/$defs/path" },
+        {
+          "$ref": "#/$defs/path"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["file"],
+          "required": [
+            "file"
+          ],
           "properties": {
-            "file": { "$ref": "#/$defs/path" },
-            "when": { "$ref": "#/$defs/condition" },
-            "note": { "$ref": "#/$defs/note" }
+            "file": {
+              "$ref": "#/$defs/path"
+            },
+            "when": {
+              "$ref": "#/$defs/condition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
@@ -105,115 +316,239 @@
     "valueItem": {
       "description": "A string value, as a string or as an object with a condition.",
       "anyOf": [
-        { "type": "string", "minLength": 1 },
+        {
+          "type": "string",
+          "minLength": 1
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["value"],
+          "required": [
+            "value"
+          ],
           "properties": {
-            "value": { "type": "string", "minLength": 1 },
-            "when": { "$ref": "#/$defs/condition" },
-            "note": { "$ref": "#/$defs/note" }
+            "value": {
+              "type": "string",
+              "minLength": 1
+            },
+            "when": {
+              "$ref": "#/$defs/condition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
     },
-
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file"],
+      "required": [
+        "file"
+      ],
       "properties": {
         "file": {
           "allOf": [
-            { "$ref": "#/$defs/path" },
-            { "pattern": "\\.(c|cc|cpp|S|s)$" }
+            {
+              "$ref": "#/$defs/path"
+            },
+            {
+              "pattern": "\\.(c|cc|cpp|S|s)$"
+            }
           ]
         },
-        "cflags": { "$ref": "#/$defs/strings" },
-        "cxxflags": { "$ref": "#/$defs/strings" },
-        "asflags": { "$ref": "#/$defs/strings" },
-        "output": { "$ref": "#/$defs/path" },
-        "when": { "$ref": "#/$defs/condition" },
-        "note": { "$ref": "#/$defs/note" }
+        "cflags": {
+          "$ref": "#/$defs/strings"
+        },
+        "cxxflags": {
+          "$ref": "#/$defs/strings"
+        },
+        "asflags": {
+          "$ref": "#/$defs/strings"
+        },
+        "output": {
+          "$ref": "#/$defs/path"
+        },
+        "when": {
+          "$ref": "#/$defs/buildCondition"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
       }
     },
     "object": {
       "anyOf": [
-        { "$ref": "#/$defs/path" },
+        {
+          "$ref": "#/$defs/path"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["file"],
+          "required": [
+            "file"
+          ],
           "properties": {
-            "file": { "$ref": "#/$defs/path" },
-            "group": { "enum": ["pre-libc", "normal", "whole-archive"], "default": "normal" },
-            "order": { "type": "integer", "minimum": 0, "maximum": 999, "default": 100 },
-            "when": { "$ref": "#/$defs/condition" },
-            "note": { "$ref": "#/$defs/note" }
+            "file": {
+              "$ref": "#/$defs/path"
+            },
+            "group": {
+              "enum": [
+                "pre-libc",
+                "pre-entry",
+                "early",
+                "whole-archive",
+                "normal"
+              ],
+              "default": "normal"
+            },
+            "order": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999,
+              "default": 100
+            },
+            "when": {
+              "$ref": "#/$defs/condition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
     },
-
     "link": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "wrap": { "type": "array", "items": { "$ref": "#/$defs/wrap" } },
-        "ld": { "type": "array", "items": { "$ref": "#/$defs/valueItem" } }
+        "wrap": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/wrap"
+          }
+        },
+        "ld": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueItem"
+          }
+        }
       }
     },
     "wrap": {
       "anyOf": [
-        { "type": "string", "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$" },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["symbol"],
+          "required": [
+            "symbol"
+          ],
           "properties": {
-            "symbol": { "type": "string", "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$" },
-            "mangled": { "type": "string", "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$" },
-            "when": { "$ref": "#/$defs/condition" },
-            "note": { "$ref": "#/$defs/note" }
+            "symbol": {
+              "type": "string",
+              "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$"
+            },
+            "mangled": {
+              "type": "string",
+              "pattern": "^[A-Za-z_.$][A-Za-z0-9_.$]*$"
+            },
+            "when": {
+              "$ref": "#/$defs/condition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
     },
-
     "ilc": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "substitutions": { "type": "array", "items": { "$ref": "#/$defs/fileItem" } },
-        "snippets": { "type": "array", "items": { "$ref": "#/$defs/fileItem" } },
-        "sources": { "type": "array", "items": { "$ref": "#/$defs/fileItem" } },
-        "references": { "type": "array", "items": { "$ref": "#/$defs/reference" } },
-        "defines": { "type": "array", "items": { "$ref": "#/$defs/valueItem" } },
+        "substitutions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileItem"
+          }
+        },
+        "snippets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileItem"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileItem"
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "defines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueItem"
+          }
+        },
         "features": {
           "type": "object",
-          "additionalProperties": { "type": ["boolean", "string", "number"] }
+          "additionalProperties": {
+            "type": [
+              "boolean",
+              "string",
+              "number"
+            ]
+          }
         },
-        "direct_pinvoke": { "type": "array", "items": { "$ref": "#/$defs/valueItem" } }
+        "direct_pinvoke": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueItem"
+          }
+        }
       }
     },
     "reference": {
       "anyOf": [
-        { "$ref": "#/$defs/path" },
+        {
+          "$ref": "#/$defs/path"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["file"],
+          "required": [
+            "file"
+          ],
           "properties": {
-            "file": { "$ref": "#/$defs/path" },
-            "assembly": { "type": "string", "minLength": 1 },
-            "when": { "$ref": "#/$defs/condition" },
-            "note": { "$ref": "#/$defs/note" }
+            "file": {
+              "$ref": "#/$defs/path"
+            },
+            "assembly": {
+              "type": "string",
+              "minLength": 1
+            },
+            "when": {
+              "$ref": "#/$defs/condition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
     },
-
     "codegen": {
       "type": "object",
       "additionalProperties": false,
@@ -222,31 +557,58 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enable": { "$ref": "#/$defs/isaList" },
-            "disable": { "$ref": "#/$defs/isaList" }
+            "enable": {
+              "$ref": "#/$defs/isaList"
+            },
+            "disable": {
+              "$ref": "#/$defs/isaList"
+            }
           }
         },
-        "abi": { "enum": ["lp64", "lp64d"] },
-        "options": { "type": "array", "items": { "$ref": "#/$defs/codegenOption" } }
+        "abi": {
+          "enum": [
+            "lp64",
+            "lp64d"
+          ]
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/codegenOption"
+          }
+        }
       }
     },
     "isaList": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*$" }
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*$"
+      }
     },
     "codegenOption": {
       "description": "A RyuJIT option, Name=value. Numbers are hex without 0x.",
       "anyOf": [
-        { "$ref": "#/$defs/codegenOptionValue" },
+        {
+          "$ref": "#/$defs/codegenOptionValue"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["value"],
+          "required": [
+            "value"
+          ],
           "properties": {
-            "value": { "$ref": "#/$defs/codegenOptionValue" },
-            "when": { "$ref": "#/$defs/codegenCondition" },
-            "note": { "$ref": "#/$defs/note" }
+            "value": {
+              "$ref": "#/$defs/codegenOptionValue"
+            },
+            "when": {
+              "$ref": "#/$defs/codegenCondition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
           }
         }
       ]
@@ -254,109 +616,210 @@
     "codegenOptionValue": {
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9_]*=[^\\s]*$",
-      "not": { "pattern": "=0[xX]" }
+      "not": {
+        "pattern": "=0[xX]"
+      }
     },
-
     "postlinkStep": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tool"],
+      "required": [
+        "tool"
+      ],
       "properties": {
         "tool": {
           "description": "A tool built into bflat. Packages cannot add tools.",
-          "enum": ["patch_elf"]
+          "enum": [
+            "patch_elf"
+          ]
         },
-        "args": { "$ref": "#/$defs/strings" },
-        "when": { "$ref": "#/$defs/condition" },
-        "note": { "$ref": "#/$defs/note" }
+        "args": {
+          "$ref": "#/$defs/strings"
+        },
+        "when": {
+          "$ref": "#/$defs/condition"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
       }
     },
-
     "checks": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "float": { "type": "boolean" },
-        "compressed": { "type": "boolean" },
-        "atomic": { "type": "boolean" },
-        "il_float": { "type": "boolean" }
+        "float": {
+          "type": "boolean"
+        },
+        "compressed": {
+          "type": "boolean"
+        },
+        "atomic": {
+          "type": "boolean"
+        },
+        "il_float": {
+          "type": "boolean"
+        }
       }
     },
-
     "test": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file", "runner"],
+      "required": [
+        "file",
+        "runner"
+      ],
       "properties": {
-        "file": { "$ref": "#/$defs/path" },
-        "runner": { "enum": ["qemu", "host"] },
-        "cflags": { "$ref": "#/$defs/strings" },
+        "file": {
+          "$ref": "#/$defs/path"
+        },
+        "runner": {
+          "enum": [
+            "qemu",
+            "host"
+          ]
+        },
+        "cflags": {
+          "$ref": "#/$defs/strings"
+        },
         "matrix": {
           "type": "object",
           "additionalProperties": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "minItems": 1
           }
         },
-        "when": { "$ref": "#/$defs/condition" },
-        "note": { "$ref": "#/$defs/note" }
+        "when": {
+          "$ref": "#/$defs/condition"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
       }
     },
-
     "external": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repo", "tag", "dir"],
+      "required": [
+        "repo",
+        "tag",
+        "dir"
+      ],
       "properties": {
-        "repo": { "type": "string", "pattern": "^https://" },
-        "tag": { "type": "string", "minLength": 1 },
-        "release": { "type": "string", "minLength": 1 },
-        "build": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "dir": { "$ref": "#/$defs/path" },
-        "note": { "$ref": "#/$defs/note" }
+        "repo": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "build": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "dir": {
+          "$ref": "#/$defs/path"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
       },
       "oneOf": [
-        { "required": ["release"], "not": { "required": ["build"] } },
-        { "required": ["build"], "not": { "required": ["release"] } }
+        {
+          "required": [
+            "release"
+          ],
+          "not": {
+            "required": [
+              "build"
+            ]
+          }
+        },
+        {
+          "required": [
+            "build"
+          ],
+          "not": {
+            "required": [
+              "release"
+            ]
+          }
+        }
       ]
     },
-
     "platform": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["base", "linker_script", "entry"],
+      "required": [
+        "base",
+        "linker_script",
+        "entry"
+      ],
       "properties": {
         "aliases": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "libc": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$" }
+            "libc": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_]*$"
+            }
           }
         },
         "base": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["os", "arch", "libc"],
+          "required": [
+            "os",
+            "arch",
+            "libc"
+          ],
           "properties": {
-            "os": { "$ref": "#/$defs/os" },
-            "arch": { "$ref": "#/$defs/arch" },
-            "libc": { "$ref": "#/$defs/libc" }
+            "os": {
+              "$ref": "#/$defs/os"
+            },
+            "arch": {
+              "$ref": "#/$defs/arch"
+            },
+            "libc": {
+              "$ref": "#/$defs/libc"
+            }
           }
         },
         "requires": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/name" }
+          "items": {
+            "$ref": "#/$defs/name"
+          }
         },
         "flags": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/flagName" }
+          "items": {
+            "$ref": "#/$defs/flagName"
+          }
         },
-        "linker_script": { "$ref": "#/$defs/path" },
-        "entry": { "$ref": "#/$defs/path" },
-        "note": { "$ref": "#/$defs/note" }
+        "linker_script": {
+          "$ref": "#/$defs/path"
+        },
+        "entry": {
+          "$ref": "#/$defs/path"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
       }
     }
   }
