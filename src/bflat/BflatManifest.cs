@@ -42,7 +42,12 @@ internal sealed class ManifestTarget
     public IReadOnlySet<string> Flags { get; init; } = new HashSet<string>();
     public string Eh { get; init; }
     public string Stdlib { get; init; }
+    /// <summary>The optimization level is not <c>-O0</c>.</summary>
     public bool Optimize { get; init; }
+    /// <summary><c>-v</c>.</summary>
+    public bool Verbose { get; init; }
+    /// <summary>What the bundled compiler package can do (see <c>compiler</c> conditions).</summary>
+    public IReadOnlySet<string> Compiler { get; init; } = new HashSet<string>();
 }
 
 /// <summary>
@@ -52,9 +57,12 @@ internal sealed class ManifestTarget
 internal sealed class ManifestCondition
 {
     private readonly Dictionary<string, string[]> _values = new Dictionary<string, string[]>(StringComparer.Ordinal);
-    private bool? _optimize;
+    private readonly Dictionary<string, bool> _buildFlags = new Dictionary<string, bool>(StringComparer.Ordinal);
 
-    public IEnumerable<string> Keys => _optimize.HasValue ? _values.Keys.Append("optimize") : _values.Keys;
+    public IEnumerable<string> Keys => _values.Keys.Concat(_buildFlags.Keys);
+
+    /// <summary>Boolean keys that describe the build, not the target. Valid only where <c>allowBuildFlags</c> says so.</summary>
+    internal static readonly string[] BuildFlagKeys = { "optimize", "verbose" };
 
     internal static readonly Dictionary<string, string[]> AllowedValues = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
@@ -65,21 +73,22 @@ internal sealed class ManifestCondition
         ["flag"] = null,
         ["eh"] = new[] { "unwind", "failfast" },
         ["stdlib"] = new[] { "dotnet", "zero", "none" },
+        ["compiler"] = null,
     };
 
-    internal static ManifestCondition Read(ManifestReader r, JsonElement e, string path, bool allowOptimize)
+    internal static ManifestCondition Read(ManifestReader r, JsonElement e, string path, bool allowBuildFlags)
     {
         r.ExpectKind(e, JsonValueKind.Object, path);
         var c = new ManifestCondition();
         foreach (JsonProperty p in e.EnumerateObject())
         {
             string ppath = path + "." + p.Name;
-            if (p.Name == "optimize")
+            if (Array.IndexOf(BuildFlagKeys, p.Name) >= 0)
             {
-                if (!allowOptimize)
-                    throw r.Error(ppath, "'optimize' is valid only in codegen.options");
+                if (!allowBuildFlags)
+                    throw r.Error(ppath, $"'{p.Name}' is valid only in codegen.options and postlink");
                 r.ExpectKind(p.Value, JsonValueKind.True, JsonValueKind.False, ppath);
-                c._optimize = p.Value.GetBoolean();
+                c._buildFlags[p.Name] = p.Value.GetBoolean();
                 continue;
             }
             if (!AllowedValues.TryGetValue(p.Name, out string[] allowed))
@@ -111,7 +120,7 @@ internal sealed class ManifestCondition
             }
             c._values[p.Name] = values;
         }
-        if (c._values.Count == 0 && !c._optimize.HasValue)
+        if (c._values.Count == 0 && c._buildFlags.Count == 0)
             throw r.Error(path, "an empty condition; leave 'when' out instead");
         return c;
     }
@@ -129,12 +138,19 @@ internal sealed class ManifestCondition
                 "flag" => kv.Value.Any(t.Flags.Contains),
                 "eh" => kv.Value.Contains(t.Eh),
                 "stdlib" => kv.Value.Contains(t.Stdlib),
+                "compiler" => kv.Value.Any(t.Compiler.Contains),
                 _ => throw new InvalidOperationException(kv.Key),
             };
             if (!match)
                 return false;
         }
-        return !_optimize.HasValue || _optimize.Value == t.Optimize;
+        foreach (KeyValuePair<string, bool> kv in _buildFlags)
+        {
+            bool actual = kv.Key == "optimize" ? t.Optimize : t.Verbose;
+            if (actual != kv.Value)
+                return false;
+        }
+        return true;
     }
 
     /// <summary>Holds when <paramref name="c"/> is absent or holds.</summary>
@@ -208,6 +224,22 @@ internal sealed class ManifestPlatform
     public string Entry { get; init; }
 }
 
+internal sealed class ManifestPostlinkStep
+{
+    public string Tool { get; init; }
+    public List<ManifestItem> Args { get; } = new List<ManifestItem>();
+    public ManifestCondition When { get; init; }
+}
+
+/// <summary>The <c>checks</c> section: each key turns an image check on by default.</summary>
+internal sealed class ManifestChecks
+{
+    public bool Float { get; set; }
+    public bool Compressed { get; set; }
+    public bool Atomic { get; set; }
+    public bool IlFloat { get; set; }
+}
+
 internal sealed class ManifestTest
 {
     public string File { get; init; }
@@ -242,12 +274,17 @@ internal sealed class BflatManifest
     public List<ManifestItem> IlcReferences { get; } = new List<ManifestItem>();
     public List<ManifestItem> IlcDefines { get; } = new List<ManifestItem>();
     public List<ManifestItem> IlcDirectPInvoke { get; } = new List<ManifestItem>();
-    public Dictionary<string, string> IlcFeatures { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+    public Dictionary<string, bool> IlcFeatures { get; } = new Dictionary<string, bool>(StringComparer.Ordinal);
 
-    /// <summary>Sections parsed and validated, but not acted on yet (see <see cref="UnimplementedSections"/>).</summary>
-    public bool HasCodegen { get; set; }
-    public bool HasPostlink { get; set; }
-    public bool HasChecks { get; set; }
+    public List<ManifestItem> IsaDisable { get; } = new List<ManifestItem>();
+    public List<ManifestItem> IsaEnable { get; } = new List<ManifestItem>();
+    public string Abi { get; set; }
+    /// <summary>RyuJIT options, each <c>Name=value</c>.</summary>
+    public List<ManifestItem> CodegenOptions { get; } = new List<ManifestItem>();
+    public List<ManifestPostlinkStep> Postlink { get; } = new List<ManifestPostlinkStep>();
+    public ManifestChecks Checks { get; set; }
+
+    public bool HasCodegen => IsaDisable.Count > 0 || IsaEnable.Count > 0 || Abi != null || CodegenOptions.Count > 0;
 
     public List<ManifestTest> Tests { get; } = new List<ManifestTest>();
     public ManifestExternal External { get; set; }
@@ -269,31 +306,26 @@ internal sealed class BflatManifest
 
     /// <summary>
     /// The schema-2 sections that a manifest can declare but this bflat does
-    /// not act on yet. A manifest that uses one is rejected at guest build
-    /// time instead of being half applied. A <paramref name="package"/>
-    /// (from <c>--extlib</c>) can give objects, wraps and references only.
+    /// not act on in this kind of build. A manifest that uses one is rejected
+    /// instead of being half applied. In a platform link every section works
+    /// except <c>ilc.sources</c>. A package used with a stock target
+    /// (<paramref name="stock"/>) can give objects, wraps and references only.
     /// </summary>
-    public IEnumerable<string> UnimplementedSections(bool package)
+    public IEnumerable<string> UnimplementedSections(bool stock)
     {
-        if (package)
-        {
-            if (Platform != null) yield return "platform";
-            if (LdOptions.Count > 0) yield return "link.ld";
-            if (IlcSubstitutions.Count > 0) yield return "ilc.substitutions";
-            if (IlcSnippets.Count > 0) yield return "ilc.snippets";
-            if (EffectiveObjects().Any(o => o.Placed)) yield return "objects.group and objects.order";
-        }
-        else if (IlcReferences.Count > 0)
-        {
-            yield return "ilc.references";
-        }
-        if (HasCodegen) yield return "codegen";
-        if (HasPostlink) yield return "postlink";
-        if (HasChecks) yield return "checks";
         if (IlcSources.Count > 0) yield return "ilc.sources";
+        if (!stock)
+            yield break;
+        if (LdOptions.Count > 0) yield return "link.ld";
+        if (IlcSubstitutions.Count > 0) yield return "ilc.substitutions";
+        if (IlcSnippets.Count > 0) yield return "ilc.snippets";
         if (IlcDefines.Count > 0) yield return "ilc.defines";
         if (IlcDirectPInvoke.Count > 0) yield return "ilc.direct_pinvoke";
         if (IlcFeatures.Count > 0) yield return "ilc.features";
+        if (EffectiveObjects().Any(o => o.Placed)) yield return "objects.group and objects.order";
+        if (HasCodegen) yield return "codegen";
+        if (Postlink.Count > 0) yield return "postlink";
+        if (Checks != null) yield return "checks";
     }
 
     public string Resolve(string relative) =>
@@ -352,21 +384,26 @@ internal sealed class BflatManifest
         if (root.TryGetProperty("ilc", out JsonElement ilc))
             ReadIlc(r, ilc, m);
         if (root.TryGetProperty("codegen", out JsonElement codegen))
-        {
-            ReadCodegen(r, codegen);
-            m.HasCodegen = true;
-        }
+            ReadCodegen(r, codegen, m);
         if (root.TryGetProperty("postlink", out JsonElement postlink))
-        {
-            r.ForEach(postlink, "$.postlink", (e, p) => ReadPostlinkStep(r, e, p));
-            m.HasPostlink = true;
-        }
+            r.ForEach(postlink, "$.postlink", (e, p) => m.Postlink.Add(ReadPostlinkStep(r, e, p)));
         if (root.TryGetProperty("checks", out JsonElement checks))
         {
             r.CheckKeys(checks, "$.checks", "float", "compressed", "atomic", "il_float");
+            var c = new ManifestChecks();
             foreach (JsonProperty p in checks.EnumerateObject())
+            {
                 r.ExpectKind(p.Value, JsonValueKind.True, JsonValueKind.False, "$.checks." + p.Name);
-            m.HasChecks = true;
+                bool on = p.Value.GetBoolean();
+                switch (p.Name)
+                {
+                    case "float": c.Float = on; break;
+                    case "compressed": c.Compressed = on; break;
+                    case "atomic": c.Atomic = on; break;
+                    default: c.IlFloat = on; break;
+                }
+            }
+            m.Checks = c;
         }
         if (root.TryGetProperty("tests", out JsonElement tests))
             r.ForEach(tests, "$.tests", (e, p) => m.Tests.Add(ReadTest(r, e, p)));
@@ -502,65 +539,68 @@ internal sealed class BflatManifest
             r.ExpectKind(features, JsonValueKind.Object, "$.ilc.features");
             foreach (JsonProperty p in features.EnumerateObject())
             {
-                m.IlcFeatures[p.Name] = p.Value.ValueKind switch
-                {
-                    JsonValueKind.True => "true",
-                    JsonValueKind.False => "false",
-                    JsonValueKind.String => p.Value.GetString(),
-                    JsonValueKind.Number => p.Value.GetRawText(),
-                    _ => throw r.Error("$.ilc.features." + p.Name, "expected a boolean, a string or a number"),
-                };
+                r.ExpectKind(p.Value, JsonValueKind.True, JsonValueKind.False, "$.ilc.features." + p.Name);
+                m.IlcFeatures[p.Name] = p.Value.GetBoolean();
             }
         }
     }
 
-    private static void ReadCodegen(ManifestReader r, JsonElement codegen)
+    private static void ReadCodegen(ManifestReader r, JsonElement codegen, BflatManifest m)
     {
         r.CheckKeys(codegen, "$.codegen", "isa", "abi", "options");
         if (codegen.TryGetProperty("isa", out JsonElement isa))
         {
             r.CheckKeys(isa, "$.codegen.isa", "enable", "disable");
-            r.OptStrings(isa, "enable", "$.codegen.isa");
-            r.OptStrings(isa, "disable", "$.codegen.isa");
+            if (isa.TryGetProperty("disable", out JsonElement disable))
+                r.ForEach(disable, "$.codegen.isa.disable", (e, p) => m.IsaDisable.Add(ReadExtension(r, e, p)));
+            if (isa.TryGetProperty("enable", out JsonElement enable))
+                r.ForEach(enable, "$.codegen.isa.enable", (e, p) => m.IsaEnable.Add(ReadExtension(r, e, p)));
         }
         if (codegen.TryGetProperty("abi", out JsonElement abi))
         {
             string a = r.String(abi, "$.codegen.abi");
             if (a != "lp64" && a != "lp64d")
                 throw r.Error("$.codegen.abi", $"'{a}' is not one of: lp64, lp64d");
+            m.Abi = a;
         }
         if (codegen.TryGetProperty("options", out JsonElement options))
         {
             r.ForEach(options, "$.codegen.options", (e, p) =>
             {
-                JsonElement v = e;
-                string vpath = p;
-                if (e.ValueKind == JsonValueKind.Object)
-                {
-                    r.CheckKeys(e, p, "value", "when", "note");
-                    v = r.Required(e, "value", p);
-                    vpath = p + ".value";
-                    if (e.TryGetProperty("when", out JsonElement w))
-                        ManifestCondition.Read(r, w, p + ".when", true);
-                }
-                string s = r.String(v, vpath);
-                int eq = s.IndexOf('=', StringComparison.Ordinal);
+                ManifestItem item = r.ValueItem(e, p, allowBuildFlags: true);
+                string vpath = e.ValueKind == JsonValueKind.Object ? p + ".value" : p;
+                int eq = item.Value.IndexOf('=', StringComparison.Ordinal);
                 if (eq <= 0)
-                    throw r.Error(vpath, $"'{s}' is not Name=value");
-                if (s.AsSpan(eq + 1).StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                    throw r.Error(vpath, $"'{s}': RyuJIT reads hex without the 0x prefix");
+                    throw r.Error(vpath, $"'{item.Value}' is not Name=value");
+                if (item.Value.AsSpan(eq + 1).StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    throw r.Error(vpath, $"'{item.Value}': RyuJIT reads hex without the 0x prefix");
+                m.CodegenOptions.Add(item);
             });
         }
     }
 
-    private static void ReadPostlinkStep(ManifestReader r, JsonElement e, string path)
+    private static ManifestItem ReadExtension(ManifestReader r, JsonElement e, string path)
+    {
+        ManifestItem item = r.ValueItem(e, path);
+        if (!item.Value.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c)) || !char.IsAsciiLetterLower(item.Value[0]))
+            throw r.Error(path, $"'{item.Value}' is not an extension name (lowercase, for example 'zba')");
+        return item;
+    }
+
+    private static ManifestPostlinkStep ReadPostlinkStep(ManifestReader r, JsonElement e, string path)
     {
         r.CheckKeys(e, path, "tool", "args", "when", "note");
         string tool = r.String(r.Required(e, "tool", path), path + ".tool");
         if (tool != "patch_elf")
             throw r.Error(path + ".tool", $"'{tool}' is not a tool built into bflat (patch_elf)");
-        r.OptStrings(e, "args", path);
-        r.OptWhen(e, path);
+        var step = new ManifestPostlinkStep
+        {
+            Tool = tool,
+            When = e.TryGetProperty("when", out JsonElement w) ? ManifestCondition.Read(r, w, path + ".when", true) : null,
+        };
+        if (e.TryGetProperty("args", out JsonElement args))
+            r.ForEach(args, path + ".args", (a, p) => step.Args.Add(r.ValueItem(a, p, allowBuildFlags: true)));
+        return step;
     }
 
     private static ManifestTest ReadTest(ManifestReader r, JsonElement e, string path)
@@ -834,12 +874,16 @@ internal sealed class ManifestReader
         return new ManifestItem { Value = RelPath(Required(e, "file", path), path + ".file"), When = OptWhen(e, path) };
     }
 
-    public ManifestItem ValueItem(JsonElement e, string path)
+    public ManifestItem ValueItem(JsonElement e, string path, bool allowBuildFlags = false)
     {
         if (e.ValueKind == JsonValueKind.String)
             return new ManifestItem { Value = String(e, path) };
         CheckKeys(e, path, "value", "when", "note");
-        return new ManifestItem { Value = String(Required(e, "value", path), path + ".value"), When = OptWhen(e, path) };
+        return new ManifestItem
+        {
+            Value = String(Required(e, "value", path), path + ".value"),
+            When = e.TryGetProperty("when", out JsonElement w) ? ManifestCondition.Read(this, w, path + ".when", allowBuildFlags) : null,
+        };
     }
 }
 
@@ -859,9 +903,12 @@ internal sealed class ManifestException : Exception
 /// </summary>
 internal sealed class ManifestLink
 {
+    /// <summary>The selected platform, or null for a link of modules only (see <see cref="ForModules"/>).</summary>
     public BflatManifest Platform { get; private set; }
     public ManifestTarget Target { get; private set; }
     public List<BflatManifest> Manifests { get; } = new List<BflatManifest>();
+    /// <summary>The manifests of <see cref="Manifests"/> that came from <c>--extlib</c> packages.</summary>
+    public HashSet<BflatManifest> Packages { get; } = new HashSet<BflatManifest>();
 
     /// <summary>Loads every module manifest in <c>lib/modules</c>, keyed by name.</summary>
     public static Dictionary<string, BflatManifest> LoadModules(string modulesDir)
@@ -883,35 +930,40 @@ internal sealed class ManifestLink
     }
 
     /// <summary>The platform whose <c>aliases.libc</c> is <paramref name="libc"/>, or null.</summary>
-    public static BflatManifest FindPlatform(Dictionary<string, BflatManifest> modules, string libc)
+    public static BflatManifest FindPlatform(IEnumerable<BflatManifest> manifests, string libc)
     {
-        BflatManifest[] found = modules.Values.Where(m => m.Platform?.LibcAlias == libc).ToArray();
+        BflatManifest[] found = manifests.Where(m => m.Platform?.LibcAlias == libc).ToArray();
         if (found.Length > 1)
             throw new ManifestException($"--libc {libc}: more than one platform has this alias: {string.Join(", ", found.Select(m => m.Path))}");
         return found.Length == 1 ? found[0] : null;
     }
 
     /// <summary>What the conditions of a platform link see.</summary>
-    public static ManifestTarget TargetFor(BflatManifest platform, string eh, string stdlib, bool optimize) => new ManifestTarget
+    public static ManifestTarget TargetFor(BflatManifest platform, ManifestTarget build) => new ManifestTarget
     {
         Arch = platform.Platform.BaseArch,
         Os = platform.Platform.BaseOs,
         Libc = platform.Platform.BaseLibc,
         Platform = platform.Name,
         Flags = new HashSet<string>(platform.Platform.Flags, StringComparer.Ordinal),
-        Eh = eh,
-        Stdlib = stdlib,
-        Optimize = optimize,
+        Eh = build.Eh,
+        Stdlib = build.Stdlib,
+        Optimize = build.Optimize,
+        Verbose = build.Verbose,
+        Compiler = build.Compiler,
     };
 
     /// <summary>
-    /// The platform and the modules it requires. <c>--extlib</c> packages
-    /// are not part of it yet: BuildCommand links them where it always did,
-    /// in front of the linker script.
+    /// The platform, the modules it requires and the <c>--extlib</c>
+    /// packages. A package manifest whose <c>when</c> is false, or that is a
+    /// platform other than the selected one, is left out.
     /// </summary>
-    public static ManifestLink Create(BflatManifest platform, Dictionary<string, BflatManifest> modules, ManifestTarget target)
+    public static ManifestLink Create(BflatManifest platform, Dictionary<string, BflatManifest> modules,
+        ManifestTarget target, IEnumerable<BflatManifest> packages)
     {
         var link = new ManifestLink { Platform = platform, Target = target };
+        if (platform.Platform.BaseArch != "riscv64" || platform.Platform.BaseOs != "linux")
+            throw new ManifestException($"{platform.Path}: this bflat links platforms for linux/riscv64 only");
         link.Add(platform);
         foreach (string name in platform.Platform.Requires)
         {
@@ -921,26 +973,62 @@ internal sealed class ManifestLink
                 throw new ManifestException($"{platform.Path}: required module '{name}' is a platform; one link has one platform");
             link.Add(module);
         }
-
-        foreach (BflatManifest m in link.Manifests)
+        foreach (BflatManifest package in packages)
         {
-            string unimplemented = string.Join(", ", m.UnimplementedSections(package: false));
-            if (unimplemented.Length > 0)
-                throw new ManifestException($"{m.Path}: this bflat does not implement yet: {unimplemented}");
+            if (package.Platform != null || !ManifestCondition.Applies(package.When, target))
+                continue;
+            if (link.Add(package))
+                link.Packages.Add(package);
         }
+        if (platform.Path != null && !modules.ContainsValue(platform))
+            link.Packages.Add(platform);
+        link.Check();
         return link;
     }
 
-    private void Add(BflatManifest m)
+    /// <summary>
+    /// Every module of the layout that is not a platform, for a build that
+    /// selects no platform (<c>--verify-substitutions</c>).
+    /// </summary>
+    public static ManifestLink ForModules(Dictionary<string, BflatManifest> modules, ManifestTarget target)
+    {
+        var link = new ManifestLink { Target = target };
+        foreach (BflatManifest m in modules.Values.Where(m => m.Platform == null))
+            link.Add(m);
+        return link;
+    }
+
+    private bool Add(BflatManifest m)
     {
         if (Manifests.Any(x => x.Name == m.Name))
             throw new ManifestException($"{m.Path}: a manifest named '{m.Name}' is already part of this link");
-        if (ManifestCondition.Applies(m.When, Target))
-            Manifests.Add(m);
+        if (!ManifestCondition.Applies(m.When, Target))
+            return false;
+        Manifests.Add(m);
+        return true;
+    }
+
+    // Rejects what this bflat does not implement, and the merges that
+    // conflict, before anything is built.
+    private void Check()
+    {
+        foreach (BflatManifest m in Manifests)
+        {
+            string unimplemented = string.Join(", ", m.UnimplementedSections(stock: false));
+            if (unimplemented.Length > 0)
+                throw new ManifestException($"{m.Path}: this bflat does not implement yet: {unimplemented}");
+        }
+        _ = Abi;
+        _ = CodegenOptions;
+        _ = Features;
     }
 
     public string LinkerScript => Platform.Resolve(Platform.Platform.LinkerScript);
     public string Entry => Platform.Resolve(Platform.Platform.Entry);
+    public bool HasFlag(string flag) => Target.Flags.Contains(flag);
+
+    private IEnumerable<(BflatManifest Owner, ManifestItem Item)> Items(Func<BflatManifest, List<ManifestItem>> section) =>
+        Manifests.SelectMany(m => section(m).Where(i => ManifestCondition.Applies(i.When, Target)).Select(i => (m, i)));
 
     /// <summary>The objects of one link group, in link order, as absolute paths, with the manifest that declares each.</summary>
     public List<(string Path, BflatManifest Owner)> Objects(ObjectGroup group)
@@ -972,10 +1060,144 @@ internal sealed class ManifestLink
         m.LdOptions.Where(o => ManifestCondition.Applies(o.When, Target))
             .Select(o => o.Value.Replace("{dir}", m.Dir, StringComparison.Ordinal).Replace("{libpath}", libPath, StringComparison.Ordinal));
 
-    // The link command is written in pieces (BuildCommand puts libc.a, crt
-    // and the --extlib packages between them). The wraps and ld options of a
-    // manifest go directly after its first object, and only once; this keeps
-    // the command in the order that it had when the module list was code.
+    /// <summary>The files of an ILC list, as absolute paths. A missing file is an error.</summary>
+    public List<string> Files(Func<BflatManifest, List<ManifestItem>> section)
+    {
+        var files = new List<string>();
+        foreach ((BflatManifest m, ManifestItem item) in Items(section))
+        {
+            string path = m.Resolve(item.Value);
+            if (!File.Exists(path))
+                throw new ManifestException($"{m.Path}: '{item.Value}' not found");
+            files.Add(path);
+        }
+        return files;
+    }
+
+    /// <summary>The archives (<c>.a</c>) that the package manifests link: bflat normalizes their float-ABI marker.</summary>
+    public IEnumerable<string> PackageArchives() =>
+        Manifests.Where(Packages.Contains).SelectMany(m => m.EffectiveObjects()
+            .Where(o => ManifestCondition.Applies(o.When, Target) && o.File.EndsWith(".a", StringComparison.Ordinal))
+            .Select(o => m.Resolve(o.File)));
+
+    /// <summary>The managed references (<c>ilc.references</c>), with the file and the assembly name of each.</summary>
+    public List<(BflatManifest Owner, ManifestItem Item)> References() => Items(m => m.IlcReferences).ToList();
+
+    /// <summary>The values of an ILC list, without duplicates, in load order.</summary>
+    public List<string> Values(Func<BflatManifest, List<ManifestItem>> section) =>
+        Items(section).Select(x => x.Item.Value).Distinct(StringComparer.Ordinal).ToList();
+
+    /// <summary>The feature switches. Two manifests that give one switch different values are an error.</summary>
+    public Dictionary<string, bool> Features
+    {
+        get
+        {
+            var features = new Dictionary<string, bool>(StringComparer.Ordinal);
+            var owners = new Dictionary<string, BflatManifest>(StringComparer.Ordinal);
+            foreach (BflatManifest m in Manifests)
+            {
+                foreach ((string name, bool value) in m.IlcFeatures)
+                {
+                    if (features.TryGetValue(name, out bool other) && other != value)
+                        throw new ManifestException($"{m.Path}: feature switch '{name}' conflicts with {owners[name].Path}");
+                    features[name] = value;
+                    owners.TryAdd(name, m);
+                }
+            }
+            return features;
+        }
+    }
+
+    /// <summary>The target ABI, or null. Two manifests that give different ABIs are an error.</summary>
+    public string Abi
+    {
+        get
+        {
+            BflatManifest first = Manifests.FirstOrDefault(m => m.Abi != null);
+            BflatManifest other = Manifests.FirstOrDefault(m => m.Abi != null && m.Abi != first.Abi);
+            if (other != null)
+                throw new ManifestException($"{other.Path}: codegen.abi '{other.Abi}' conflicts with '{first.Abi}' in {first.Path}");
+            return first?.Abi;
+        }
+    }
+
+    /// <summary>
+    /// The RyuJIT options, <c>Name=value</c>, in load order. A repeated
+    /// option with the same value is written once; with a different value it
+    /// is an error.
+    /// </summary>
+    public List<string> CodegenOptions
+    {
+        get
+        {
+            var options = new List<string>();
+            var values = new Dictionary<string, (string Value, BflatManifest Owner)>(StringComparer.OrdinalIgnoreCase);
+            foreach ((BflatManifest m, ManifestItem item) in Items(m => m.CodegenOptions))
+            {
+                int eq = item.Value.IndexOf('=', StringComparison.Ordinal);
+                string name = item.Value[..eq];
+                string value = item.Value[(eq + 1)..];
+                if (values.TryGetValue(name, out (string Value, BflatManifest Owner) seen))
+                {
+                    if (seen.Value != value)
+                        throw new ManifestException($"{m.Path}: codegen option '{name}={value}' conflicts with '{name}={seen.Value}' in {seen.Owner.Path}");
+                    continue;
+                }
+                values.Add(name, (value, m));
+                options.Add(item.Value);
+            }
+            return options;
+        }
+    }
+
+    /// <summary>The value that the manifests give a RyuJIT option, or null.</summary>
+    public string CodegenOption(string name)
+    {
+        string prefix = name + "=";
+        string option = CodegenOptions.FirstOrDefault(o => o.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        return option?[prefix.Length..];
+    }
+
+    /// <summary>
+    /// The instruction-set changes, as for <c>-m</c>: <c>-ext</c> for each
+    /// disabled extension and <c>ext</c> for each enabled one. An enable wins
+    /// over a disable. <paramref name="modeled"/> filters out the extensions
+    /// that the compiler package does not know, so one manifest serves
+    /// several compiler generations.
+    /// </summary>
+    public string Isa(Func<string, bool> modeled)
+    {
+        var names = new List<string>();
+        foreach ((BflatManifest _, ManifestItem item) in Items(m => m.IsaDisable).Concat(Items(m => m.IsaEnable)))
+        {
+            if (!names.Contains(item.Value))
+                names.Add(item.Value);
+        }
+        var enabled = new HashSet<string>(Items(m => m.IsaEnable).Select(x => x.Item.Value), StringComparer.Ordinal);
+        return string.Join(",", names.Where(modeled).Select(n => enabled.Contains(n) ? n : "-" + n));
+    }
+
+    /// <summary>The post-link steps that apply, in load order, with their arguments.</summary>
+    public List<(string Tool, List<string> Args)> PostlinkSteps() =>
+        Manifests
+            .SelectMany(m => m.Postlink)
+            .Where(step => ManifestCondition.Applies(step.When, Target))
+            .Select(step => (step.Tool, step.Args.Where(a => ManifestCondition.Applies(a.When, Target)).Select(a => a.Value).ToList()))
+            .ToList();
+
+    /// <summary>The image checks that some manifest turns on.</summary>
+    public ManifestChecks Checks => new ManifestChecks
+    {
+        Float = Manifests.Any(m => m.Checks?.Float == true),
+        Compressed = Manifests.Any(m => m.Checks?.Compressed == true),
+        Atomic = Manifests.Any(m => m.Checks?.Atomic == true),
+        IlFloat = Manifests.Any(m => m.Checks?.IlFloat == true),
+    };
+
+    // The link command is written in pieces (BuildCommand puts libc.a and crt
+    // between them). The wraps and ld options of a manifest go directly after
+    // its first object, and only once; this keeps the command in the order
+    // that it had when the module list was code.
     private readonly HashSet<BflatManifest> _optionsWritten = new HashSet<BflatManifest>();
     private readonly HashSet<string> _wrapsWritten = new HashSet<string>(StringComparer.Ordinal);
 
@@ -1018,23 +1240,5 @@ internal sealed class ManifestLink
         }
         foreach (string option in LdOptions(m, LibPath))
             ld.Append(option + " ");
-    }
-
-    public List<string> Files(Func<BflatManifest, List<ManifestItem>> section)
-    {
-        var files = new List<string>();
-        foreach (BflatManifest m in Manifests)
-        {
-            foreach (ManifestItem item in section(m))
-            {
-                if (!ManifestCondition.Applies(item.When, Target))
-                    continue;
-                string path = m.Resolve(item.Value);
-                if (!File.Exists(path))
-                    throw new ManifestException($"{m.Path}: '{item.Value}' not found");
-                files.Add(path);
-            }
-        }
-        return files;
     }
 }

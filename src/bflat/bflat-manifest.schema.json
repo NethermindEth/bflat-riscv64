@@ -238,11 +238,25 @@
               "minItems": 1
             }
           ]
+        },
+        "compiler": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/capability"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/capability"
+              },
+              "minItems": 1
+            }
+          ]
         }
       }
     },
     "codegenCondition": {
-      "description": "A condition that can also test \"optimize\" (true unless -O0).",
+      "description": "A condition that can also test the build: \"optimize\" (true unless -O0) and \"verbose\" (-v). Valid in codegen.options and postlink.",
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
@@ -268,7 +282,13 @@
         "stdlib": {
           "$ref": "#/$defs/condition/properties/stdlib"
         },
+        "compiler": {
+          "$ref": "#/$defs/condition/properties/compiler"
+        },
         "optimize": {
+          "type": "boolean"
+        },
+        "verbose": {
           "type": "boolean"
         }
       }
@@ -505,11 +525,7 @@
         "features": {
           "type": "object",
           "additionalProperties": {
-            "type": [
-              "boolean",
-              "string",
-              "number"
-            ]
+            "type": "boolean"
           }
         },
         "direct_pinvoke": {
@@ -581,10 +597,32 @@
     },
     "isaList": {
       "type": "array",
-      "uniqueItems": true,
       "items": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9]*$"
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*$"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*$"
+              },
+              "when": {
+                "$ref": "#/$defs/condition"
+              },
+              "note": {
+                "$ref": "#/$defs/note"
+              }
+            }
+          }
+        ]
       }
     },
     "codegenOption": {
@@ -634,10 +672,13 @@
           ]
         },
         "args": {
-          "$ref": "#/$defs/strings"
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildValueItem"
+          }
         },
         "when": {
-          "$ref": "#/$defs/condition"
+          "$ref": "#/$defs/codegenCondition"
         },
         "note": {
           "$ref": "#/$defs/note"
@@ -821,6 +862,38 @@
           "$ref": "#/$defs/note"
         }
       }
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "buildValueItem": {
+      "description": "A string value, as a string or as an object with a condition that can test the build.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "string",
+              "minLength": 1
+            },
+            "when": {
+              "$ref": "#/$defs/codegenCondition"
+            },
+            "note": {
+              "$ref": "#/$defs/note"
+            }
+          }
+        }
+      ]
     }
   }
 }

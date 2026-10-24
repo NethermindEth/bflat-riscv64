@@ -4,5 +4,14 @@
   "name": "ubootstrap",
   "description": "The .NET runtime bootstrap for an OS-less guest",
   "sources": [{"file": "module.cpp"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 10}]
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 10}],
+  "ilc": {
+    "features": {"System.Globalization.Invariant": true},
+    "direct_pinvoke": [
+      {
+        "value": "__Internal",
+        "note": "A statically linked guest has no loader: the precompiles that bindings packages declare as [DllImport(\"__Internal\")] become ordinary calls to the linked symbols."
+      }
+    ]
+  }
 }

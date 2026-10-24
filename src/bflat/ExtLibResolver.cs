@@ -24,22 +24,26 @@ using System.Threading.Tasks;
 
 using Internal.TypeSystem;
 
-// Resolves --extlib specs into concrete file paths.
+// Resolves --extlib specs into their manifests, and the manifests into
+// concrete file paths.
 //
 // Supported spec formats:
 //   1. https://github.com/owner/repo:tag   – GitHub release containing a single .nupkg
-//   2. path or URL ending in .nupkg        – extract the package and read *.bflat.manifest inside
+//   2. path or URL ending in .nupkg        – extract the package and read every *.bflat.manifest inside
 //   3. path or URL ending in .bflat.manifest – use the manifest directly
+//
+// A package can hold several manifests: for example the platform of a zkVM
+// and the platform of its simulator. BuildCommand selects among them.
 //
 // In every case, file paths in the manifest are resolved relative to the
 // MANIFEST FILE'S OWN DIRECTORY (not the nupkg root). A package ships the
 // manifest next to the library it points at, so bare sibling names work both
 // when the package is extracted and when the manifest is used standalone.
 //
-// The manifest is schema 2 (docs/manifest.md) when it has a "schema" key. A
-// package can then give objects, link.wrap and ilc.references, each with its
-// own "when"; bflat links the objects in front of the linker script, where
-// schema 1 static libraries always went. Without "schema" it is schema 1:
+// The manifest is schema 2 (docs/manifest.md) when it has a "schema" key; it
+// can then be a platform, and in a platform link it takes part like any
+// module. With a stock target a package can give objects, link.wrap and
+// ilc.references only. Without "schema" it is schema 1:
 // {
 //   "name": "...",
 //   "builds": [
@@ -91,11 +95,9 @@ internal static class ExtLibResolver
     // Public entry point
     // -------------------------------------------------------------------------
 
-    // Resolve a single --extlib spec and return the paths to the library files.
+    // Resolve a single --extlib spec and return the paths of its manifests.
     // tempDir is used for downloads and nupkg extractions.
-    public static async Task<Result> Resolve(
-        string spec, string tempDir, bool verbose,
-        ManifestTarget target, string libc)
+    public static async Task<List<string>> ResolveManifests(string spec, string tempDir, bool verbose)
     {
         Directory.CreateDirectory(tempDir);
 
@@ -104,28 +106,50 @@ internal static class ExtLibResolver
 
         // Case 1: GitHub repo:version
         if (IsGitHubRepoWithVersion(spec))
-            return await ResolveFromGitHubRelease(spec, tempDir, verbose, target, libc, httpClient);
+            return await ResolveFromGitHubRelease(spec, tempDir, verbose, httpClient);
 
         // Case 2: .nupkg (URL or local path)
         if (spec.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
         {
             string nupkgPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
             string extractDir = ExtractNupkg(nupkgPath, verbose);
-            string manifestPath = FindManifestInDirectory(extractDir);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
+            return FindManifestsInDirectory(extractDir);
         }
 
         // Case 3: .bflat.manifest (URL or local path)
         if (spec.EndsWith(".bflat.manifest", StringComparison.OrdinalIgnoreCase))
         {
             string manifestPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
+            return new List<string> { manifestPath };
         }
 
         throw new Exception(
             $"Cannot determine extlib type from '{spec}'. " +
             "Expected: GitHub repo URL with version tag (https://github.com/owner/repo:tag), " +
             "a .nupkg path/URL, or a .bflat.manifest path/URL.");
+    }
+
+    // Read the manifests of one package. A schema 2 manifest is returned as
+    // it is: its "when" is evaluated later, once the platform is known. A
+    // schema 1 manifest becomes its first builds[] entry that matches the
+    // target, or nothing.
+    public static List<BflatManifest> LoadPackage(List<string> manifestPaths, string arch, string os, string libc)
+    {
+        var manifests = new List<BflatManifest>();
+        foreach (string manifestPath in manifestPaths)
+        {
+            using JsonDocument doc = ManifestReader.Parse(manifestPath);
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new Exception($"Manifest '{manifestPath}' is not a JSON object");
+
+            BflatManifest manifest = root.TryGetProperty("schema", out _)
+                ? BflatManifest.ReadSchema2(new ManifestReader(manifestPath), root, manifestPath)
+                : BflatManifest.ReadSchema1(manifestPath, root, arch, os, libc);
+            if (manifest != null)
+                manifests.Add(manifest);
+        }
+        return manifests;
     }
 
     // -------------------------------------------------------------------------
@@ -183,9 +207,8 @@ internal static class ExtLibResolver
     // Case 1: GitHub repo:version
     // -------------------------------------------------------------------------
 
-    private static async Task<Result> ResolveFromGitHubRelease(
+    private static async Task<List<string>> ResolveFromGitHubRelease(
         string spec, string tempDir, bool verbose,
-        ManifestTarget target, string libc,
         HttpClient httpClient)
     {
         // Split "https://github.com/owner/repo:version" at the version colon
@@ -250,8 +273,7 @@ internal static class ExtLibResolver
 
         // Extract and locate the manifest
         string extractDir = ExtractNupkg(nupkgPath, verbose);
-        string manifestPath = FindManifestInDirectory(extractDir);
-        return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
+        return FindManifestsInDirectory(extractDir);
     }
 
     // -------------------------------------------------------------------------
@@ -283,62 +305,35 @@ internal static class ExtLibResolver
         return extractDir;
     }
 
-    // Find the single *.bflat.manifest file inside a directory tree.
-    private static string FindManifestInDirectory(string dir)
+    // Find the *.bflat.manifest files inside a directory tree.
+    private static List<string> FindManifestsInDirectory(string dir)
     {
         var manifests = Directory.GetFiles(dir, "*.bflat.manifest", SearchOption.AllDirectories);
 
         if (manifests.Length == 0)
             throw new Exception($"No *.bflat.manifest file found in {dir}");
 
-        if (manifests.Length > 1)
-            throw new Exception(
-                $"Multiple *.bflat.manifest files found in {dir}: {string.Join(", ", manifests)}");
-
-        return manifests[0];
+        Array.Sort(manifests, StringComparer.Ordinal);
+        return new List<string>(manifests);
     }
 
     // -------------------------------------------------------------------------
     // Manifest parsing (Cases 2 and 3)
     // -------------------------------------------------------------------------
 
-    // Parse a *.bflat.manifest file, match it against the target, and return
-    // absolute paths to its files. Paths are resolved relative to the
-    // manifest file's own directory. This is the one base that is correct for
-    // both consumption modes: an extracted .nupkg ships the manifest next to
-    // its libraries (runtimes/<rid>/native/), and a standalone .bflat.manifest
-    // is used in place. Resolving a .nupkg against its root instead broke
-    // packages whose manifest references sibling files by bare name (e.g.
-    // static_lib "libziskos.a").
-    private static Result ParseManifestAndResolveFiles(
-        string manifestPath, bool verbose,
-        ManifestTarget target, string libc,
-        string tempDir)
+    // The files that one package manifest gives a stock target, as absolute
+    // paths. Paths are resolved relative to the manifest file's own
+    // directory. This is the one base that is correct for both consumption
+    // modes: an extracted .nupkg ships the manifest next to its libraries
+    // (runtimes/<rid>/native/), and a standalone .bflat.manifest is used in
+    // place. Resolving a .nupkg against its root instead broke packages whose
+    // manifest references sibling files by bare name (e.g. static_lib
+    // "libziskos.a").
+    public static Result Contributions(BflatManifest manifest, ManifestTarget target, string tempDir, bool verbose)
     {
-        using JsonDocument doc = ManifestReader.Parse(manifestPath);
-        JsonElement manifestRoot = doc.RootElement;
-        if (manifestRoot.ValueKind != JsonValueKind.Object)
-            throw new Exception($"Manifest '{manifestPath}' is not a JSON object");
-
-        BflatManifest manifest;
-        if (manifestRoot.TryGetProperty("schema", out _))
-        {
-            manifest = BflatManifest.ReadSchema2(new ManifestReader(manifestPath), manifestRoot, manifestPath);
-            if (!ManifestCondition.Applies(manifest.When, target))
-                manifest = null;
-            string unimplemented = manifest == null ? "" : string.Join(", ", manifest.UnimplementedSections(package: true));
-            if (unimplemented.Length > 0)
-                throw new Exception($"Manifest '{manifestPath}': this bflat does not implement yet for --extlib packages: {unimplemented}");
-        }
-        else
-        {
-            manifest = BflatManifest.ReadSchema1(manifestPath, manifestRoot, target.Arch, target.Os, libc);
-        }
-
-        if (manifest == null)
-            throw new Exception(
-                $"No matching build in manifest '{manifestPath}' " +
-                $"for arch={target.Arch}, os={target.Os}, libc={libc ?? "any"}");
+        string unimplemented = string.Join(", ", manifest.UnimplementedSections(stock: true));
+        if (unimplemented.Length > 0)
+            throw new Exception($"Manifest '{manifest.Path}': without a platform, a package can give objects, wraps and references only, not: {unimplemented}");
 
         var result = new Result();
 
@@ -349,7 +344,7 @@ internal static class ExtLibResolver
             string absPath = manifest.Resolve(obj.File);
             if (!File.Exists(absPath))
                 throw new Exception(
-                    $"Static library not found: {absPath} (referenced from manifest '{manifestPath}')");
+                    $"Static library not found: {absPath} (referenced from manifest '{manifest.Path}')");
 
             result.StaticLibPaths.Add(absPath);
 
@@ -367,45 +362,54 @@ internal static class ExtLibResolver
         {
             if (!ManifestCondition.Applies(reference.When, target))
                 continue;
-            string absPath = manifest.Resolve(reference.Value);
-            if (!File.Exists(absPath))
-            {
-                if (verbose)
-                    Console.WriteLine($"Warning: dotnet library not found: {absPath}, skipping");
-                continue;
-            }
-
-            // If the DLL filename doesn't already match the assembly name, copy it so it does.
-            // The compiler uses the filename as the reference identity.
-            string dotnetAssemblyName = reference.Assembly;
-            if (!string.IsNullOrEmpty(dotnetAssemblyName))
-            {
-                string expectedName = dotnetAssemblyName + ".dll";
-                if (!Path.GetFileName(absPath).Equals(expectedName, StringComparison.OrdinalIgnoreCase))
-                {
-                    string renamedPath = Path.Combine(tempDir, expectedName);
-                    try
-                    {
-                        File.Copy(absPath, renamedPath, overwrite: true);
-                        absPath = renamedPath;
-                        if (verbose)
-                            Console.WriteLine($"Copied dotnet library as '{renamedPath}' to match assembly name");
-                    }
-                    catch (Exception ex)
-                    {
-                        if (verbose)
-                            Console.WriteLine(
-                                $"Warning: Failed to copy dotnet library to '{expectedName}': {ex.Message}");
-                    }
-                }
-            }
-
-            result.DotnetLibPaths.Add(absPath);
-
-            if (verbose)
-                Console.WriteLine($"Found dotnet library: {absPath}");
+            string absPath = ResolveReference(manifest, reference, tempDir, verbose);
+            if (absPath != null)
+                result.DotnetLibPaths.Add(absPath);
         }
 
         return result;
+    }
+
+    // The file of one ilc.references item, or null (with a warning under -v)
+    // when it is missing. If the file name is not the assembly name, the
+    // file is copied so that it is: the compiler uses the file name as the
+    // reference identity.
+    public static string ResolveReference(BflatManifest manifest, ManifestItem reference, string tempDir, bool verbose)
+    {
+        string absPath = manifest.Resolve(reference.Value);
+        if (!File.Exists(absPath))
+        {
+            if (verbose)
+                Console.WriteLine($"Warning: dotnet library not found: {absPath}, skipping");
+            return null;
+        }
+
+        string dotnetAssemblyName = reference.Assembly;
+        if (!string.IsNullOrEmpty(dotnetAssemblyName))
+        {
+            string expectedName = dotnetAssemblyName + ".dll";
+            if (!Path.GetFileName(absPath).Equals(expectedName, StringComparison.OrdinalIgnoreCase))
+            {
+                string renamedPath = Path.Combine(tempDir, expectedName);
+                try
+                {
+                    Directory.CreateDirectory(tempDir);
+                    File.Copy(absPath, renamedPath, overwrite: true);
+                    absPath = renamedPath;
+                    if (verbose)
+                        Console.WriteLine($"Copied dotnet library as '{renamedPath}' to match assembly name");
+                }
+                catch (Exception ex)
+                {
+                    if (verbose)
+                        Console.WriteLine(
+                            $"Warning: Failed to copy dotnet library to '{expectedName}': {ex.Message}");
+                }
+            }
+        }
+
+        if (verbose)
+            Console.WriteLine($"Found dotnet library: {absPath}");
+        return absPath;
     }
 }
