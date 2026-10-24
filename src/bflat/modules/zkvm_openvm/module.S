@@ -110,7 +110,7 @@ _start:
     .cfi_endproc
 
 /* void *__wrap_memcpy(void *dst, const void *src, size_t n), reached through
- * --wrap=memcpy (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memcpy (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's generic C memcpy moves 32-bit words and merges a misaligned source
  * with 32-bit shifts. OpenVM's rv64 loads and stores take any address at the
@@ -179,7 +179,7 @@ __wrap_memcpy:
     .size   __wrap_memcpy, .-__wrap_memcpy
 
 /* void *__wrap_memmove(void *dst, const void *src, size_t n), reached through
- * --wrap=memmove (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memmove (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's memmove checks for overlap and tail-calls memcpy for almost every
  * call. A destination below the source, or past its end, is copied forward by
@@ -251,7 +251,7 @@ __wrap_memmove:
     .size   __wrap_memmove, .-__wrap_memmove
 
 /* void *__wrap_memset(void *dst, int c, size_t n), reached through
- * --wrap=memset (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memset (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's memset stores 32-bit words before its 64-bit loop. Like
  * __wrap_memcpy, this stores unaligned 64-bit words, 32 bytes per iteration,

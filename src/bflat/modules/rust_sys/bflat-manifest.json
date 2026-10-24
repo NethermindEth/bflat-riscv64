@@ -1,0 +1,9 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "rust_sys",
+  "description": "The ziskos Rust allocator bridged onto the shared bump heap",
+  "sources": [{"file": "module.c"}],
+  "objects": [{"file": "module.o", "group": "normal", "order": 20}],
+  "link": {"wrap": ["sys_alloc_aligned"]}
+}

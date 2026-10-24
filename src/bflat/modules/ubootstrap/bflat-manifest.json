@@ -1,0 +1,8 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "ubootstrap",
+  "description": "The .NET runtime bootstrap for an OS-less guest",
+  "sources": [{"file": "module.cpp"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 10}]
+}

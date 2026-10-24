@@ -78,99 +78,131 @@ function build_modules()
 			sudo touch "${stubs_dir}/stubs-lp64.h" 2>/dev/null || true
 	fi
 
-	pushd ${TOP_DIR}/src/bflat/modules
-		for mod in $(ls) ; do
-			if [ -d "$mod" ] ; then
-				echo Building module $mod
-				pushd $mod
-					if [ -f module.c ] ; then
-						# Compile module as C (clang + LTO so lld can do cross-module opt)
-						# -DBFLAT_DOTNET: some module bodies are contract-versioned
-						# against the target runtime (the C/C++ analog of the .S
-						# --defsym below, e.g. ubootstrap's classlib table slot 4).
-						clang ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} -c module.c -o module.o
-						on_fail $? "Failed to compile module $mod (C)"
-					fi
-					if [ -f module.S ] ; then
-						# Compile module as assembly (no LTO — bitcode doesn't apply)
-						# --defsym BFLAT_DOTNET: some .S bodies are contract-versioned
-						# against the target .NET runtime (e.g. the ref-assign write
-						# barrier's t3 post-increment, dropped in .NET 11).
-						riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 --defsym BFLAT_DOTNET=${dotnet_version} module.S -o module.o
-						on_fail $? "Failed to compile module $mod (Assembly)"
-					fi
-					if [ -f module.cpp ] ; then
-						# Compile module as C++ (clang + LTO)
-						clang++ ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} -c module.cpp -o module.o
-						on_fail $? "Failed to compile module $mod (C++)"
-					fi
-					if [ -f module.o ] ; then
-						# Fix up ABI marker — only meaningful for ELF objects;
-						# LTO bitcode files are not ELF, ABI is handled at LTO link time.
-						magic=$(head -c 4 module.o | xxd -p)
-						if [ "$magic" = "7f454c46" ] ; then
-							printf '\x00' | dd of="module.o" bs=1 seek=$((0x30)) count=1 conv=notrunc status=none
-						fi
-					fi
-					if [ -f module_params.yml ] ; then
-						repo="$(yq -r .options.repo module_params.yml)"
-						tag="$(yq -r .options.tag module_params.yml)"
-						build="$(yq -r .options.commands.build module_params.yml)"
-						release_file="$(yq -r .options.releases.file module_params.yml)"
+	# The module build steps. bflat-modules reads the module manifests
+	# (src/bflat/modules/*/bflat-manifest.json) and writes the list of
+	# module_* calls; this script owns the toolchain and its flags.
+	local mod_name
 
-						# If commands are provided, build from repo
-						if [ "$repo" != "null" ] && [ "$build" != "null" ]; then
-							if [ ! -d src ] ; then
-								if [ "$tag" != "null" ] && [ "$tag" != "" ]; then
-									git clone --branch "${tag}" "${repo}" src
-									on_fail $? "Failed to clone repository ${repo} with tag ${tag}"
-								else
-									git clone "${repo}" src
-									on_fail $? "Failed to clone repository ${repo}"
-								fi
-							fi
-							pushd src
-								bash -c "${build}"
-								on_fail $? "Failed to build module ${mod}"
-							popd
-						# Otherwise, if release file is provided, download from release and unpack
-						elif [ "$repo" != "null" ] && [ "$tag" != "null" ] && [ "$tag" != "" ] && [ "$release_file" != "null" ] && [ "$release_file" != "" ]; then
-							repo_path="$(echo "$repo" | sed -E 's#https?://github\.com/##' | sed -E 's#\.git$##')"
-							on_fail $? "Failed to parse GitHub repository path from ${repo}"
+	function module_begin()
+	{
+		mod_name="$1"
+		echo Building module ${mod_name}
+		pushd "$2" > /dev/null
+	}
 
-							asset_url="https://github.com/${repo_path}/releases/download/${tag}/${release_file}"
-							target_dir="${TOP_DIR}/src/bflat/modules/${mod}/release"
+	function module_end()
+	{
+		popd > /dev/null
+	}
 
-							mkdir -p "${target_dir}"
-							on_fail $? "Failed to create release directory ${target_dir}"
+	# Fix up ABI marker - only meaningful for ELF objects; LTO bitcode files
+	# are not ELF, ABI is handled at LTO link time.
+	function module_fix_abi()
+	{
+		local magic=$(head -c 4 "$1" | xxd -p)
+		if [ "$magic" = "7f454c46" ] ; then
+			printf '\x00' | dd of="$1" bs=1 seek=$((0x30)) count=1 conv=notrunc status=none
+		fi
+	}
 
-							tmp_archive="${target_dir}/${release_file}"
-							curl -L -o "${tmp_archive}" "${asset_url}"
-							on_fail $? "Failed to download release archive ${asset_url}"
+	# module_cc <source> <object> [extra flags...]
+	# Compile as C (clang + LTO so lld can do cross-module opt).
+	# -DBFLAT_DOTNET: some module bodies are contract-versioned against the
+	# target runtime (the C/C++ analog of the .S --defsym below, e.g.
+	# ubootstrap's classlib table slot 4).
+	function module_cc()
+	{
+		local src="$1" out="$2"
+		shift 2
+		clang ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
+		on_fail $? "Failed to compile module ${mod_name} (C)"
+		module_fix_abi "$out"
+	}
 
-							case "${tmp_archive}" in
-								*.tar.gz|*.tgz)
-									tar -xzf "${tmp_archive}" -C "${target_dir}"
-									on_fail $? "Failed to unpack ${tmp_archive}"
-									;;
-								*.tar)
-									tar -xf "${tmp_archive}" -C "${target_dir}"
-									on_fail $? "Failed to unpack ${tmp_archive}"
-									;;
-								*.zip)
-									unzip -o "${tmp_archive}" -d "${target_dir}"
-									on_fail $? "Failed to unpack ${tmp_archive}"
-									;;
-								*)
-									fail "Unsupported release archive format: ${tmp_archive}"
-									;;
-							esac
-						fi
-					fi
-				popd
-			fi
-		done
-	popd
+	# module_cxx <source> <object> [extra flags...]
+	# Compile as C++ (clang + LTO).
+	function module_cxx()
+	{
+		local src="$1" out="$2"
+		shift 2
+		clang++ ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
+		on_fail $? "Failed to compile module ${mod_name} (C++)"
+		module_fix_abi "$out"
+	}
+
+	# module_as <source> <object> [extra flags...]
+	# Assemble (no LTO - bitcode doesn't apply).
+	# --defsym BFLAT_DOTNET: some .S bodies are contract-versioned against
+	# the target .NET runtime (e.g. the ref-assign write barrier's t3
+	# post-increment, dropped in .NET 11).
+	function module_as()
+	{
+		local src="$1" out="$2"
+		shift 2
+		riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 --defsym BFLAT_DOTNET=${dotnet_version} "$@" "$src" -o "$out"
+		on_fail $? "Failed to compile module ${mod_name} (Assembly)"
+		module_fix_abi "$out"
+	}
+
+	# module_fetch_release <repo> <tag> <file> <dir>
+	# Download a GitHub release archive and unpack it into <dir>.
+	function module_fetch_release()
+	{
+		local repo="$1" tag="$2" release_file="$3" target_dir="$4"
+		local repo_path="$(echo "$repo" | sed -E 's#https?://github\.com/##' | sed -E 's#\.git$##')"
+		local asset_url="https://github.com/${repo_path}/releases/download/${tag}/${release_file}"
+
+		mkdir -p "${target_dir}"
+		on_fail $? "Failed to create release directory ${target_dir}"
+
+		local tmp_archive="${target_dir}/${release_file}"
+		curl -L -o "${tmp_archive}" "${asset_url}"
+		on_fail $? "Failed to download release archive ${asset_url}"
+
+		case "${tmp_archive}" in
+			*.tar.gz|*.tgz)
+				tar -xzf "${tmp_archive}" -C "${target_dir}"
+				on_fail $? "Failed to unpack ${tmp_archive}"
+				;;
+			*.tar)
+				tar -xf "${tmp_archive}" -C "${target_dir}"
+				on_fail $? "Failed to unpack ${tmp_archive}"
+				;;
+			*.zip)
+				unzip -o "${tmp_archive}" -d "${target_dir}"
+				on_fail $? "Failed to unpack ${tmp_archive}"
+				;;
+			*)
+				fail "Unsupported release archive format: ${tmp_archive}"
+				;;
+		esac
+	}
+
+	# module_fetch_build <repo> <tag> <dir> <command>...
+	# Clone the repository into <dir> (once) and run the build commands in it.
+	function module_fetch_build()
+	{
+		local repo="$1" tag="$2" target_dir="$3"
+		shift 3
+		if [ ! -d "${target_dir}" ] ; then
+			git clone --branch "${tag}" "${repo}" "${target_dir}"
+			on_fail $? "Failed to clone repository ${repo} with tag ${tag}"
+		fi
+		pushd "${target_dir}" > /dev/null
+			local cmd
+			for cmd in "$@" ; do
+				bash -c "${cmd}"
+				on_fail $? "Failed to build module ${mod_name}"
+			done
+		popd > /dev/null
+	}
+
+	local plan="${TOP_DIR}/src/bflat-modules/obj/modules.plan.sh"
+	mkdir -p "$(dirname "${plan}")"
+	dotnet run --project "${TOP_DIR}/src/bflat-modules/bflat-modules.csproj" -c Release -- \
+		plan "${TOP_DIR}/src/bflat/modules" "${plan}"
+	on_fail $? "Failed to read the module manifests"
+	. "${plan}"
 }
 
 case $flavor in

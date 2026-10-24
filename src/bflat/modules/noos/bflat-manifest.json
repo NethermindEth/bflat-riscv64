@@ -1,0 +1,16 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "noos",
+  "description": "Displaces the OS surface the runtime's Unix PAL reaches for",
+  "sources": [{"file": "module.c"}],
+  "objects": [
+    {
+      "file": "module.o",
+      "group": "pre-libc",
+      "order": 20,
+      "when": {"flag": "noos"},
+      "note": "The OS surface the runtime's Unix PAL reaches for. PalUnix.cpp.o is linked whole because RhFailFast pulls it, and libSystem.Native's pal_io comes with it, so 150 libc entry points go live and drag 96 musl members in: crash dumps, dlopen, CPU counting, directory walking. None can be serviced here. Same rule as nothread: this works by definition, so it must precede libc.a."
+    }
+  ]
+}

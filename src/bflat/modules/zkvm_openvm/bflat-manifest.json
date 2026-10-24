@@ -1,0 +1,17 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "zkvm_openvm",
+  "description": "The OpenVM platform: entry point and memory map",
+  "note": "The wraps of the memory primitives in module.S are still declared in pal, with a platform condition, so that the link command stays as it was. They move here in a separate step. The platform moves to bflat-openvm when bflat reads platforms from --extlib packages.",
+  "sources": [{"file": "module.S"}],
+  "platform": {
+    "aliases": {"libc": "openvm"},
+    "base": {"os": "linux", "arch": "riscv64", "libc": "musl"},
+    "requires": ["nofp", "ubootstrap", "stdcppshim", "rhp", "gs_cookie", "rhp_native", "pal", "eh", "tls",
+                 "rng_stupid", "rust_sys", "ugc-zero", "nothread", "noos", "zisk_subst"],
+    "flags": ["no-atomics", "noos", "no-console"],
+    "linker_script": "script.ld",
+    "entry": "module.o"
+  }
+}

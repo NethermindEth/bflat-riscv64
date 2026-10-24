@@ -199,157 +199,6 @@ internal class BuildCommand : CommandBase
         }
     }
 
-    /// <summary>
-    /// Reads one options section of a module's params.yml (packed into the
-    /// layout as &lt;module&gt;.params.yml) and yields the entries whose
-    /// applicability conditions hold. An entry is "- &lt;kind&gt;: &lt;value&gt;"
-    /// optionally followed by conditions on the same list item:
-    ///   libc: zisk            (scalar)
-    ///   libc: [zisk, musl]    (flow list)
-    ///   arch: riscv64
-    ///   os:   linux
-    ///   eh:   unwind          (or failfast; see --remove-eh)
-    /// Conditions are AND-ed; a missing condition does not constrain. The
-    /// parser is deliberately minimal (no YAML dependency) and fails loudly
-    /// on anything it does not understand.
-    /// </summary>
-    IEnumerable<KeyValuePair<string, string>> ReadModuleParams(string paramsPath,
-        string section, string libc, TargetArchitecture arch, TargetOS os)
-    {
-        var entries = new List<KeyValuePair<string, string>>();
-        if (!File.Exists(paramsPath))
-            return entries;
-
-        string libcName = (libc ?? "").ToLowerInvariant();
-        string archName = arch.ToString().ToLowerInvariant();
-        string osName = os.ToString().ToLowerInvariant();
-        string ehName = _removeEh ? "failfast" : "unwind";
-
-        string currentSection = null;
-        string pendingKind = null;
-        string pendingValue = null;
-        bool pendingApplies = true;
-
-        void Flush()
-        {
-            if (pendingKind != null && pendingApplies)
-                entries.Add(new KeyValuePair<string, string>(pendingKind, pendingValue));
-            pendingKind = null;
-            pendingValue = null;
-            pendingApplies = true;
-        }
-
-        bool ConditionHolds(string key, string val)
-        {
-            string actual = key switch
-            {
-                "libc" => libcName,
-                "arch" => archName,
-                "os" => osName,
-                "eh" => ehName,
-                _ => throw new Exception($"{paramsPath}: unknown condition '{key}'"),
-            };
-            foreach (string candidate in val.Trim().TrimStart('[').TrimEnd(']').Split(','))
-            {
-                if (candidate.Trim().ToLowerInvariant() == actual)
-                    return true;
-            }
-            return false;
-        }
-
-        foreach (string rawLine in File.ReadAllLines(paramsPath))
-        {
-            string line = rawLine.Trim();
-            if (line.Length == 0 || line.StartsWith('#'))
-                continue;
-
-            if (line.StartsWith('-'))
-            {
-                Flush();
-                if (currentSection != section)
-                    continue;
-                int c = line.IndexOf(':');
-                if (c <= 1)
-                    throw new Exception($"{paramsPath}: unsupported entry '{line}' in section '{currentSection}'");
-                pendingKind = line.Substring(1, c - 1).Trim();
-                pendingValue = line.Substring(c + 1).Trim();
-                continue;
-            }
-
-            int colon = line.IndexOf(':');
-            if (colon <= 0)
-                throw new Exception($"{paramsPath}: unsupported line '{line}'");
-            string k = line.Substring(0, colon).Trim();
-            string rest = line.Substring(colon + 1).Trim();
-
-            // Condition attached to the current list entry.
-            if (pendingKind != null && (k == "libc" || k == "arch" || k == "os" || k == "eh"))
-            {
-                pendingApplies &= ConditionHolds(k, rest);
-                continue;
-            }
-
-            // "ld:"/"ilc:" open a section; any "key: value" pair
-            // (repo:, tag:, file:, ...) or another header closes it.
-            Flush();
-            currentSection = rest.Length == 0 ? k : null;
-        }
-        Flush();
-        return entries;
-    }
-
-    /// <summary>
-    /// Appends the linker options a module declares in the options.ld section
-    /// of its params.yml. Every entry must be "- value: &lt;flag&gt;".
-    /// </summary>
-    void AppendModuleParams(StringBuilder ldArgs, string libPath, string moduleName,
-        string libc, TargetArchitecture arch, TargetOS os)
-    {
-        string paramsPath = Path.Combine(libPath, moduleName + ".params.yml");
-        foreach (var entry in ReadModuleParams(paramsPath, "ld", libc, arch, os))
-        {
-            if (entry.Key != "value")
-                throw new Exception($"{paramsPath}: unsupported ld entry kind '{entry.Key}'");
-            if (entry.Value.Length > 0)
-                ldArgs.Append(entry.Value + " ");
-        }
-    }
-
-    /// <summary>
-    /// Collects the ILC-stage files (substitutions XML / body-substitution
-    /// C# snippets) declared by any module's params.yml options.ilc section:
-    ///   - substitutions: file.xml
-    ///   - snippets: file.cs
-    /// File paths are relative to the layout directory. Same per-entry
-    /// libc/arch/os conditions as options.ld.
-    /// </summary>
-    (List<string> Substitutions, List<string> Snippets) CollectModuleIlcFiles(
-        string libPath, string libc, TargetArchitecture arch, TargetOS os)
-    {
-        var substitutions = new List<string>();
-        var snippets = new List<string>();
-        if (!Directory.Exists(libPath))
-            return (substitutions, snippets);
-
-        foreach (string paramsPath in Directory.GetFiles(libPath, "*.params.yml").OrderBy(p => p))
-        {
-            foreach (var entry in ReadModuleParams(paramsPath, "ilc", libc, arch, os))
-            {
-                string fullPath = Path.Combine(libPath, entry.Value);
-                if (!File.Exists(fullPath))
-                    throw new Exception($"{paramsPath}: ilc file '{entry.Value}' not found in layout");
-                switch (entry.Key)
-                {
-                    case "substitutions": substitutions.Add(fullPath); break;
-                    case "snippets": snippets.Add(fullPath); break;
-                    default:
-                        throw new Exception($"{paramsPath}: unsupported ilc entry kind '{entry.Key}'");
-                }
-            }
-        }
-        return (substitutions, snippets);
-    }
-
     void PatchRiscvAbi(string path)
     {
         const long offset = 0x30;
@@ -477,18 +326,18 @@ internal class BuildCommand : CommandBase
 
     /// <summary>
     /// --remove-eh: drop the unwind tables and fail fast on throw instead of
-    /// dispatching. Read by the params.yml "eh:" condition, which is evaluated
-    /// far from the parse result, so it is latched here.
+    /// dispatching. Manifest conditions see it as "eh": "failfast".
     /// </summary>
     private bool _removeEh;
 
     /// <summary>
     /// The zkVM targets: OS-less guests linked from the modules in
     /// src/bflat/modules against a prover's fixed memory map instead of
-    /// against a kernel. They share the entire zkVM link - the same native
-    /// modules, the same soft-float musl, the same ISA gates and managed
-    /// substitutions - and differ only in the entry point and linker script,
-    /// which live in the target's own layout directory (see ZkvmLibPath).
+    /// against a kernel. Each one is a platform manifest in lib/modules (see
+    /// docs/manifest.md), which gives its entry point, linker script and the
+    /// modules it requires. The codegen side (ISA gates, JIT options, defines,
+    /// patch_elf passes) is still keyed on this list; it moves into the
+    /// platform manifests when bflat implements their codegen section.
     /// </summary>
     private static bool IsZkvm(string libc) =>
         libc == "zisk" || libc == "zisk_sim" || libc == "sp1" || libc == "openvm";
@@ -533,15 +382,6 @@ internal class BuildCommand : CommandBase
         return inlined;
     }
 
-    /// <summary>
-    /// Layout directory holding a zkVM target's own script.ld and
-    /// entrypoint.o. Named after the libc, so lib/linux/riscv64/&lt;libc&gt;.
-    /// Everything else the target links comes from the ZisK directory, which
-    /// is where bflat.csproj lays the shared module objects down.
-    /// </summary>
-    private static string ZkvmLibPath(string homePath, string libc) =>
-        Path.Combine(homePath, "lib", "linux", "riscv64", libc);
-
     public override int Handle(ParseResult result)
     {
         _removeEh = result.GetValueForOption(RemoveEhOption);
@@ -549,6 +389,8 @@ internal class BuildCommand : CommandBase
         bool optimizeSpace = result.GetValueForOption(OptimizeSizeOption);
         bool optimizeTime = result.GetValueForOption(OptimizeSpeedOption);
         string homePath = CommonOptions.HomePath;
+        // Only the zkVM crt1.o lives here: musl's, with _start renamed by
+        // bflat.csproj so that the platform entry point can define it.
         string ziskLibPath = Path.Combine(homePath, "lib", "linux", "riscv64", "zisk");
 
         OptimizationMode optimizationMode = OptimizationMode.Blended;
@@ -632,6 +474,42 @@ internal class BuildCommand : CommandBase
             };
         }
 
+        // The manifest-driven part of the link (docs/manifest.md). A zkVM
+        // target is a platform manifest in lib/modules, selected by its --libc
+        // alias. The platform names its entry point, its linker script and
+        // the modules it requires; each module names its objects, wraps and
+        // ILC inputs.
+        string stdlibName = stdlib switch
+        {
+            StandardLibType.DotNet => "dotnet",
+            StandardLibType.Zero => "zero",
+            _ => "none",
+        };
+        string ehName = _removeEh ? "failfast" : "unwind";
+        ManifestLink zkvmLink = null;
+        ManifestTarget manifestTarget;
+        if (IsZkvm(libc))
+        {
+            string modulesPath = Path.Combine(homePath, "lib", "modules");
+            Dictionary<string, BflatManifest> modules = ManifestLink.LoadModules(modulesPath);
+            BflatManifest platform = ManifestLink.FindPlatform(modules, libc)
+                ?? throw new Exception($"--libc {libc}: no platform manifest in {modulesPath} has this alias");
+            manifestTarget = ManifestLink.TargetFor(platform, ehName, stdlibName, optimize: !nooptimize);
+            zkvmLink = ManifestLink.Create(platform, modules, manifestTarget);
+        }
+        else
+        {
+            manifestTarget = new ManifestTarget
+            {
+                Arch = ExtLibResolver.ArchName(targetArchitecture),
+                Os = ExtLibResolver.OsName(targetOS),
+                Libc = libc,
+                Eh = ehName,
+                Stdlib = stdlibName,
+                Optimize = !nooptimize,
+            };
+        }
+
         // Handle extlib resolution synchronously - after we know target arch/os/libc
         string[] extLibSpecs = result.GetValueForOption(ExtLibOption);
         List<string> downloadedLibPaths = new List<string>();
@@ -649,22 +527,22 @@ internal class BuildCommand : CommandBase
                 try
                 {
                     ExtLibResolver.Result extLibResult = ExtLibResolver.Resolve(
-                        spec, tempDir, verbose, targetArchitecture, targetOS, libc).GetAwaiter().GetResult();
+                        spec, tempDir, verbose, manifestTarget, libc).GetAwaiter().GetResult();
 
-                    if (extLibResult.StaticLibPath != null)
+                    foreach (string staticLibPath in extLibResult.StaticLibPaths)
                     {
-                        downloadedLibPaths.Add(extLibResult.StaticLibPath);
+                        downloadedLibPaths.Add(staticLibPath);
 
                         // Patch RISC-V ABI if needed
                         if (targetArchitecture == TargetArchitecture.RiscV64)
-                            PatchRiscvAbiStaticLib(extLibResult.StaticLibPath, verbose);
+                            PatchRiscvAbiStaticLib(staticLibPath, verbose);
                     }
 
-                    if (extLibResult.DotnetLibPath != null)
+                    foreach (string dotnetLibPath in extLibResult.DotnetLibPaths)
                     {
-                        referenceList.Add(extLibResult.DotnetLibPath);
+                        referenceList.Add(dotnetLibPath);
                         if (verbose)
-                            Console.WriteLine($"Added external dotnet reference: {extLibResult.DotnetLibPath}");
+                            Console.WriteLine($"Added external dotnet reference: {dotnetLibPath}");
                     }
 
                     foreach (var sym in extLibResult.WrapSymbols)
@@ -998,8 +876,8 @@ internal class BuildCommand : CommandBase
             [compiledModuleName] = compiledModulePath,
         };
 
-        // zkVM body-substitution machinery, declared by modules in their
-        // params.yml options.ilc sections (e.g. zisk_subst): substitutions XML
+        // zkVM body-substitution machinery, declared by modules in the ilc
+        // section of their manifests (e.g. zisk_subst): substitutions XML
         // for ILC and C# snippet sources compiled against the same references,
         // with accessibility checks ignored so they can touch CoreLib
         // internals/privates; the resulting module is registered so the type
@@ -1007,10 +885,10 @@ internal class BuildCommand : CommandBase
         const string snippetsModuleName = "__ZiskSnippets";
         string snippetsModulePath = null;
         List<string> moduleSubstitutionFiles = new List<string>();
-        if (IsZkvm(libc))
+        if (zkvmLink != null)
         {
-            (moduleSubstitutionFiles, List<string> snippetFiles) =
-                CollectModuleIlcFiles(ziskLibPath, libc, targetArchitecture, targetOS);
+            moduleSubstitutionFiles = zkvmLink.Files(m => m.IlcSubstitutions);
+            List<string> snippetFiles = zkvmLink.Files(m => m.IlcSnippets);
             // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
             // not the public ref assemblies (references): the snippet needs the
             // private nested types (Random.CompatSeedImpl, ...) that ref
@@ -2045,34 +1923,13 @@ internal class BuildCommand : CommandBase
             }
             else if (libc == "musl" || IsZkvm(libc))
             {
-                /* nothread: single-hart replacements for musl's locking and
-                 * thread primitives, which are where its lr/sc/amo* live. The
-                 * bundled musl is built rv64ima, which is right for ZisK
-                 * (rv64imafd) and wrong for SP1 and OpenVM (rv64im): SP1's
-                 * loader panics on the first instruction it cannot decode, and
-                 * OpenVM turns it into a trap.
-                 *
-                 * This works by DEFINITION, not by --wrap: a wrap would leave
-                 * musl's members - and their atomics - in the image. So the
-                 * object MUST precede libc.a here. The linker extracts an
-                 * archive member only to resolve a symbol that is still
-                 * undefined at the point it reaches the archive, so with these
-                 * definitions already in hand it never takes musl's.
-                 *
-                 * ZisK is deliberately excluded and keeps musl's real
-                 * primitives: its decoder is happy with the A extension. */
-                if (libc == "sp1" || libc == "openvm")
-                {
-                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nothread.o")}\" ");
-                    /* noos: the OS surface the runtime's Unix PAL reaches for.
-                     * PalUnix.cpp.o is linked whole because RhFailFast pulls
-                     * it, and libSystem.Native's pal_io comes with it, so 150
-                     * libc entry points go live and drag 96 members of musl in
-                     * - crash dumps, dlopen, CPU counting, directory walking.
-                     * None can be serviced here. Same rule as nothread: this
-                     * works by definition, so it must precede libc.a. */
-                    ldArgs.Append($"\"{Path.Combine(ziskLibPath, "noos.o")}\" ");
-                }
+                /* pre-libc: module objects that work by DEFINITION, not by
+                 * --wrap, so they MUST precede libc.a (nothread and noos; their
+                 * manifests tell why). The linker extracts an archive member
+                 * only to resolve a symbol that is still undefined at the point
+                 * it reaches the archive, so with these definitions already in
+                 * hand it never takes musl's. */
+                zkvmLink?.AppendObjects(ldArgs, ObjectGroup.PreLibc);
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
                 // The zkVM stack is linked with the soft-float (lp64) ABI
                 // marker (see PatchRiscvAbi on crt1.o/crti.o above). The
@@ -2143,85 +2000,23 @@ internal class BuildCommand : CommandBase
             }
 
 
-            if (IsZkvm(libc))
+            if (zkvmLink != null)
             {
-                /* Entry point + linker script for the target being built;
-                 * everything below comes from the shared ZisK directory. */
-                string zkvmLibPath = ZkvmLibPath(homePath, libc);
-                /* Memory map: one linker script per zkVM target, each
-                 * describing that prover's fixed address space. */
-                ldArgs.Append($"-T\"{Path.Combine(zkvmLibPath, "script.ld")}\" ");
-                /* Entry point. zisk_sim reuses ZisK's - it differs only in
-                 * the memory map - while every other target brings its own,
-                 * because _start has to speak that VM's halt protocol. */
-                string entryLibPath = libc == "zisk_sim" ? ziskLibPath : zkvmLibPath;
-                ldArgs.Append($"\"{Path.Combine(entryLibPath, "entrypoint.o")}\" ");
-                /* nofp: FP trap stubs; the math-symbol wrap surface is
-                 * declared in nofp.params.yml. (The musl target links the
-                 * object without these wraps.) */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "nofp.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "nofp", libc, targetArchitecture, targetOS);
-                ldArgs.Append($"--whole-archive ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ubootstrap.o")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "stdcppshim.o")}\" ");
-                /* rhp: the wrap surface is declared in the module's
-                 * module_params.yml (packed as rhp.params.yml). What is NOT
-                 * wrapped anymore, and why the originals work on .NET 10 +
-                 * uGC alloc-context budgets: allocation helpers (upstream
-                 * riscv64 AllocFast.S + GcAllocInternal; only their bump
-                 * fast paths are wrapped, to skip the TLS lookup), thread statics
-                 * (plain TLS field + managed jagged arrays), the Lock family
-                 * incl. DeadlockAwareAcquire (truthful IsHeldByCurrentThread
-                 * breaks recursive cctor cycles), CheckCastAny, cgroup
-                 * initializers, GetDefaultLocaleName, and friends. */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "rhp", libc, targetArchitecture, targetOS);
-
-
-                /* gs_cookie */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "gs_cookie.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "gs_cookie", libc, targetArchitecture, targetOS);
-
-                /* rhp_native: write barriers reduced to the bare store. */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rhp_native.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "rhp_native", libc, targetArchitecture, targetOS);
-
-                /* pal */
-                /* pal: syscall surface, bump allocator, FP-free printf/scanf
-                 * and the zisk exit protocol. The wrap surface is declared in
-                 * the module's module_params.yml (packed as pal.params.yml). */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "pal.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "pal", libc, targetArchitecture, targetOS);
-
-                /* eh: synthetic program headers so libunwind can find
-                 * .eh_frame_hdr in an image no loader ever mapped. Dropped,
-                 * with the unwind tables themselves, under --remove-eh. */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "eh.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "eh", libc, targetArchitecture, targetOS);
-
-                /* tls */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "tls.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "tls", libc, targetArchitecture, targetOS);
-                ldArgs.Append($"--no-whole-archive ");
-
-                /* rng */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rng_stupid.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "rng_stupid", libc, targetArchitecture, targetOS);
-
-                /* rust_sys */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "rust_sys.o")}\" ");
-                AppendModuleParams(ldArgs, ziskLibPath, "rust_sys", libc, targetArchitecture, targetOS);
-
-                /* ugc */
-                AppendModuleParams(ldArgs, ziskLibPath, "ugc-zero", libc, targetArchitecture, targetOS);
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGC.cpp.obj")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleManager.cpp.obj")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHandleStore.cpp.obj")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "uGCHeap.cpp.obj")}\" ");
-                /* uGC v1.0.7+: the C++ wrappers delegate to the formally
-                 * verified C core shipped as separate objects. */
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_core.c.obj")}\" ");
-                ldArgs.Append($"\"{Path.Combine(ziskLibPath, "ugc_zalloc.c.obj")}\" ");
+                /* The rest of the zkVM link comes from the manifests: the
+                 * platform's memory map and entry point (_start speaks that
+                 * VM's halt protocol), then the module objects by link group.
+                 * Each manifest's wraps follow its first object. Run
+                 * "bflat-modules link <layout>/lib/modules <libc>" to see the
+                 * result for one platform. */
+                zkvmLink.LibPath = firstLib;
+                zkvmLink.AppendObjects(ldArgs, ObjectGroup.PreEntry);
+                zkvmLink.AppendEntry(ldArgs);
+                zkvmLink.AppendObjects(ldArgs, ObjectGroup.Early);
+                ldArgs.Append("--whole-archive ");
+                zkvmLink.AppendObjects(ldArgs, ObjectGroup.WholeArchive);
+                ldArgs.Append("--no-whole-archive ");
+                zkvmLink.AppendObjects(ldArgs, ObjectGroup.Normal);
+                zkvmLink.AppendRemainingOptions(ldArgs);
             }
         }
 

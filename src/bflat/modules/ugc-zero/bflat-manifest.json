@@ -1,0 +1,25 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "ugc-zero",
+  "description": "uGC, the never-collecting GC, in place of the built-in clrgc",
+  "external": {
+    "repo": "https://github.com/NethermindEth/uGC",
+    "tag": "v1.0.7",
+    "release": "ugc-riscv64.tar.gz",
+    "dir": "release"
+  },
+  "objects": [
+    {"file": "release/uGC.cpp.obj", "order": 30},
+    {"file": "release/uGCHandleManager.cpp.obj", "order": 30},
+    {"file": "release/uGCHandleStore.cpp.obj", "order": 30},
+    {"file": "release/uGCHeap.cpp.obj", "order": 30},
+    {
+      "file": "release/ugc_core.c.obj",
+      "order": 30,
+      "note": "uGC v1.0.7+: the C++ wrappers delegate to the formally verified C core, shipped as separate objects."
+    },
+    {"file": "release/ugc_zalloc.c.obj", "order": 30}
+  ],
+  "link": {"wrap": ["GC_Initialize", "GC_VersionInfo"]}
+}

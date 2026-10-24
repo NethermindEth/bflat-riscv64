@@ -113,7 +113,7 @@ _start:
 /* main(), as SP1's __start calls it: extern "C" fn main() -> i32. The .NET
  * side of the start-up (thread pointer, .init_array, uBootstrap_main) is
  * noos_main, the returning half of noos_start_main. Reached through
- * --wrap=main (pal's module_params.yml, sp1 only): libbootstrapper.o also
+ * --wrap=main (pal's bflat-manifest.json, sp1 only): libbootstrapper.o also
  * defines a main, the desktop runtime's, which a zkVM guest never enters. */
 .section .text.__wrap_main,"ax",@progbits
 .global __wrap_main
@@ -135,7 +135,7 @@ __wrap_main:
     .size   __wrap_main, .-__wrap_main
 
 /* void *__wrap_memcpy(void *dst, const void *src, size_t n), reached through
- * --wrap=memcpy (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memcpy (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's generic C memcpy moves 32-bit words and merges a misaligned source
  * with 32-bit shifts. SP1 has no DMA copy, so every byte costs instructions,
@@ -329,7 +329,7 @@ __wrap_memcpy:
     .size   __wrap_memcpy, .-__wrap_memcpy
 
 /* void *__wrap_memmove(void *dst, const void *src, size_t n), reached through
- * --wrap=memmove (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memmove (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's memmove checks for overlap and tail-calls memcpy for almost every
  * call, and copies a misaligned overlap byte by byte. A destination below the
@@ -454,7 +454,7 @@ __wrap_memmove:
     .size   __wrap_memmove, .-__wrap_memmove
 
 /* void *__wrap_memset(void *dst, int c, size_t n), reached through
- * --wrap=memset (pal's module_params.yml, sp1 and openvm only).
+ * --wrap=memset (pal's bflat-manifest.json, sp1 and openvm only).
  *
  * musl's memset stores 32-bit words before its 64-bit loop. This aligns the
  * destination, since SP1 rejects misaligned stores, then stores doublewords,

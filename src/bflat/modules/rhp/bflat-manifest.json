@@ -1,0 +1,63 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "rhp",
+  "description": "Runtime helper replacements: P/Invoke frames, allocation fast paths, console, EH policy",
+  "note": "What is NOT wrapped anymore, and why the originals work on .NET 10 and later with uGC alloc-context budgets: the allocation helpers (upstream riscv64 AllocFast.S and GcAllocInternal; only their bump fast paths are wrapped, to skip the TLS lookup), thread statics (a plain TLS field and managed jagged arrays), the Lock family including DeadlockAwareAcquire (a truthful IsHeldByCurrentThread breaks recursive cctor cycles), CheckCastAny, the cgroup initializers, GetDefaultLocaleName, and similar.",
+  "sources": [{"file": "module.c"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 30}],
+  "link": {
+    "wrap": [
+      {
+        "symbol": "RhpPInvoke",
+        "note": "P/Invoke transition frames are dead weight: the guest is single-threaded, uGC never suspends or scans, and the reverse transition would park at a GC rendezvous that never comes when a managed exception handler (ZkvmThrow) is entered in cooperative mode."
+      },
+      "RhpPInvokeReturn",
+      "RhpReversePInvoke",
+      "RhpReversePInvokeReturn",
+      {
+        "symbol": "RhBulkMoveWithWriteBarrier",
+        "note": "No write barrier under uGC: bulk reference copy is a plain memmove."
+      },
+      {
+        "symbol": "RhpNewFast",
+        "note": "One thread, one static TLS block: the allocation context's address is fixed, so the fast paths bump it without a TLS lookup."
+      },
+      "RhpNewArrayFast",
+      "RhpNewPtrArrayFast",
+      {
+        "symbol": "RhAllocateNewObject",
+        "note": "GC static bases and uninitialized/pinned arrays: the same bump, past the QCall slow path (mode switch, TLS, RhpGcAlloc, uGCHeap::Alloc)."
+      },
+      "RhAllocateNewArray",
+      {
+        "symbol": "S_P_CoreLib_System_Diagnostics_Tracing_EventPipeEventProvider__Register",
+        "note": "Event tracing is meaningless in the guest; candidates for replacement by the EventSourceSupport=false ILC feature switch."
+      },
+      {
+        "symbol": "RhpThrowEx",
+        "when": {"eh": "failfast"},
+        "note": "EH policy: route the exception object to the weak ZkvmThrow handler or fail fast. Only under --remove-eh: by default the image carries its unwind tables and RhThrowEx runs the real two-pass dispatch instead."
+      },
+      "S_P_CoreLib_System_RuntimeExceptionHelpers__FailFast",
+      {
+        "symbol": "System_Console_Interop_Sys__InitializeTerminalAndSignalHandling",
+        "when": {"flag": "no-console"},
+        "note": "No terminal device on any real zkVM; the sim keeps the host console. SystemNative_Write still goes through the wrapper on SP1/OpenVM - it is what routes the bytes to their host-visible output (pal's zkvm_console_write); on ZisK the wrapper swallows them."
+      },
+      {"symbol": "SystemNative_SetTerminalInvalidationHandler", "when": {"flag": "no-console"}},
+      {"symbol": "SystemNative_Write", "when": {"flag": "no-console"}},
+      {
+        "symbol": "SystemNative_FStat",
+        "when": {"flag": "no-console"},
+        "note": "Console.OpenStandardOutput() fstats the descriptor before handing back a stream. Unwrapped, that reaches noos, which terminates the guest with 253 on an OS call it cannot service - so any Console use killed the guest."
+      },
+      {
+        "symbol": "SystemNative_Dup",
+        "when": {"flag": "no-console"},
+        "note": "Dup is fcntl(F_DUPFD_CLOEXEC) underneath, and IsATty would send .NET into termios; both are answered here rather than trapped in noos."
+      },
+      {"symbol": "SystemNative_IsATty", "when": {"flag": "no-console"}}
+    ]
+  }
+}

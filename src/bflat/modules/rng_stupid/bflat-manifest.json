@@ -1,0 +1,16 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "rng_stupid",
+  "description": "Deterministic randomness: proofs must be reproducible",
+  "sources": [{"file": "module.c"}],
+  "objects": [{"file": "module.o", "group": "normal", "order": 10}],
+  "link": {
+    "wrap": [
+      "minipal_get_cryptographically_secure_random_bytes",
+      "minipal_get_non_cryptographically_secure_random_bytes",
+      "CryptoNative_EnsureOpenSslInitialized",
+      "CryptoNative_GetRandomBytes"
+    ]
+  }
+}

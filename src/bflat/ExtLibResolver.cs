@@ -31,12 +31,15 @@ using Internal.TypeSystem;
 //   2. path or URL ending in .nupkg        – extract the package and read *.bflat.manifest inside
 //   3. path or URL ending in .bflat.manifest – use the manifest directly
 //
-// In every case, static_lib / dotnet_lib paths in the manifest are resolved
-// relative to the MANIFEST FILE'S OWN DIRECTORY (not the nupkg root). A package
-// ships the manifest next to the library it points at, so bare sibling names work
-// both when the package is extracted and when the manifest is used standalone.
+// In every case, file paths in the manifest are resolved relative to the
+// MANIFEST FILE'S OWN DIRECTORY (not the nupkg root). A package ships the
+// manifest next to the library it points at, so bare sibling names work both
+// when the package is extracted and when the manifest is used standalone.
 //
-// The *.bflat.manifest format is:
+// The manifest is schema 2 (docs/manifest.md) when it has a "schema" key. A
+// package can then give objects, link.wrap and ilc.references, each with its
+// own "when"; bflat links the objects in front of the linker script, where
+// schema 1 static libraries always went. Without "schema" it is schema 1:
 // {
 //   "name": "...",
 //   "builds": [
@@ -56,15 +59,33 @@ internal static class ExtLibResolver
     // Resolved output of a single --extlib spec.
     internal sealed class Result
     {
-        // Absolute path to the native static library (.a), or null if not present.
-        public string StaticLibPath { get; set; }
+        // Absolute paths to the native objects and static libraries (.a), in link order.
+        public List<string> StaticLibPaths { get; } = new List<string>();
 
-        // Absolute path to the .NET reference assembly (.dll), or null if not present.
-        public string DotnetLibPath { get; set; }
+        // Absolute paths to the .NET reference assemblies (.dll).
+        public List<string> DotnetLibPaths { get; } = new List<string>();
 
         // Symbols to wrap via the linker --wrap flag, or empty if none.
-        public List<string> WrapSymbols { get; set; } = new List<string>();
+        public List<string> WrapSymbols { get; } = new List<string>();
     }
+
+    // The names that manifests use for an architecture and an OS.
+    internal static string ArchName(TargetArchitecture arch) => arch switch
+    {
+        TargetArchitecture.X64     => "x64",
+        TargetArchitecture.X86     => "x86",
+        TargetArchitecture.ARM64   => "arm64",
+        TargetArchitecture.RiscV64 => "riscv64",
+        _ => throw new Exception($"Unsupported architecture: {arch}")
+    };
+
+    internal static string OsName(TargetOS os) => os switch
+    {
+        TargetOS.Windows => "windows",
+        TargetOS.Linux   => "linux",
+        TargetOS.UEFI    => "uefi",
+        _ => throw new Exception($"Unsupported OS: {os}")
+    };
 
     // -------------------------------------------------------------------------
     // Public entry point
@@ -74,7 +95,7 @@ internal static class ExtLibResolver
     // tempDir is used for downloads and nupkg extractions.
     public static async Task<Result> Resolve(
         string spec, string tempDir, bool verbose,
-        TargetArchitecture targetArch, TargetOS targetOS, string libc)
+        ManifestTarget target, string libc)
     {
         Directory.CreateDirectory(tempDir);
 
@@ -83,7 +104,7 @@ internal static class ExtLibResolver
 
         // Case 1: GitHub repo:version
         if (IsGitHubRepoWithVersion(spec))
-            return await ResolveFromGitHubRelease(spec, tempDir, verbose, targetArch, targetOS, libc, httpClient);
+            return await ResolveFromGitHubRelease(spec, tempDir, verbose, target, libc, httpClient);
 
         // Case 2: .nupkg (URL or local path)
         if (spec.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
@@ -91,14 +112,14 @@ internal static class ExtLibResolver
             string nupkgPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
             string extractDir = ExtractNupkg(nupkgPath, verbose);
             string manifestPath = FindManifestInDirectory(extractDir);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
+            return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
         }
 
         // Case 3: .bflat.manifest (URL or local path)
         if (spec.EndsWith(".bflat.manifest", StringComparison.OrdinalIgnoreCase))
         {
             string manifestPath = await EnsureLocalFile(spec, tempDir, verbose, httpClient);
-            return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
+            return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
         }
 
         throw new Exception(
@@ -164,7 +185,7 @@ internal static class ExtLibResolver
 
     private static async Task<Result> ResolveFromGitHubRelease(
         string spec, string tempDir, bool verbose,
-        TargetArchitecture targetArch, TargetOS targetOS, string libc,
+        ManifestTarget target, string libc,
         HttpClient httpClient)
     {
         // Split "https://github.com/owner/repo:version" at the version colon
@@ -230,7 +251,7 @@ internal static class ExtLibResolver
         // Extract and locate the manifest
         string extractDir = ExtractNupkg(nupkgPath, verbose);
         string manifestPath = FindManifestInDirectory(extractDir);
-        return ParseManifestAndResolveFiles(manifestPath, verbose, targetArch, targetOS, libc, tempDir);
+        return ParseManifestAndResolveFiles(manifestPath, verbose, target, libc, tempDir);
     }
 
     // -------------------------------------------------------------------------
@@ -281,142 +302,108 @@ internal static class ExtLibResolver
     // Manifest parsing (Cases 2 and 3)
     // -------------------------------------------------------------------------
 
-    // Parse a *.bflat.manifest file, match the build entry against the target,
-    // and return absolute paths to static_lib / dotnet_lib.
-    // static_lib / dotnet_lib paths in the manifest are resolved relative to the
-    // manifest file's own directory. This is the one base that is correct for both
-    // consumption modes: an extracted .nupkg ships the manifest next to its
-    // libraries (runtimes/<rid>/native/), and a standalone .bflat.manifest is used
-    // in place. Resolving a .nupkg against its root instead broke packages whose
-    // manifest references sibling files by bare name (e.g. static_lib "libziskos.a").
+    // Parse a *.bflat.manifest file, match it against the target, and return
+    // absolute paths to its files. Paths are resolved relative to the
+    // manifest file's own directory. This is the one base that is correct for
+    // both consumption modes: an extracted .nupkg ships the manifest next to
+    // its libraries (runtimes/<rid>/native/), and a standalone .bflat.manifest
+    // is used in place. Resolving a .nupkg against its root instead broke
+    // packages whose manifest references sibling files by bare name (e.g.
+    // static_lib "libziskos.a").
     private static Result ParseManifestAndResolveFiles(
         string manifestPath, bool verbose,
-        TargetArchitecture targetArch, TargetOS targetOS, string libc,
+        ManifestTarget target, string libc,
         string tempDir)
     {
-        string manifestDir = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
-        string manifestJson = File.ReadAllText(manifestPath);
-
-        using JsonDocument doc = JsonDocument.Parse(manifestJson);
+        using JsonDocument doc = ManifestReader.Parse(manifestPath);
         JsonElement manifestRoot = doc.RootElement;
+        if (manifestRoot.ValueKind != JsonValueKind.Object)
+            throw new Exception($"Manifest '{manifestPath}' is not a JSON object");
 
-        string targetArchStr = targetArch switch
+        BflatManifest manifest;
+        if (manifestRoot.TryGetProperty("schema", out _))
         {
-            TargetArchitecture.X64    => "x64",
-            TargetArchitecture.X86    => "x86",
-            TargetArchitecture.ARM64  => "arm64",
-            TargetArchitecture.RiscV64 => "riscv64",
-            _ => throw new Exception($"Unsupported architecture: {targetArch}")
-        };
-
-        string targetOSStr = targetOS switch
+            manifest = BflatManifest.ReadSchema2(new ManifestReader(manifestPath), manifestRoot, manifestPath);
+            if (!ManifestCondition.Applies(manifest.When, target))
+                manifest = null;
+            string unimplemented = manifest == null ? "" : string.Join(", ", manifest.UnimplementedSections(package: true));
+            if (unimplemented.Length > 0)
+                throw new Exception($"Manifest '{manifestPath}': this bflat does not implement yet for --extlib packages: {unimplemented}");
+        }
+        else
         {
-            TargetOS.Windows => "windows",
-            TargetOS.Linux   => "linux",
-            TargetOS.UEFI    => "uefi",
-            _ => throw new Exception($"Unsupported OS: {targetOS}")
-        };
-
-        string staticLibRel    = null;
-        string dotnetLibRel    = null;
-        string dotnetAssemblyName = null;
-        var wrapSymbols = new List<string>();
-
-        if (manifestRoot.TryGetProperty("builds", out JsonElement builds))
-        {
-            foreach (JsonElement build in builds.EnumerateArray())
-            {
-                bool archMatch = build.TryGetProperty("arch", out JsonElement archEl) &&
-                                 archEl.GetString() == targetArchStr;
-                bool osMatch   = build.TryGetProperty("os",   out JsonElement osEl)   &&
-                                 osEl.GetString()   == targetOSStr;
-
-                bool libcMatch = true;
-                if (!string.IsNullOrEmpty(libc) && build.TryGetProperty("libc", out JsonElement libcEl))
-                    libcMatch = libcEl.GetString() == libc;
-
-                if (archMatch && osMatch && libcMatch)
-                {
-                    if (build.TryGetProperty("static_lib",         out JsonElement slEl))
-                        staticLibRel = slEl.GetString();
-                    if (build.TryGetProperty("dotnet_lib",         out JsonElement dlEl))
-                        dotnetLibRel = dlEl.GetString();
-                    if (build.TryGetProperty("dotnet_assemblyname", out JsonElement danEl))
-                        dotnetAssemblyName = danEl.GetString();
-                    if (build.TryGetProperty("wrap_symbols",        out JsonElement wsEl) &&
-                        wsEl.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (JsonElement sym in wsEl.EnumerateArray())
-                        {
-                            string symStr = sym.GetString();
-                            if (!string.IsNullOrEmpty(symStr))
-                                wrapSymbols.Add(symStr);
-                        }
-                    }
-                    break;
-                }
-            }
+            manifest = BflatManifest.ReadSchema1(manifestPath, manifestRoot, target.Arch, target.Os, libc);
         }
 
-        if (staticLibRel == null && dotnetLibRel == null)
+        if (manifest == null)
             throw new Exception(
                 $"No matching build in manifest '{manifestPath}' " +
-                $"for arch={targetArchStr}, os={targetOSStr}, libc={libc ?? "any"}");
+                $"for arch={target.Arch}, os={target.Os}, libc={libc ?? "any"}");
 
-        var result = new Result { WrapSymbols = wrapSymbols };
+        var result = new Result();
 
-        if (staticLibRel != null)
+        foreach (ManifestObject obj in manifest.EffectiveObjects())
         {
-            string absPath = Path.Combine(manifestDir, staticLibRel.Replace('/', Path.DirectorySeparatorChar));
+            if (!ManifestCondition.Applies(obj.When, target))
+                continue;
+            string absPath = manifest.Resolve(obj.File);
             if (!File.Exists(absPath))
                 throw new Exception(
                     $"Static library not found: {absPath} (referenced from manifest '{manifestPath}')");
 
-            result.StaticLibPath = absPath;
+            result.StaticLibPaths.Add(absPath);
 
             if (verbose)
                 Console.WriteLine($"Found static library: {absPath}");
         }
 
-        if (dotnetLibRel != null)
+        foreach (ManifestWrap wrap in manifest.Wraps)
         {
-            string absPath = Path.Combine(manifestDir, dotnetLibRel.Replace('/', Path.DirectorySeparatorChar));
+            if (ManifestCondition.Applies(wrap.When, target))
+                result.WrapSymbols.Add(wrap.LinkerSymbol);
+        }
+
+        foreach (ManifestItem reference in manifest.IlcReferences)
+        {
+            if (!ManifestCondition.Applies(reference.When, target))
+                continue;
+            string absPath = manifest.Resolve(reference.Value);
             if (!File.Exists(absPath))
             {
                 if (verbose)
                     Console.WriteLine($"Warning: dotnet library not found: {absPath}, skipping");
+                continue;
             }
-            else
+
+            // If the DLL filename doesn't already match the assembly name, copy it so it does.
+            // The compiler uses the filename as the reference identity.
+            string dotnetAssemblyName = reference.Assembly;
+            if (!string.IsNullOrEmpty(dotnetAssemblyName))
             {
-                // If the DLL filename doesn't already match the assembly name, copy it so it does.
-                // The compiler uses the filename as the reference identity.
-                if (!string.IsNullOrEmpty(dotnetAssemblyName))
+                string expectedName = dotnetAssemblyName + ".dll";
+                if (!Path.GetFileName(absPath).Equals(expectedName, StringComparison.OrdinalIgnoreCase))
                 {
-                    string expectedName = dotnetAssemblyName + ".dll";
-                    if (!Path.GetFileName(absPath).Equals(expectedName, StringComparison.OrdinalIgnoreCase))
+                    string renamedPath = Path.Combine(tempDir, expectedName);
+                    try
                     {
-                        string renamedPath = Path.Combine(tempDir, expectedName);
-                        try
-                        {
-                            File.Copy(absPath, renamedPath, overwrite: true);
-                            absPath = renamedPath;
-                            if (verbose)
-                                Console.WriteLine($"Copied dotnet library as '{renamedPath}' to match assembly name");
-                        }
-                        catch (Exception ex)
-                        {
-                            if (verbose)
-                                Console.WriteLine(
-                                    $"Warning: Failed to copy dotnet library to '{expectedName}': {ex.Message}");
-                        }
+                        File.Copy(absPath, renamedPath, overwrite: true);
+                        absPath = renamedPath;
+                        if (verbose)
+                            Console.WriteLine($"Copied dotnet library as '{renamedPath}' to match assembly name");
+                    }
+                    catch (Exception ex)
+                    {
+                        if (verbose)
+                            Console.WriteLine(
+                                $"Warning: Failed to copy dotnet library to '{expectedName}': {ex.Message}");
                     }
                 }
-
-                result.DotnetLibPath = absPath;
-
-                if (verbose)
-                    Console.WriteLine($"Found dotnet library: {absPath}");
             }
+
+            result.DotnetLibPaths.Add(absPath);
+
+            if (verbose)
+                Console.WriteLine($"Found dotnet library: {absPath}");
         }
 
         return result;

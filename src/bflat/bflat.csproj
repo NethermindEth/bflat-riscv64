@@ -94,42 +94,41 @@
 
   <Target Name="CreateCompilerLayout"
           DependsOnTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs">
+    <!-- The native modules: bflat-modules reads each module's
+         bflat-manifest.json and copies it, with the files it names, to
+         lib/modules/<name>/ (see docs/manifest.md). Built here and run with
+         the SDK's own host, because bflat itself is not usable before its
+         layout exists. The global properties of a BuildLayouts pass
+         (OutputPath and friends) are for bflat, not for the tool. Restore
+         runs as its own pass (a new session id forces a fresh evaluation),
+         because the tool is not a reference of bflat and so the bflat
+         restore does not cover it. -->
+    <PropertyGroup>
+      <_BflatModulesProject>$(MSBuildThisFileDirectory)..\bflat-modules\bflat-modules.csproj</_BflatModulesProject>
+      <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Variant;DotnetVersion;Flavor;Platform</_BflatModulesRemoved>
+    </PropertyGroup>
+    <MSBuild Projects="$(_BflatModulesProject)"
+             Targets="Restore"
+             Properties="Configuration=Release;MSBuildRestoreSessionId=$([System.Guid]::NewGuid())"
+             RemoveProperties="$(_BflatModulesRemoved)" />
+    <MSBuild Projects="$(_BflatModulesProject)"
+             Targets="Build"
+             Properties="Configuration=Release"
+             RemoveProperties="$(_BflatModulesRemoved)">
+      <Output TaskParameter="TargetOutputs" ItemName="_BflatModulesTool" />
+    </MSBuild>
+    <PropertyGroup>
+      <_DotnetHost>$(DOTNET_HOST_PATH)</_DotnetHost>
+      <_DotnetHost Condition="'$(_DotnetHost)' == ''">dotnet</_DotnetHost>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; pack &quot;$(MSBuildThisFileDirectory)modules&quot; &quot;$(OutputPath)lib/modules&quot;"
+          EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)bflat-manifest.schema.json"
+          DestinationFolder="$(OutputPath)" />
+
+    <!-- crt1 for the zkVM platforms: musl's crt1.o with _start/_start_c
+         renamed, so that the platform entry point defines _start. -->
     <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk" />
-    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\zisk_sim" />
-    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\sp1" />
-    <MakeDir Directories="$(OutputPath)lib\linux\riscv64\openvm" />
-
-    <!-- Every zkVM target gets its own script.ld + entrypoint.o under
-         lib/linux/riscv64/<libc>; the shared module objects below are laid
-         down once, in the zisk directory, and linked from there by all of
-         them (BuildCommand.ZkvmLibPath). -->
-
-    <!-- Pure Zisk specific -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\script.ld"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\script.ld" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\entrypoint.o" />
-
-    <!-- Zisk Simulator specific: only the memory map; the entry point is
-         ZisK's (BuildCommand links zisk/entrypoint.o for zisk_sim). -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_zisk_sim\script.ld"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk_sim\script.ld" />
-
-    <!-- SP1 specific -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_sp1\script.ld"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\sp1\script.ld" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_sp1\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\sp1\entrypoint.o" />
-
-    <!-- OpenVM specific -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_openvm\script.ld"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\openvm\script.ld" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_openvm\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\openvm\entrypoint.o" />
-
-    <!-- Generic modules -->
-
-    <!-- crt1 for zisk: patch musl crt1.o to rename _start/_start_c entry points -->
     <PropertyGroup>
       <_LlvmObjcopy>llvm-objcopy</_LlvmObjcopy>
       <_MuslCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1.o'))</_MuslCrt1>
@@ -138,103 +137,11 @@
     <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_ZiskCrt1)&quot;"
           ConsoleToMSBuild="true" />
 
-    <!-- NoFP -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.o" />
+    <!-- The stock musl target links nofp's object without its wraps (the
+         "hack" in BuildCommand); it is not a platform, so it reads no
+         manifest. -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module.o"
           DestinationFiles="$(OutputPath)lib\linux\riscv64\musl\nofp.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nofp\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nofp.params.yml" />
-
-    <!-- NoOS: displaces the OS surface the runtime's Unix PAL reaches for. -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\noos\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\noos.o" />
-
-    <!-- NoThread: replaces musl's locking primitives, whose lr/sc/amo* the
-         SP1 and OpenVM decoders reject. Laid down for every zkVM target but
-         only linked for those two (BuildCommand); ZisK keeps musl's. -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\nothread\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\nothread.o" />
-
-    <!-- PAL -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\pal\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\pal.params.yml" />
-
-    <!-- EH: synthetic program headers for the unwinder -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\eh\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\eh.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\eh\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\eh.params.yml" />
-
-    <!-- RHP -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp.params.yml" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rhp_native\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rhp_native.params.yml" />
-
-    <!-- RNG -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rng_stupid\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rng_stupid.params.yml" />
-
-    <!-- rust_sys -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rust_sys\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\rust_sys\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\rust_sys.params.yml" />
-
-    <!-- gs_cookie -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\gs_cookie.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\gs_cookie\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\gs_cookie.params.yml" />
-
-    <!-- stdcppshim -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\stdcppshim\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\stdcppshim.o" />
-
-    <!-- tls -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.o" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\tls\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\tls.params.yml" />
-
-    <!-- uBootstrap -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ubootstrap\module.o"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ubootstrap.o" />
-
-    <!-- ugc-zero -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGC.cpp.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGC.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHandleManager.cpp.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleManager.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHandleStore.cpp.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHandleStore.cpp.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\uGCHeap.cpp.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\uGCHeap.cpp.obj" />
-    <!-- uGC v1.0.7+: the C++ wrappers delegate to the formally verified
-         C core shipped as separate objects -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\ugc_core.c.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc_core.c.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\release\ugc_zalloc.c.obj"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc_zalloc.c.obj" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\ugc-zero\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\ugc-zero.params.yml" />
-
-    <!-- zisk_subst: ILC-stage managed substitutions (no native object) -->
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\module_params.yml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk_subst.params.yml" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.substitutions.xml"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.substitutions.xml" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.snippets.cs"
-          DestinationFiles="$(OutputPath)lib\linux\riscv64\zisk\zisk.snippets.cs" />
 
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"

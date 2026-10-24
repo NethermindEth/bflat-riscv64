@@ -1,0 +1,9 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "gs_cookie",
+  "description": "The constant stack-protector cookie",
+  "sources": [{"file": "module.c"}],
+  "objects": [{"file": "module.o", "group": "whole-archive", "order": 40}],
+  "link": {"wrap": ["__security_cookie"]}
+}

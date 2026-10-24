@@ -1,0 +1,23 @@
+{
+  "$schema": "../../bflat-manifest.schema.json",
+  "schema": 2,
+  "name": "eh",
+  "description": "Synthetic program headers for libunwind",
+  "sources": [{"file": "module.c"}],
+  "objects": [
+    {
+      "file": "module.o",
+      "group": "whole-archive",
+      "order": 70,
+      "note": "Linked under --remove-eh too: see the note on the dl_iterate_phdr wrap."
+    }
+  ],
+  "link": {
+    "wrap": [
+      {
+        "symbol": "dl_iterate_phdr",
+        "note": "Synthetic program headers for libunwind: musl's dl_iterate_phdr walks an empty dso list in a statically linked guest with no loader, so the runtime would never find .eh_frame_hdr and every throw would fail fast. Applied under --remove-eh as well, even though there is then no unwind index to point at. Dropping it does not leave musl's harmless stub: the zkVM targets link noos, whose dl_iterate_phdr is a trap, and the runtime asks for module headers from RhRegisterOSModule during start-up - so the guest died with 253 before reaching Main, rather than failing fast on a throw the way the policy says. The module answers the no-index case by reporting the load segment alone (see module.c)."
+      }
+    ]
+  }
+}
