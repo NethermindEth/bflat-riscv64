@@ -145,19 +145,22 @@ function build_modules()
 	}
 
 	# module_fetch_release <repo> <tag> <file> <dir>
-	# Download a GitHub release archive and unpack it into <dir>.
+	# Download a GitHub release archive, check its signature and unpack it
+	# into <dir>.
 	function module_fetch_release()
 	{
 		local repo="$1" tag="$2" release_file="$3" target_dir="$4"
 		local repo_path="$(echo "$repo" | sed -E 's#https?://github\.com/##' | sed -E 's#\.git$##')"
-		local asset_url="https://github.com/${repo_path}/releases/download/${tag}/${release_file}"
+		local release_url="https://github.com/${repo_path}/releases/download/${tag}"
 
 		mkdir -p "${target_dir}"
 		on_fail $? "Failed to create release directory ${target_dir}"
 
 		local tmp_archive="${target_dir}/${release_file}"
-		curl -L -o "${tmp_archive}" "${asset_url}"
-		on_fail $? "Failed to download release archive ${asset_url}"
+		curl -fL -o "${tmp_archive}" "${release_url}/${release_file}"
+		on_fail $? "Failed to download release archive ${release_url}/${release_file}"
+
+		module_verify_release "${release_url}" "${tmp_archive}" "${release_file}" "${target_dir}"
 
 		case "${tmp_archive}" in
 			*.tar.gz|*.tgz)
@@ -176,6 +179,36 @@ function build_modules()
 				fail "Unsupported release archive format: ${tmp_archive}"
 				;;
 		esac
+	}
+
+	# module_verify_release <release-url> <file> <asset-name> <dir>
+	# Check a downloaded asset against the signed list of its release
+	# (docs/signing.md), with the keys in BFLAT_SIGNING_PUBLIC_KEY, before
+	# anything unpacks it. Without the keys nothing is checked. A release
+	# without a signature is an error unless ALLOW_UNSIGNED_EXTERNAL=true.
+	function module_verify_release()
+	{
+		local release_url="$1" file="$2" asset="$3" dir="$4"
+		if [ -z "${BFLAT_SIGNING_PUBLIC_KEY}" ] ; then
+			echo "BFLAT_SIGNING_PUBLIC_KEY is not set: ${asset} is not checked"
+			return
+		fi
+
+		local list="${dir}/bflat-signature.sha256" sig="${dir}/bflat-signature.sha256.sig"
+		if ! curl -fsSL -o "${list}" "${release_url}/bflat-signature.sha256" || \
+		   ! curl -fsSL -o "${sig}" "${release_url}/bflat-signature.sha256.sig" ; then
+			rm -f "${list}" "${sig}"
+			if [ "${ALLOW_UNSIGNED_EXTERNAL}" == "true" ] ; then
+				echo "ALLOW_UNSIGNED_EXTERNAL=true: ${release_url} is not signed, and ${asset} is used without a check"
+				return
+			fi
+			fail "${release_url} has no bflat-signature.sha256 and bflat-signature.sha256.sig." \
+				"Use a signed release, or set ALLOW_UNSIGNED_EXTERNAL=true."
+		fi
+
+		dotnet run --project "${TOP_DIR}/src/bflat-modules/bflat-modules.csproj" -c Release --no-build -- \
+			verify-release "${list}" "${sig}" "${file}=${asset}"
+		on_fail $? "The signature check of ${asset} failed"
 	}
 
 	# module_fetch_build <repo> <tag> <dir> <command>...
