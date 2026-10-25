@@ -45,6 +45,13 @@
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-upstream-perf.r396</RuntimeReleaseTag>
     <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rtm.26513.199-upstream</RuntimeReleaseTag>
 
+    <!-- Whether the release has the linux-x64 target of bflat (the x64 JIT,
+         runtime and glibc sysroot that the runtime-x64 job of dotnet-riscv
+         makes). The releases above are older than that job; set this per
+         tag when a release has the assets, or with -p:BflatTargetLinuxX64=true
+         for a test. -->
+    <BflatTargetLinuxX64 Condition="'$(BflatTargetLinuxX64)' == ''">false</BflatTargetLinuxX64>
+
     <!-- Only this package carries the widening-cast and Zb lowering fixes from
          dotnet-riscv#9. bflat reports it as the compiler capability
          "zb-lowering-fixes", which platform manifests can test (a platform

@@ -237,6 +237,10 @@ internal partial class BuildCommand
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
+                    // The vectorized sort of the GC, which the x64 runtime
+                    // calls (as Microsoft.NETCore.Native.Unix.targets links it).
+                    if (targetArchitecture == TargetArchitecture.X64)
+                        ldArgs.Append("-lRuntime.VxsortEnabled ");
                     if (libc != "bionic")
                         ldArgs.Append("-lSystem.Globalization.Native ");
                 }
