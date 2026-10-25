@@ -107,7 +107,10 @@ A release job has three jobs:
 
    `list-nupkg` writes `<package>.nupkg.bflat-signature.sha256` for each
    package. `list-files` writes `bflat-signature.sha256` for the assets of a
-   release.
+   release. When the assets of one release come from more than one job (as
+   in dotnet-riscv), each job uploads the list of its assets, and a small
+   job joins them into one list with
+   `sign_package.py merge <out-dir> <list>...`.
 
 2. The sign job calls `sign.yml` with the name of that artifact and the
    secret. It signs each `*.sha256` list with
