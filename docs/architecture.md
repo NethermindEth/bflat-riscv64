@@ -63,8 +63,11 @@ same source builds for the prover, QEMU and real hardware.
 | **3 · Postprocess** | A Python pass rewrites the ELF so the prover's loader accepts it (`zisk` only) | Yes |
 | **4 · Boot & run** | A tiny assembly entry point starts the runtime and calls `Main` — no kernel underneath | Yes |
 
-The driver lives in `src/bflat/`: `BuildCommand.cs` orchestrates the
-pipeline, and `BflatManifest.cs` reads the platform and module manifests,
+The driver lives in `src/bflat/`: `BuildCommand.cs` has the options, and
+its nested `Build` class runs one build in stages (`BuildCommand.Build.cs`:
+the target and the packages; `BuildCommand.Compile.cs`: Roslyn and ILC;
+`BuildCommand.Link.cs`: the linker, the post-link steps and the image
+checks), and `BflatManifest.cs` reads the platform and module manifests,
 which hold every zkVM decision. `ILFloatScanner.cs` is the IL check of
 `--error-on-float`; the methods that it reports only as a warning are in
 `checks.il_float_allow` of `guest_subst`.
@@ -144,10 +147,11 @@ like.
 
 ### zkVM RyuJIT codegen knobs
 
-`BuildCommand.cs` passes RyuJIT knobs to ILC in two groups, and the
-distinction matters: the ISA gate below applies to **every** zkVM build,
-while the tuning knobs apply only to optimized ones (`-O`, i.e.
-`optimizationMode != None`).
+The platform manifests give RyuJIT knobs to ILC (`codegen.options`, which
+`GetBackendOptions` in `BuildCommand.Compile.cs` reads) in two groups, and
+the distinction matters: the ISA gate below applies to **every** zkVM
+build, while the tuning knobs apply only to optimized ones
+(`"when": {"optimize": true}`).
 
 RyuJIT parses these integer values as **hexadecimal with no `0x` prefix**
 (`JitConfigProvider.getIntConfigValue` uses `NumberStyles.AllowHexSpecifier`),
