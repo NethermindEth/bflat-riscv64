@@ -101,6 +101,15 @@ $ docker run --rm -v "$PWD":/w -w /w framac/frama-c:30.0 \
     src/bflat/modules/eh/verify/run_wp.sh
 ```
 
+**bflat unit tests.** The manifest parser, the package signatures, the
+`--extlib` resolution and the float-ABI check of the layout. They need only
+the .NET SDK; with `python3` and `openssl` they also sign with
+`sign_package.py` and check that bflat accepts the result:
+
+```bash
+$ dotnet test src/bflat.UnitTests
+```
+
 **Module unit tests.** Cross-compiled for riscv64 and executed under
 qemu-user, so module code runs on the real guest ISA — including the raw
 ZisK exit ecall. Needs `gcc-riscv64-linux-gnu`, `g++-riscv64-linux-gnu` and

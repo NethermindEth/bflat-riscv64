@@ -146,7 +146,7 @@ jobs:
       - name: Install .NET SDK
         run: |
           apt-get update
-          apt-get install -y wget libicu-dev ca-certificates
+          apt-get install -y wget libicu-dev ca-certificates python3 openssl
           wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
           chmod +x dotnet-install.sh
           ./dotnet-install.sh ${{ matrix.sdk_args }} --install-dir /usr/share/dotnet
@@ -180,6 +180,12 @@ jobs:
           python3 src/bflat/scripts/check_manifests.py
           dotnet build src/bflat-modules/bflat-modules.csproj -warnaserror
           dotnet run --project src/bflat-modules/bflat-modules.csproj --no-build -- check src/bflat/modules
+
+      # The parts of bflat that need no compiler layout: the manifest
+      # parser, the package signatures (also against sign_package.py and
+      # openssl), the --extlib resolution and the float-ABI check.
+      - name: Unit tests
+        run: dotnet test src/bflat.UnitTests/bflat.UnitTests.csproj
 
   fuzz_smoke:
     runs-on: ubuntu-latest
