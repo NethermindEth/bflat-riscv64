@@ -361,6 +361,7 @@ internal static class Program
         Console.WriteLine($"direct P/Invoke: {string.Join(" ", link.Values(m => m.IlcDirectPInvoke))}");
         Console.WriteLine($"features: {string.Join(" ", link.Features.Select(f => $"{f.Key}={f.Value}"))}");
         Console.WriteLine($"ILC substitutions: {string.Join(" ", link.Files(m => m.IlcSubstitutions))}");
+        Console.WriteLine($"IL float allowed in: {string.Join(" ", link.IlFloatAllowed)}");
         foreach ((string tool, List<string> args) in link.PostlinkSteps())
             Console.WriteLine($"postlink: {tool} {string.Join(" ", args)}");
         Console.WriteLine($"link: {ld}");

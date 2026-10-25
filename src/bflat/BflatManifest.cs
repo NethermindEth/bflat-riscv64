@@ -238,6 +238,13 @@ internal sealed class ManifestChecks
     public bool Compressed { get; set; }
     public bool Atomic { get; set; }
     public bool IlFloat { get; set; }
+
+    /// <summary>
+    /// The methods (<c>Namespace.Type.Method</c>) whose floating point the IL
+    /// check reports as a warning, not as an error: the IL has it, but in a
+    /// block that the JIT removes on the target.
+    /// </summary>
+    public List<ManifestItem> IlFloatAllow { get; } = new List<ManifestItem>();
 }
 
 internal sealed class ManifestTest
@@ -387,10 +394,22 @@ internal sealed class BflatManifest
             r.ForEach(postlink, "$.postlink", (e, p) => m.Postlink.Add(ReadPostlinkStep(r, e, p)));
         if (root.TryGetProperty("checks", out JsonElement checks))
         {
-            r.CheckKeys(checks, "$.checks", "float", "compressed", "atomic", "il_float");
+            r.CheckKeys(checks, "$.checks", "float", "compressed", "atomic", "il_float", "il_float_allow");
             var c = new ManifestChecks();
             foreach (JsonProperty p in checks.EnumerateObject())
             {
+                if (p.Name == "il_float_allow")
+                {
+                    r.ForEach(p.Value, "$.checks.il_float_allow", (e, path) =>
+                    {
+                        ManifestItem item = r.ValueItem(e, path);
+                        string[] parts = item.Value.Split('.');
+                        if (parts.Length < 3 || parts.Any(string.IsNullOrEmpty))
+                            throw r.Error(path, $"'{item.Value}' is not Namespace.Type.Method");
+                        c.IlFloatAllow.Add(item);
+                    });
+                    continue;
+                }
                 r.ExpectKind(p.Value, JsonValueKind.True, JsonValueKind.False, "$.checks." + p.Name);
                 bool on = p.Value.GetBoolean();
                 switch (p.Name)
@@ -1171,6 +1190,9 @@ internal sealed class ManifestLink
         Atomic = Manifests.Any(m => m.Checks?.Atomic == true),
         IlFloat = Manifests.Any(m => m.Checks?.IlFloat == true),
     };
+
+    /// <summary>The methods whose floating point the IL check reports as a warning (<c>checks.il_float_allow</c>).</summary>
+    public List<string> IlFloatAllowed => Values(m => m.Checks?.IlFloatAllow ?? new List<ManifestItem>());
 
     // The link command is written in pieces (BuildCommand puts libc.a and crt
     // between them). The wraps and ld options of a manifest go directly after

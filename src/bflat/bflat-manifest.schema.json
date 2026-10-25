@@ -694,6 +694,13 @@
         },
         "il_float": {
           "type": "boolean"
+        },
+        "il_float_allow": {
+          "description": "Methods (Namespace.Type.Method) whose floating point the IL check reports as a warning: the IL has it, but in a block that the JIT removes on the target.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueItem"
+          }
         }
       }
     },

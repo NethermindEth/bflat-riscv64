@@ -1256,6 +1256,7 @@ internal class BuildCommand : CommandBase
         if (result.GetValueForOption(ErrorOnFloatOption) || platformLink?.Checks.IlFloat == true)
         {
             var offenders = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            List<string> floatAllowed = platformLink?.IlFloatAllowed ?? new List<string>();
             int allowed = 0;
             foreach (MethodDesc emitted in compilationResults.CompiledMethodBodies)
             {
@@ -1268,12 +1269,11 @@ internal class BuildCommand : CommandBase
                 if (reason == null)
                     continue;
 
-                if (ZkvmSubstitutions.IsKnownDeadFloatMethod(emitted))
+                if (ILFloatScanner.IsAllowed(emitted, floatAllowed))
                 {
                     // The conv is real IL but sits in a block the JIT proves dead
-                    // (a disabled-feature guard reached through a local, which the
-                    // IL-level substitution cannot fold). Surfaced as a warning so
-                    // it stays auditable rather than silently ignored.
+                    // (checks.il_float_allow of the platform link). Surfaced as a
+                    // warning so it stays auditable rather than silently ignored.
                     Console.WriteLine($"warning: --error-on-float: ignoring known dead FP in {emitted}  [{reason}]");
                     allowed++;
                     continue;
