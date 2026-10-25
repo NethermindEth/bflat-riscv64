@@ -1,0 +1,88 @@
+name: Sign for bflat
+
+# The signing step of the release workflows of bflat-libziskos, bflat-sp1,
+# bflat-openvm, dotnet-riscv and uGC (docs/signing.md). The private key is
+# only in this job, and this job runs no build: the build job writes the
+# lists of SHA-256 hashes (sign_package.py list-nupkg or list-files) into an
+# artifact, this job signs each list, and the publish job adds the
+# signatures (sign_package.py embed, or two more release assets).
+#
+#   sign:
+#     needs: build
+#     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@master
+#     with:
+#       lists: bflat-signature-lists
+#     secrets:
+#       BFLAT_SIGNING_KEY: ${{ secrets.BFLAT_SIGNING_KEY }}
+#
+# The output artifact (signatures, default bflat-signatures) has each list
+# and its signature, <list>.sig.
+
+on:
+  workflow_call:
+    inputs:
+      lists:
+        description: The artifact with the lists to sign (*.sha256)
+        type: string
+        required: true
+      signatures:
+        description: The artifact to write, with each list and its signature
+        type: string
+        default: bflat-signatures
+    secrets:
+      BFLAT_SIGNING_KEY:
+        description: The private key (PEM, EC P-256)
+        required: true
+
+permissions: {}
+
+jobs:
+  sign:
+    name: Sign the lists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the lists
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.lists }}
+          path: lists
+
+      # Only a list in the format that bflat reads is signed: one
+      # "<sha256>  <name>" line for each file. The log shows what is signed.
+      - name: Sign
+        env:
+          BFLAT_SIGNING_KEY: ${{ secrets.BFLAT_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BFLAT_SIGNING_KEY" ]; then
+            echo "::error::BFLAT_SIGNING_KEY is not set"
+            exit 1
+          fi
+          umask 077
+          key="$RUNNER_TEMP/bflat-signing.pem"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$BFLAT_SIGNING_KEY" > "$key"
+
+          shopt -s nullglob
+          lists=(lists/*.sha256)
+          if [ ${#lists[@]} -eq 0 ]; then
+            echo "::error::the artifact ${{ inputs.lists }} has no *.sha256 list"
+            exit 1
+          fi
+          for list in "${lists[@]}"; do
+            if [ ! -s "$list" ] || LC_ALL=C grep -qvE '^[0-9a-f]{64}  [^[:cntrl:]]+$' "$list"; then
+              echo "::error::$list is not a list of '<sha256>  <name>' lines"
+              exit 1
+            fi
+            openssl dgst -sha256 -sign "$key" -out "$list.sig" "$list"
+            echo "::group::Signed $list"
+            cat "$list"
+            echo "::endgroup::"
+          done
+
+      - name: Upload the signatures
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.signatures }}
+          path: lists/
+          if-no-files-found: error
