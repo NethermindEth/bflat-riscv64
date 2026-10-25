@@ -167,16 +167,17 @@ verified on the linked binary by `--error-on-compressed` and
 `--error-on-atomic` rather than assumed. Only the zkVM targets get them — a
 real riscv64+musl target wants C and A.
 
-**The tuning knobs**, in optimized builds. The last two are *not* passed for
-every riscv64 target — each is sound only where its precondition holds, and
-the "Applies to" column says where:
+**The tuning knobs**, in optimized builds. Each platform manifest gives
+them in `codegen.options`; a stock target gets the defaults of the JIT. The
+last two are not in every platform: each is sound only where its
+precondition holds, and the "Applies to" column says where:
 
 | Knob | Value | Applies to | Effect |
 |------|-------|------------|--------|
-| `JitObjectStackAllocation` | `1` | any riscv64 | Enable escape-analysis stack allocation |
-| `JitObjectStackAllocationSize` | `2000` (8192) | any riscv64 | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by a matching runtime patch |
-| `JitExtDefaultPolicyMaxIL` | `200` (512) | any riscv64 | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
-| `JitExtDefaultPolicyMaxBB` | `10` (16) | any riscv64 | Max inlinee basic blocks (default 7) |
+| `JitObjectStackAllocation` | `1` | zkVM targets | Enable escape-analysis stack allocation |
+| `JitObjectStackAllocationSize` | `2000` (8192) | zkVM targets | Raise the max stack-allocatable object size (default `0x210` = 528). The in-loop heap restriction is lifted by a matching runtime patch |
+| `JitExtDefaultPolicyMaxIL` | `200` (512) | zkVM targets | Max inlinee IL size (default `0x80` = 128). Stays on `ExtendedDefaultPolicy`, which weighs code growth, rather than `JitAggressiveInlining`, which overflows the fixed ZisK ROM |
+| `JitExtDefaultPolicyMaxBB` | `10` (16) | zkVM targets | Max inlinee basic blocks (default 7) |
 | `RiscV64ElideLeafRaSave` | `1` | zkVM targets | Elide RA spill/reload + frame in eligible leaf methods. A matching runtime patch refuses to elide methods whose LIR uses `REG_RA` as scratch (`GT_JCMP`, comparisons, `GT_MULHI`) or use FP. Sound only on a single-threaded deterministic guest with no GC suspension and no return-address hijacking |
 | `JitRiscV64DmaCompare` | `1` | **`zisk` only** | Lower constant-size `SpanHelpers.SequenceEqual` to the `csrrs rd, 0x814, src ; addi x0, dst, count` idiom that the ZisK ROM transpiler folds into one `dma_xmemcmp` step |
 
@@ -194,7 +195,7 @@ INSTRUCTION … please update toolchain/zisklibs/ziskos"*). The encoding above
 matches `ziskos/entrypoint/src/dma/memcmp.s`, which is the reference.
 
 These knobs trade ROM/`.text` size for fewer heap allocations and tighter
-hot paths; the comments in `BuildCommand.cs` note which to lower
+hot paths; the notes in the ZisK platform manifest say which to lower
 (`JitExtDefaultPolicyMaxIL`, `JitObjectStackAllocationSize`) if a workload
 overflows the fixed ZisK ROM.
 
