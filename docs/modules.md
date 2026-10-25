@@ -599,10 +599,11 @@ it; including the wrapper unconditionally costs nothing.
 ## ugc-zero — minimal GC
 {: #ugc-zero }
 
-**Pulled from:** `dotnet-riscv` release archive, unpacked into
-`modules/ugc-zero/release/` by `build.sh modules riscv64`. The upstream
-source lives in
-[`NethermindEth/ugc`](https://github.com/NethermindEth/ugc).
+**Pulled from:** the uGC release archive `ugc-riscv64.tar.gz`, which
+`build.sh modules riscv64` checks against the signature of the release (see
+[Package signatures](signing.md)) and unpacks into
+`modules/ugc-zero/release/`. The upstream source lives in
+[`NethermindEth/uGC`](https://github.com/NethermindEth/uGC).
 
 A complete drop-in for the .NET GC: `uGC.cpp`, `uGCHandleManager.cpp`,
 `uGCHandleStore.cpp`, `uGCHeap.cpp`. It implements the GC interface but

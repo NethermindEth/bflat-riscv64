@@ -15,12 +15,14 @@ lead: >
 | Download | When bflat downloads it | Where the signature is | What checks it |
 |----------|-------------------------|------------------------|----------------|
 | The dotnet-riscv release (runtime zips, `bflat.compiler` nupkg) | When bflat is built | Two assets of the release | `bflat.csproj`, with `bflat-modules verify-release` |
+| The release archive of a module (`external` with `release`: uGC for `ugc-zero`) | When the modules are built (`build.sh modules`) | Two assets of the release | `build.sh`, with `bflat-modules verify-release` |
 | An `--extlib` `.nupkg` (bflat-libziskos, bflat-sp1, bflat-openvm) | When a guest is built | Two entries in the package | `bflat build` |
 
 A local `.bflat.manifest` is not checked: it is a build of the developer
 (for example `platform/build.sh` output, or `BFLAT_PLATFORMS` in the
 tests). A `.bflat.manifest` from a URL cannot have a signature, so bflat
-treats it as unsigned.
+treats it as unsigned. A module `external` that names no `release` is a
+git clone of a tag, and has no signature.
 
 ## Keys
 
@@ -28,8 +30,8 @@ There is one key pair for all the repositories.
 
 | Key | Where it is | Who uses it |
 |-----|-------------|-------------|
-| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The release jobs of bflat-libziskos, bflat-sp1, bflat-openvm and dotnet-riscv |
-| Public key | The GitHub Actions **variable** `BFLAT_SIGNING_PUBLIC_KEY` (base64 DER) | The bflat build. bflat writes it into its binary. |
+| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The release jobs of bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC |
+| Public key | The GitHub Actions **variable** `BFLAT_SIGNING_PUBLIC_KEY` (base64 DER) | The bflat build and `build.sh modules`. bflat writes it into its binary. |
 
 `BFLAT_SIGNING_PUBLIC_KEY` can have more than one key, separated by commas.
 A signature is valid if one of the keys made it. Use this to change the key:
@@ -71,12 +73,12 @@ bflat and bflat-modules compile it.
 
 ## Rules
 
-| Case | bflat build of a guest | bflat build |
-|------|------------------------|-------------|
-| Signature is valid | The package is used. | The release is used. |
-| Signature is not valid, or a file does not agree with the list | Error. | Error. |
-| No signature | Error, unless `--allow-unsigned`; then a warning. | Error, unless `-p:AllowUnsignedRuntime=true`; then a message. |
-| No trusted key | A warning. Nothing is checked. | A message. Nothing is checked. |
+| Case | bflat build of a guest | bflat build | `build.sh modules` |
+|------|------------------------|-------------|--------------------|
+| Signature is valid | The package is used. | The release is used. | The archive is unpacked. |
+| Signature is not valid, or a file does not agree with the list | Error. | Error. | Error. |
+| No signature | Error, unless `--allow-unsigned`; then a warning. | Error, unless `-p:AllowUnsignedRuntime=true`; then a message. | Error, unless `ALLOW_UNSIGNED_EXTERNAL=true`; then a message. |
+| No trusted key | A warning. Nothing is checked. | A message. Nothing is checked. | A message. Nothing is checked. |
 
 A bad signature is always an error: no option accepts it.
 
@@ -96,7 +98,8 @@ The package repositories sign the `.nupkg` after `dotnet pack` and before
 $ BFLAT_SIGNING_KEY=... python3 scripts/sign_package.py nupkg artifacts/package/release/*.nupkg
 ```
 
-dotnet-riscv signs the assets of the release before it makes the release:
+dotnet-riscv and uGC sign the assets of the release before they make the
+release:
 
 ```console
 $ BFLAT_SIGNING_KEY=... python3 tools/sign_package.py files <dir> <asset>...
