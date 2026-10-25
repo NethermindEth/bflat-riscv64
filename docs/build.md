@@ -225,6 +225,22 @@ asserts naturally aligned memory accesses, so its platform always builds
 with the byte-wise expansion `--no-unaligned-access` asks for by hand;
 OpenVM executes misaligned accesses natively and gets wide ones.
 
+## Building a linux-x64 program
+
+bflat keeps the stock NativeAOT targets. With a release that has the
+linux-x64 target (`BflatTargetLinuxX64` in `bflat.variant.props`, see
+[the runtime](runtime.md#the-linux-x64-target)), it builds an ordinary
+x64 Linux program, with the full runtime and no zkVM module:
+
+```console
+$ bflat build app.cs --arch x64 --os linux
+$ ./app
+```
+
+The program is dynamically linked against glibc, like a program that
+`dotnet publish -p:PublishAot=true` makes. CI builds and runs one in the
+image of each leg that has the target.
+
 ## Known limitations
 
 - **Multi-threading.** There is exactly one thread of execution. Locks

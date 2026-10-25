@@ -345,6 +345,23 @@ jobs:
             ${{ matrix.image }}:test \
             bash -lc "bflat --info && bflat --info | grep -A1 '^Variant' | grep -q '${{ matrix.variant }}'"
 
+      # The ordinary linux-x64 target, when the release of the leg has it
+      # (BflatTargetLinuxX64 in bflat.variant.props). The image is
+      # linux/amd64, so the program runs here.
+      - name: Smoke test bflat (linux-x64)
+        run: |
+          docker run --rm --platform linux/amd64 ${{ matrix.image }}:test bash -lc '
+            set -e
+            if [ ! -d /share/bflat/lib/linux/x64/glibc ]; then
+              echo "This layout has no linux-x64 target"
+              exit 0
+            fi
+            printf "%s\n" "class Program { static int Main() { System.Console.WriteLine(\"Hello from bflat\"); return 0; } }" > /tmp/hello.cs
+            bflat build --arch x64 --os linux -o /tmp/hello /tmp/hello.cs
+            file /tmp/hello | grep -q "x86-64"
+            /tmp/hello | grep -qx "Hello from bflat"
+            echo "linux-x64: OK"'
+
       # bflat knows no zkVM: each target is a platform (entry point, memory
       # map, manifest) in its bflat-* package. Only the platform part of each
       # package is built here - it needs nothing but binutils - into one

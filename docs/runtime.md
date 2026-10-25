@@ -120,6 +120,8 @@ symbol.
 | 7 | `07_pack_bflat_libs_linux.sh` | bflat-side static libraries (`uGC.cpp.obj`, the AOT bootstrap, …) |
 | 8 | `08_pack_bflat_compiler_nupkg.sh` | ILCompiler (the AOT compiler bflat drives) packed as a NuGet `.nupkg` |
 | 9 | `09_pack_bflat_compiler_native_linux.sh` | Native-RISC-V64–hosted driver |
+| 10 | `10_build_runtime_x64.sh` | The x64 JIT and NativeAOT runtime, for the linux-x64 target |
+| 11 | `11_pack_x64.sh` | The three assets of the linux-x64 target (see below) |
 | ⋯ | `xx_pack_whole_source.sh` | Source archive of the full tree |
 
 ## How the artifact reaches bflat
@@ -143,11 +145,27 @@ At build time the archives land in `lib/<os>/<arch>/<libc>` next to the
 bflat binary; when you run `bflat build`, those files are what the driver
 feeds to the linker.
 
-Because the CoreLib that guests compile against is already on disk at that
-point, bflat's own build re-checks its
-[ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
-against it — a runtime bump that moves a substituted method fails the build
-immediately instead of at the first guest compilation.
+The layout build checks that each riscv64 object has the lp64 soft-float
+ABI (`bflat-modules check-abi`): bflat links these files as they are.
+
+### The linux-x64 target
+
+A release can also carry the ordinary linux-x64 target of bflat. The
+`runtime-x64` job of dotnet-riscv builds it from dotnet/runtime at the commit
+that the VMR pins, with the same fixups and JIT/EE GUID, so that the x64 JIT
+and CoreLib agree with the ILCompiler of the release:
+
+| Asset | Unpacked into | Contents |
+|-------|---------------|----------|
+| `bflat-compiler-native-x64-linux-glibc-x64.zip` | the bflat directory | `libclrjit_unix_x64_x64.so` |
+| `bflat-libs-linux-glibc-x64.zip` | `lib/linux/x64/glibc` | the NativeAOT runtime, CoreLib, the framework libraries |
+| `libs-linux-glibc-x64.zip` | `lib/linux/x64/glibc` | crt objects, libc, libm, libgcc and the other files of the link, from the glibc rootfs of the dotnet/runtime cross-build container |
+
+Microsoft's x64 packages do not work with this ILCompiler, because the
+fixups change the JIT/EE interface. bflat uses the target when
+`BflatTargetLinuxX64` is `true` for the release tag in
+`bflat.variant.props`; the releases that are older than the job do not
+have the assets.
 
 ## License
 

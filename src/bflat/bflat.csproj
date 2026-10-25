@@ -47,7 +47,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <RuntimeArtifact Include="bflat-compiler-native-$(CompilerHost)" />
+    <!-- The JITs that ILCompiler loads, into the bflat directory: riscv64,
+         and x64 for the linux-x64 target. -->
+    <HostCompilerArtifact Include="bflat-compiler-native-$(CompilerHost)" />
+    <HostCompilerArtifact Include="bflat-compiler-native-x64-$(CompilerHost)" Condition="'$(BflatTargetLinuxX64)' == 'true'" />
+
+    <RuntimeArtifact Include="@(HostCompilerArtifact)" />
     <RuntimeArtifact Include="@(SupportedTarget->'bflat-libs-%(Identity)')" />
     <RuntimeArtifact Include="bflat-refs" />
   </ItemGroup>
@@ -313,13 +318,13 @@
   </Target>
 
   <Target Name="ExtractHostCompiler"
-          Inputs="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).zip"
-          Outputs="$(IntermediateOutputPath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).semaphore">
+          Inputs="@(HostCompilerArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
+          Outputs="@(HostCompilerArtifact->'$(IntermediateOutputPath)%(Identity)-$(BlobsVersion).semaphore')">
 
-    <Unzip SourceFiles="$(DownloadCachePath)bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).zip"
+    <Unzip SourceFiles="$(DownloadCachePath)%(HostCompilerArtifact.Identity)-$(BlobsVersion).zip"
            DestinationFolder="$(OutputPath)" />
 
-    <Touch Files="$(IntermediateOutputPath)\bflat-compiler-native-$(CompilerHost)-$(BlobsVersion).semaphore"
+    <Touch Files="$(IntermediateOutputPath)\%(HostCompilerArtifact.Identity)-$(BlobsVersion).semaphore"
            AlwaysCreate="true" />
   </Target>
 
