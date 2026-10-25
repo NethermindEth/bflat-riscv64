@@ -1058,12 +1058,6 @@ internal sealed class ManifestLink
         return files;
     }
 
-    /// <summary>The archives (<c>.a</c>) that the package manifests link: bflat normalizes their float-ABI marker.</summary>
-    public IEnumerable<string> PackageArchives() =>
-        Manifests.Where(Packages.Contains).SelectMany(m => m.EffectiveObjects()
-            .Where(o => ManifestCondition.Applies(o.When, Target) && o.File.EndsWith(".a", StringComparison.Ordinal))
-            .Select(o => m.Resolve(o.File)));
-
     /// <summary>The managed references (<c>ilc.references</c>), with the file and the assembly name of each.</summary>
     public List<(BflatManifest Owner, ManifestItem Item)> References() => Items(m => m.IlcReferences).ToList();
 

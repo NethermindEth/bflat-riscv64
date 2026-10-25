@@ -43,6 +43,12 @@ using System.Text;
 //     post-link steps. It uses the same code as bflat, so it answers "what
 //     does this platform build, and in which order" without a guest build.
 //
+// bflat-modules check-abi <dir>
+//     Checks that each RISC-V object in <dir> (the .o files and the members
+//     of the .a files) has the lp64 soft-float ABI. bflat.csproj runs it on
+//     the riscv64 part of the layout, because bflat links those files as
+//     they are.
+//
 // bflat-modules verify-release <list> <signature> <file>=<asset-name>...
 //     Checks downloaded release assets against the signed list of their
 //     release (docs/signing.md), with the trusted keys in the environment
@@ -65,6 +71,7 @@ internal static class Program
                 ["plan", string src, string outFile] => Plan(src, outFile),
                 ["pack", string src, string outDir] => Pack(src, outDir),
                 ["link", string dir, string platform, .. string[] rest] => Link(dir, platform, rest),
+                ["check-abi", string dir] => AbiCheck.CheckDirectory(dir) == 0 ? 0 : 1,
                 ["verify-release", string list, string signature, .. string[] files] when files.Length > 0 =>
                     VerifyRelease(list, signature, files),
                 ["verify-nupkg", .. string[] packages] when packages.Length > 0 => VerifyNupkg(packages),
@@ -90,6 +97,7 @@ internal static class Program
         Console.Error.WriteLine("       bflat-modules pack <modules-dir> <layout-modules-dir>");
         Console.Error.WriteLine("       bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...]");
         Console.Error.WriteLine("                          [--remove-eh] [-O0] [-v] [--compiler <capability>]...");
+        Console.Error.WriteLine("       bflat-modules check-abi <dir>");
         Console.Error.WriteLine("       bflat-modules verify-release <list> <signature> <file>=<asset-name>...");
         Console.Error.WriteLine("       bflat-modules verify-nupkg <package.nupkg>...");
         return 2;

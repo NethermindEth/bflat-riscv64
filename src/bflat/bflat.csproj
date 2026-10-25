@@ -123,6 +123,12 @@
     <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_PlatformCrt1)&quot;"
           ConsoleToMSBuild="true" />
 
+    <!-- The riscv64 files are lp64 (soft-float): bflat links them as they
+         are, and ld.lld refuses to mix float ABIs. A release with another
+         ABI fails here, not in the first guest build. -->
+    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; check-abi &quot;$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl'))&quot;"
+          EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
+
     <!-- patch-elf script -->
     <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\patch_elf.py"
           DestinationFiles="$(OutputPath)patch_elf.py" />
