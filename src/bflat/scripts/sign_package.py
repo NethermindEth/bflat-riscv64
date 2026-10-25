@@ -13,6 +13,11 @@ small job that runs no build (.github/workflows/sign.yml in bflat-riscv64):
         Writes <out-dir>/bflat-signature.sha256: the list of the files, each
         by its base name. Use it for the assets of a release.
 
+    sign_package.py merge <out-dir> <list>...
+        Writes <out-dir>/bflat-signature.sha256: one list of all the files of
+        the lists that list-files wrote. A release whose assets come from
+        more than one job has one list for each job, and one signature.
+
     (sign.yml signs each list: <list>.sig.)
 
     sign_package.py embed <signature-dir> <package.nupkg>...
@@ -214,6 +219,21 @@ def list_files(out_dir, paths):
     print(f"listed {len(paths)} files in {out}")
 
 
+def merge(out_dir, list_paths):
+    hashes = {}
+    for list_path in list_paths:
+        for line in read(list_path).decode("utf-8").splitlines():
+            m = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+            if not m:
+                fail(f"{list_path} has a line that is not '<sha256>  <name>': {line!r}")
+            if m.group(2) in hashes:
+                fail(f"two lists name {m.group(2)}")
+            hashes[m.group(2)] = m.group(1)
+    out = os.path.join(out_dir, LIST_NAME)
+    write(out, list_text(hashes))
+    print(f"merged {len(list_paths)} lists ({len(hashes)} files) into {out}")
+
+
 def embed(sig_dir, paths):
     for path in paths:
         list_path = os.path.join(sig_dir, os.path.basename(path) + NUPKG_LIST_SUFFIX)
@@ -246,6 +266,8 @@ def main(argv):
         list_nupkg(argv[1], argv[2:])
     elif len(argv) >= 3 and argv[0] == "list-files":
         list_files(argv[1], argv[2:])
+    elif len(argv) >= 3 and argv[0] == "merge":
+        merge(argv[1], argv[2:])
     elif len(argv) >= 3 and argv[0] == "embed":
         embed(argv[1], argv[2:])
     elif len(argv) >= 3 and argv[0] == "check-files":
