@@ -1110,29 +1110,10 @@ internal class BuildCommand : CommandBase
         compilationRoots.Add(interopStubManager);
 
         var backendOptions = new List<string>();
-        if (optimizationMode != OptimizationMode.None)
-        {
-            backendOptions.Add("JitObjectStackAllocation=1");
-
-            // zkVM RyuJIT codegen tuning, fixed into bflat. RyuJIT parses these
-            // integer values as HEXADECIMAL with no 0x prefix
-            // (JitConfigProvider.getIntConfigValue uses NumberStyles.AllowHexSpecifier),
-            // so "2000" == 0x2000 == 8192.
-
-            // Max stack-allocatable object size (knob default 528 / 0x210).
-            // Lifting the in-loop heap restriction needs runtime patch
-            // 25_stackalloc_aggressive_riscv64.patch.
-            backendOptions.Add("JitObjectStackAllocationSize=2000"); // 0x2000 = 8192
-
-            // Inlining caps, raised moderately. Stays on ExtendedDefaultPolicy
-            // (weighs code growth) rather than JitAggressiveInlining, which
-            // overflows the fixed ZisK ROM. Lower MaxIL if ROM overflows.
-            backendOptions.Add("JitExtDefaultPolicyMaxIL=200"); // 0x200 = 512 (default 0x80 = 128) max inlinee IL
-            backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
-        }
 
         // The platform's RyuJIT options (codegen.options): the zkVM codegen
-        // fixups, the ISA gates of the JIT, the inline-allocation cell. The
+        // fixups and tuning, the ISA gates of the JIT, the inline-allocation
+        // cell. A stock target gets the defaults of the JIT. The
         // two alignment options are written below, with the platform's value
         // in place of bflat's default.
         string[] alignmentOptions = { "JitNoUnalignedAccess", "JitRiscV64StrictAlign" };
