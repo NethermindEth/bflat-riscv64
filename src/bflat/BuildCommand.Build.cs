@@ -224,8 +224,8 @@ internal partial class BuildCommand
     #endif
             buildTarget = new ManifestTarget
             {
-                Arch = ExtLibResolver.ArchName(targetArchitecture),
-                Os = ExtLibResolver.OsName(targetOS),
+                Arch = ArchName(targetArchitecture),
+                Os = OsName(targetOS),
                 Libc = libc,
                 Eh = removeEh ? "failfast" : "unwind",
                 Stdlib = stdlibName,
@@ -234,6 +234,24 @@ internal partial class BuildCommand
                 Compiler = compilerCapabilities,
             };
         }
+
+        // The names that manifests use for an architecture and an OS.
+        private static string ArchName(TargetArchitecture arch) => arch switch
+        {
+            TargetArchitecture.X64     => "x64",
+            TargetArchitecture.X86     => "x86",
+            TargetArchitecture.ARM64   => "arm64",
+            TargetArchitecture.RiscV64 => "riscv64",
+            _ => throw new Exception($"Unsupported architecture: {arch}")
+        };
+
+        private static string OsName(TargetOS os) => os switch
+        {
+            TargetOS.Windows => "windows",
+            TargetOS.Linux   => "linux",
+            TargetOS.UEFI    => "uefi",
+            _ => throw new Exception($"Unsupported OS: {os}")
+        };
 
         /// <summary>Resolves and checks the --extlib packages, and makes the platform link when --libc names a platform. False after an error.</summary>
         private bool ResolveExtLibs()

@@ -22,8 +22,6 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-using Internal.TypeSystem;
-
 // Resolves --extlib specs into their manifests, and the manifests into
 // concrete file paths.
 //
@@ -79,24 +77,6 @@ internal static class ExtLibResolver
         // Symbols to wrap via the linker --wrap flag, or empty if none.
         public List<string> WrapSymbols { get; } = new List<string>();
     }
-
-    // The names that manifests use for an architecture and an OS.
-    internal static string ArchName(TargetArchitecture arch) => arch switch
-    {
-        TargetArchitecture.X64     => "x64",
-        TargetArchitecture.X86     => "x86",
-        TargetArchitecture.ARM64   => "arm64",
-        TargetArchitecture.RiscV64 => "riscv64",
-        _ => throw new Exception($"Unsupported architecture: {arch}")
-    };
-
-    internal static string OsName(TargetOS os) => os switch
-    {
-        TargetOS.Windows => "windows",
-        TargetOS.Linux   => "linux",
-        TargetOS.UEFI    => "uefi",
-        _ => throw new Exception($"Unsupported OS: {os}")
-    };
 
     // -------------------------------------------------------------------------
     // Public entry point

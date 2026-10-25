@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests of the parts of bflat that need no compiler layout: the
+       manifest parser, the package signatures, the extlib resolution and
+       the float-ABI check of the layout. They compile the same source files
+       as bflat and bflat-modules, so they run with only the SDK. The end to
+       end tests that run bflat itself are in bflat.Tests. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\bflat\BflatManifest.cs" Link="Shared\BflatManifest.cs" />
+    <Compile Include="..\bflat\PackageSignature.cs" Link="Shared\PackageSignature.cs" />
+    <Compile Include="..\bflat\ExtLibResolver.cs" Link="Shared\ExtLibResolver.cs" />
+    <Compile Include="..\bflat-modules\AbiCheck.cs" Link="Shared\AbiCheck.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
