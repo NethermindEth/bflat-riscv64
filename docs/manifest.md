@@ -402,7 +402,17 @@ package needs a new step, add the step to bflat.
 These keys turn on `--error-on-float-binary`, `--error-on-compressed` and
 `--error-on-atomic` for each guest of this platform. `"il_float": true` turns
 on `--error-on-float`, which checks the IL. The platforms of today do not use
-this section, so the checks stay opt-in, as before.
+these keys, so the checks stay opt-in, as before.
+
+`il_float_allow` lists methods, as `Namespace.Type.Method`, whose floating
+point `--error-on-float` reports as a warning and not as an error: the IL has
+it, but in a block that the JIT removes on the target. Each item can have a
+`when` and a `note`. `guest_subst` lists `System.Threading.Lock.TryEnterSlow`,
+whose double is behind an EventSource test.
+
+```json
+"checks": { "il_float_allow": ["System.Threading.Lock.TryEnterSlow"] }
+```
 
 ### `tests`: module unit tests
 
@@ -756,7 +766,9 @@ The machinery that only the snippets used is gone:
   `ZkvmSubstitutions.cs`;
 - the `--verify-substitutions` option and the `VerifyZkvmSubstitutions`
   target of `bflat.csproj`;
-- the `no-fpu` platform flag. Only the `s_sqrtTable` rewrite read it.
+- the `no-fpu` platform flag. Only the `s_sqrtTable` rewrite read it;
+- `ZkvmSubstitutions.cs` itself. Its list of methods with dead floating
+  point is now `checks.il_float_allow` of `guest_subst`.
 
 ## Decisions
 

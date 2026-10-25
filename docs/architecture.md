@@ -58,15 +58,16 @@ same source builds for the prover, QEMU and real hardware.
 | Stage | What happens | Unique to this fork? |
 |-------|--------------|----------------------|
 | **1 · Compile** | Microsoft's stock NativeAOT (ILC) compiles C# to a RISC-V64 object | No — upstream, unmodified |
-| **1.5 · Substitute** | Managed bodies that would emit floating point are replaced at ILC time | Yes |
+| **1.5 · Substitute** | The platform's modules give ILC its single-hart ILLink substitutions and feature switches (`guest_subst`) | Yes |
 | **2 · Link** | `ld.lld` statically links it, swapping unsupported OS/runtime calls for the [link-time modules](modules.md) | Yes |
 | **3 · Postprocess** | A Python pass rewrites the ELF so the prover's loader accepts it (`zisk` only) | Yes |
 | **4 · Boot & run** | A tiny assembly entry point starts the runtime and calls `Main` — no kernel underneath | Yes |
 
 The driver lives in `src/bflat/`: `BuildCommand.cs` orchestrates the
-pipeline, `ZkvmIL.cs` holds the IL-rewriting machinery, and
-`ZkvmSubstitutions.cs` holds the policy — which methods are replaced, and
-on which runtime versions.
+pipeline, and `BflatManifest.cs` reads the platform and module manifests,
+which hold every zkVM decision. `ILFloatScanner.cs` is the IL check of
+`--error-on-float`; the methods that it reports only as a warning are in
+`checks.il_float_allow` of `guest_subst`.
 
 ---
 

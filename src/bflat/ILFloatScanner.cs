@@ -14,107 +14,10 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// The ILProvider that hands ILC a replaced body for a few methods, and the
-// scanner behind the --error-on-float gate.
-
-using System;
 using System.Collections.Generic;
-using System.CommandLine;
-using System.CommandLine.Help;
-using System.CommandLine.Parsing;
-using System.Diagnostics;
-using System.Reflection.Metadata;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Xml;
-
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Emit;
-using Microsoft.CodeAnalysis;
-
-using ILCompiler;
-using ILCompiler.Dataflow;
-using ILCompiler.DependencyAnalysis;
 
 using Internal.IL;
-using Internal.IL.Stubs;
 using Internal.TypeSystem;
-using Internal.TypeSystem.Ecma;
-
-using ILLink.Shared;
-
-class CustomILProvider : ILProvider
-{
-    private ILProvider inner;
-    public TypeSystemContext TypeContext;
-
-    public CustomILProvider(ILProvider innerProvider, TypeSystemContext typeContext)
-    {
-        inner = innerProvider;
-        TypeContext = typeContext;
-    }
-
-    public override MethodIL GetMethodIL(MethodDesc method)
-    {
-        if (method.OwningType is MetadataType owningType &&
-            owningType.Namespace.StringEquals("System") &&
-            owningType.Name.StringEquals("OutOfMemoryException") &&
-            method.Name.StringEquals("GetDefaultMessage"))
-        {
-            var stringType = TypeContext.GetWellKnownType(WellKnownType.String);
-            FieldDesc emptyField = null;
-
-            foreach (var field in stringType.GetFields())
-            {
-                if (field.Name.StringEquals("Empty") && field.IsStatic)
-                {
-                    emptyField = field;
-                    break;
-                }
-            }
-
-            if (emptyField == null)
-            {
-                throw new Exception("No Empty field found for OutOfMemoryException");
-            }
-
-            return new ILStubMethodIL(
-                method,
-                new byte[]
-                {
-                    (byte)ILOpcode.ldsfld, 0x01, 0x00, 0x00, 0x00,
-                    (byte)ILOpcode.ret
-                },
-                Array.Empty<LocalVariableDefinition>(),
-                new object[] { emptyField }
-            );
-        }
-
-        if (method.OwningType is MetadataType owningType2 &&
-            owningType2.Namespace.StringEquals("Internal.JitInterface") &&
-            owningType2.Name.StringEquals("CorInfoImpl") &&
-            method.Name.StringEquals("getAsyncInfo"))
-        {
-            return new ILStubMethodIL(
-                method,
-                new byte[]
-                {
-                    (byte)ILOpcode.ret
-                },
-                Array.Empty<LocalVariableDefinition>(),
-                Array.Empty<object>()
-            );
-        }
-
-        return inner.GetMethodIL(method);
-    }
-}
 
 /// <summary>
 /// Scans a method's IL for floating point - the back-end for the --error-on-float
@@ -183,5 +86,29 @@ static class ILFloatScanner
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="method"/> is in <paramref name="allowed"/>
+    /// (<c>Namespace.Type.Method</c>, the <c>checks.il_float_allow</c> items of
+    /// the platform link). Its floating point is real IL, but in a block that
+    /// the JIT removes on the target, so the check reports it as a warning.
+    /// The signature is not part of the name.
+    /// </summary>
+    public static bool IsAllowed(MethodDesc method, IReadOnlyList<string> allowed)
+    {
+        MethodDesc typical = method.GetTypicalMethodDefinition();
+        if (typical.OwningType is not MetadataType mt)
+            return false;
+        foreach (string entry in allowed)
+        {
+            int m = entry.LastIndexOf('.');
+            int t = entry.LastIndexOf('.', m - 1);
+            if (typical.Name.StringEquals(entry[(m + 1)..])
+                && mt.Name.StringEquals(entry[(t + 1)..m])
+                && mt.Namespace.StringEquals(entry[..t]))
+                return true;
+        }
+        return false;
     }
 }

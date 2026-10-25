@@ -3,9 +3,17 @@
   "schema": 2,
   "name": "guest_subst",
   "description": "Managed-code substitutions and feature switches for single-threaded, OS-less zkVM guests (ILC stage)",
-  "note": "No native object: this module carries the ILC-stage inputs, for two reasons. The guest has one hart: substitutions is ILLink.Substitutions XML that stubs the thread-pool tuning and the processor queries; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. The guest has no OS data: the features make globalization and timezones invariant, because a zkVM has no ICU data and no zoneinfo files, and a proof must not depend on them. Floating point is not a reason: soft-float arithmetic and the exact libm operations run.",
+  "note": "No native object: this module carries the ILC-stage inputs, for two reasons. The guest has one hart: substitutions is ILLink.Substitutions XML that stubs the thread-pool tuning and the processor queries; bflat applies it before the user's --substitution files and rejects duplicates, so users extend it and do not override it. The guest has no OS data: the features make globalization and timezones invariant, because a zkVM has no ICU data and no zoneinfo files, and a proof must not depend on them. Floating point is not a reason: soft-float arithmetic and the exact libm operations run. The checks name the one method whose floating point the IL check must not fail on: the guest has no EventSource.",
   "ilc": {
     "substitutions": ["substitutions.xml"],
     "features": {"System.Globalization.Invariant": true, "System.TimeZoneInfo.Invariant": true}
+  },
+  "checks": {
+    "il_float_allow": [
+      {
+        "value": "System.Threading.Lock.TryEnterSlow",
+        "note": "--error-on-float reports this method as a warning. Its double (Stopwatch ticks * 1e9 / Frequency) is behind areContentionEventsEnabled, which is NativeRuntimeEventSource.Log.IsEnabled(...). EventSource is off in a guest, so the JIT removes the block; a substitution cannot fold it, because the value goes through a local. Checked against the FP-free emulator."
+      }
+    ]
   }
 }
