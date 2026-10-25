@@ -92,9 +92,9 @@ targets `rv64ima` with the soft-float `lp64` ABI: modules are built
 `-mabi=lp64`. Guest floating point is soft-float: `libgcc.a` gives the
 arithmetic and the `rv64im` musl gives the exact libm operations, and the
 `nofp` module traps the transcendental functions.
-C runtime objects from the distribution feed are built for `rv64gc` and
-still advertise a double-float ABI, so Bflat normalizes the ELF ABI markers
-at build time to let `ld.lld` mix them.
+The runtime, musl, `libgcc.a` and `libatomic.a` in the layout are built
+`rv64im` with `-mabi=lp64`, so Bflat links them as they are. The layout
+build checks that each riscv64 object has the soft-float ABI.
 
 ### Runtime
 

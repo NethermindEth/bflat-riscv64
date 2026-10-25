@@ -352,10 +352,13 @@ its own `when`.
   different compiler versions. bflat applies the manifest after the `-m`
   option of the user. `BFLAT_NO_ZK_ISA_REDUCTION=1` turns this off.
 - Without F and D, the compiler selects the soft-float ABI itself
-  (`TargetAbi.NativeAotRiscV64SoftFloat`). `abi: "lp64"` says that the
-  platform links with the lp64 float-ABI marker: bflat changes the marker
-  of crt, libc, the runtime files and the `.a` files of the packages
-  (`PatchRiscvAbi*`), and links the soft-float builtins (`libgcc.a`).
+  (`TargetAbi.NativeAotRiscV64SoftFloat`). bflat removes F and D from every
+  riscv64 target, because the riscv64 layout is lp64: the runtime, musl,
+  `libgcc.a` and `libatomic.a` are built rv64im with `-mabi=lp64`. bflat
+  links them as they are and changes no file. `bflat-modules check-abi`
+  checks the layout when it is made. A package must also ship lp64
+  objects; ld.lld refuses an lp64d object. `abi: "lp64"` records the ABI
+  of the platform.
 - `options` contains RyuJIT options. They are the same as `--codegenopt`.
   Write numbers in hex without `0x`, because RyuJIT reads them in this
   format. bflat and the schema reject a value with `0x`.
@@ -619,6 +622,7 @@ the layout.
 | `bflat-modules plan <modules-dir> <out-file>` | Writes the module build as shell commands (`module_begin`, `module_fetch_release`, `module_cc`, `module_cxx`, `module_as`, `module_end`). `build.sh modules` runs this command and then executes the file. `build.sh` defines the commands, so the toolchain and its flags stay in `build.sh`. |
 | `bflat-modules pack <modules-dir> <layout-modules-dir>` | Makes sure that each file in `objects`, `ilc` and `platform` exists. Copies each manifest and its files to `<layout-modules-dir>/<name>/`. A file of a different module must be a file that this module ships. `bflat.csproj` runs this command when it makes the layout. |
 | `bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...] [--remove-eh] [-O0] [-v] [--compiler <capability>]` | Shows what the manifests give a guest build on a platform: the ISA, the ABI, the RyuJIT options, the defines, the feature switches, the ILC files, the post-link steps and the link command (with placeholders for the parts that bflat adds itself). It uses the same code as bflat. |
+| `bflat-modules check-abi <dir>` | Makes sure that each RISC-V object in `<dir>` (each `.o` file and each member of each `.a` file) has the lp64 soft-float ABI. `bflat.csproj` runs this command on `lib/linux/riscv64/musl` when it makes the layout. |
 
 To add a module, add a directory with a manifest and add the name of the
 module to `requires` of each platform that needs it (in the platform
@@ -680,7 +684,7 @@ bflat-sp1 and bflat-openvm. Their unit tests went with them
 | the six uGC object names | `objects` of `ugc-zero` |
 | `ZKVM_ZISK`, `ZKVM_SP1`, `ZKVM_OPENVM` | `ilc.defines` |
 | ISA reduction; Zba, Zbb and Zbs for ZisK (`ZISK_BITMANIP_SUPPORTED`) | `codegen.isa`, with the `zb-lowering-fixes` compiler capability |
-| the ABI marker change and `libgcc.a` for the zkVM targets | `codegen.abi: "lp64"` |
+| the ABI marker change and `libgcc.a` for the zkVM targets | removed: the layout is lp64, and every riscv64 target links `libgcc.a` |
 | approximately 25 JIT options with `libc` checks | `codegen.options` |
 | `System.TimeZoneInfo.Invariant`, invariant globalization | `ilc.features` |
 | `__Internal` direct P/Invoke | `ilc.direct_pinvoke` |

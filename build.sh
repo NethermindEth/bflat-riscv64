@@ -95,16 +95,6 @@ function build_modules()
 		popd > /dev/null
 	}
 
-	# Fix up ABI marker - only meaningful for ELF objects; LTO bitcode files
-	# are not ELF, ABI is handled at LTO link time.
-	function module_fix_abi()
-	{
-		local magic=$(head -c 4 "$1" | xxd -p)
-		if [ "$magic" = "7f454c46" ] ; then
-			printf '\x00' | dd of="$1" bs=1 seek=$((0x30)) count=1 conv=notrunc status=none
-		fi
-	}
-
 	# module_cc <source> <object> [extra flags...]
 	# Compile as C (clang + LTO so lld can do cross-module opt).
 	# -DBFLAT_DOTNET: some module bodies are contract-versioned against the
@@ -116,7 +106,6 @@ function build_modules()
 		shift 2
 		clang ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (C)"
-		module_fix_abi "$out"
 	}
 
 	# module_cxx <source> <object> [extra flags...]
@@ -127,7 +116,6 @@ function build_modules()
 		shift 2
 		clang++ ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (C++)"
-		module_fix_abi "$out"
 	}
 
 	# module_as <source> <object> [extra flags...]
@@ -141,7 +129,6 @@ function build_modules()
 		shift 2
 		riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 --defsym BFLAT_DOTNET=${dotnet_version} "$@" "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (Assembly)"
-		module_fix_abi "$out"
 	}
 
 	# module_fetch_release <repo> <tag> <file> <dir>

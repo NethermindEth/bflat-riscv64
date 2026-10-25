@@ -195,131 +195,6 @@ internal class BuildCommand : CommandBase
         }
     }
 
-    void PatchRiscvAbi(string path)
-    {
-        const long offset = 0x30;
-
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-        fs.Seek(offset, SeekOrigin.Begin);
-        int b = fs.ReadByte();
-        if (b == 4 || b == 5)
-        {
-            fs.Seek(offset, SeekOrigin.Begin);
-            fs.WriteByte(0);
-        }
-        fs.Close();
-    }
-
-    void PatchRiscvAbiStaticLib(string libPath, bool verbose)
-    {
-        if (verbose)
-            Console.WriteLine($"Patching RISC-V ABI in static library (in place): {libPath}");
-
-        if (!File.Exists(libPath))
-        {
-            if (verbose)
-                Console.WriteLine($"Warning: {libPath} not found, skipping ABI patch");
-            return;
-        }
-
-        // Patch the float-ABI marker of every ELF member in place by walking the ar
-        // structure. Extract-and-repack (ar x / ar rcs) is unsafe here: musl's
-        // libc.a has multiple members that share a basename (e.g. free.lo), and
-        // extraction by name overwrites the earlier one on disk, silently dropping
-        // its symbols (this is why "free" went missing). Rewriting bytes in place
-        // preserves every member and the archive symbol index.
-        using var fs = new FileStream(libPath, FileMode.Open, FileAccess.ReadWrite);
-
-        byte[] magic = new byte[8];
-        if (fs.Read(magic, 0, 8) != 8 || System.Text.Encoding.ASCII.GetString(magic) != "!<arch>\n")
-        {
-            if (verbose)
-                Console.WriteLine($"Warning: {libPath} is not an ar archive, skipping ABI patch");
-            return;
-        }
-
-        int patched = 0;
-        byte[] header = new byte[60];
-        while (fs.Position + 60 <= fs.Length)
-        {
-            if (fs.Read(header, 0, 60) != 60)
-                break;
-
-            // Member size is a decimal ASCII string at bytes 48..57.
-            if (!long.TryParse(System.Text.Encoding.ASCII.GetString(header, 48, 10).Trim(), out long size))
-                break;
-
-            long dataPos = fs.Position;
-
-            // e_flags lives at offset 0x30 of the ELF header; patch it only for ELF
-            // members whose marker is hard-float (4) or hard-float+compressed (5).
-            // The armap/extended-name members are not ELF and are skipped.
-            if (size > 0x34)
-            {
-                byte[] ident = new byte[4];
-                // A short read would leave `ident` holding stale bytes and the
-                // magic test could then misfire on a truncated member; treat
-                // "fewer than 4 bytes available" as "not an ELF member".
-                if (fs.ReadAtLeast(ident, 4, throwOnEndOfStream: false) == 4 &&
-                    ident[0] == 0x7f && ident[1] == (byte)'E' && ident[2] == (byte)'L' && ident[3] == (byte)'F')
-                {
-                    fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
-                    int b = fs.ReadByte();
-                    if (b == 4 || b == 5)
-                    {
-                        fs.Seek(dataPos + 0x30, SeekOrigin.Begin);
-                        fs.WriteByte(0);
-                        patched++;
-                    }
-                }
-            }
-
-            // Advance to the next member; member data is padded to an even offset.
-            long next = dataPos + size;
-            if ((next & 1) == 1)
-                next++;
-            fs.Seek(next, SeekOrigin.Begin);
-        }
-
-        if (verbose)
-            Console.WriteLine($"Patched {patched} ELF member(s) in {libPath}");
-    }
-
-    // Normalize the RISC-V float-ABI marker of every prebuilt .NET runtime blob
-    // that the zisk/zisk_sim link pulls in, to soft-float (lp64). The zkVM stack
-    // is linked soft-float (crt1.o/crti.o/crtn.o/libc.a are patched above), but
-    // the runtime blobs (bootstrapper, WorkstationGC, PAL, minipal, ...) ship
-    // with the hard-float (lp64d) marker in some blob releases, and ld.lld
-    // rejects them with "different floating-point ABI from crt1.o". This flips
-    // only the ELF marker byte in place (see PatchRiscvAbi / PatchRiscvAbiStaticLib);
-    // it does NOT touch instructions, so it is safe only because the blobs
-    // contain no hardware FP (the guest is FP-free). Idempotent and tolerant of
-    // missing files.
-    void PatchRiscvAbiRuntimeBlobs(string libDir, bool verbose)
-    {
-        string[] objects =
-        {
-            "libbootstrapper.o", "libbootstrapperdll.o",
-        };
-        string[] archives =
-        {
-            "libSystem.Native.a", "libatomic.a", "libeventpipe-disabled.a",
-            "libaotminipal.a", "libstandalonegc-disabled.a", "libstdc++compat.a",
-            "libRuntime.WorkstationGC.a", "libSystem.IO.Compression.Native.a",
-            "libSystem.Security.Cryptography.Native.OpenSsl.a",
-            "libSystem.Globalization.Native.a",
-        };
-        foreach (string o in objects)
-        {
-            string path = Path.Combine(libDir, o);
-            if (File.Exists(path))
-                PatchRiscvAbi(path);
-        }
-        foreach (string a in archives)
-            PatchRiscvAbiStaticLib(Path.Combine(libDir, a), verbose);
-    }
-
-
     /// <summary>
     /// --remove-eh: drop the unwind tables and fail fast on throw instead of
     /// dispatching. Manifest conditions see it as "eh": "failfast".
@@ -524,11 +399,6 @@ internal class BuildCommand : CommandBase
                     if (verbose)
                         Console.WriteLine($"Added external dotnet reference: {referencePath}");
                 }
-                if (targetArchitecture == TargetArchitecture.RiscV64)
-                {
-                    foreach (string archive in platformLink.PackageArchives())
-                        PatchRiscvAbiStaticLib(archive, verbose);
-                }
 
                 defines = (defines ?? Array.Empty<string>()).Concat(platformLink.Values(m => m.IlcDefines)).ToArray();
             }
@@ -548,14 +418,7 @@ internal class BuildCommand : CommandBase
                     {
                         ExtLibResolver.Result extLibResult = ExtLibResolver.Contributions(m, buildTarget, extLibTempDir, verbose);
 
-                        foreach (string staticLibPath in extLibResult.StaticLibPaths)
-                        {
-                            downloadedLibPaths.Add(staticLibPath);
-
-                            // Patch RISC-V ABI if needed
-                            if (targetArchitecture == TargetArchitecture.RiscV64)
-                                PatchRiscvAbiStaticLib(staticLibPath, verbose);
-                        }
+                        downloadedLibPaths.AddRange(extLibResult.StaticLibPaths);
 
                         foreach (string dotnetLibPath in extLibResult.DotnetLibPaths)
                         {
@@ -583,9 +446,6 @@ internal class BuildCommand : CommandBase
             return 1;
         }
 
-        // A soft-float platform: its crt, libc and runtime objects get the
-        // lp64 float-ABI marker, and it links the soft-float builtins.
-        bool softFloatAbi = platformLink?.Abi == "lp64";
         // The libc whose sysroot, crt and runtime files the target uses.
         string linkLibc = platformLink?.Target.Libc ?? libc;
 
@@ -638,66 +498,43 @@ internal class BuildCommand : CommandBase
 
         string isaArg = result.GetValueForOption(TargetIsaOption);
 
-        // Whether the compiler package models the RISC-V extensions as
-        // instruction sets (the soft-float dotnet-riscv line does; older
-        // packages know only base/zba/zbb). Probed on a throwaway builder so
-        // the same bflat sources serve both runtime generations.
-        bool riscvIsaAware = targetArchitecture == TargetArchitecture.RiscV64
-            && new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet("f");
-
-        if (riscvIsaAware && platformLink != null)
+        // The instruction set of riscv64. The layout (the dotnet-riscv
+        // runtime, musl, libgcc) is built rv64im for the lp64 soft-float ABI,
+        // so a riscv64 target has no F and D: without them ilc and the JIT
+        // use the lp64 calling convention and soft-float lowering, and ilc
+        // writes the lp64 float-ABI marker that the layout has. A platform
+        // gives the rest of its instruction set (codegen.isa): a zkVM guest
+        // also drops C and A, which stops compressed and atomic emission
+        // through the same mechanism as the EnableRiscV64* options. Only the
+        // extensions that this compiler package models can be named (.NET 10
+        // knows no Zbs/Zicond), so each one is probed.
+        if (targetArchitecture == TargetArchitecture.RiscV64)
         {
-            // The platform's instruction set (codegen.isa). A zkVM guest
-            // drops C, A, F and D at the instruction-set level: losing F/D
-            // flips ilc and the JIT into the lp64 soft-float ABI and
-            // soft-float lowering; C and A stop compressed/atomic emission
-            // through the same mechanism as the EnableRiscV64* options. Only
-            // the extensions this compiler package models can be named (.NET
-            // 10 knows no Zbs/Zicond), so each one is probed.
-            if (Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
+            string targetIsa = "-f,-d";
+            if (platformLink != null && Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
             {
                 string platformIsa = platformLink.Isa(
                     ext => new InstructionSetSupportBuilder(targetArchitecture).AddSupportedInstructionSet(ext));
                 if (platformIsa.Length > 0)
-                    isaArg = string.IsNullOrEmpty(isaArg) ? platformIsa : isaArg + "," + platformIsa;
+                    targetIsa += "," + platformIsa;
             }
+            isaArg = string.IsNullOrEmpty(isaArg) ? targetIsa : isaArg + "," + targetIsa;
         }
 
         InstructionSetSupport instructionSetSupport = Helpers.ConfigureInstructionSetSupport(isaArg, maxVectorTBitWidth: 0, isVectorTOptimistic: false, targetArchitecture, tsTargetOs,
                 "Unrecognized instruction set {0}", "Unsupported combination of instruction sets: {0}/{1}", logger,
                 optimizingForSize: optimizationMode == OptimizationMode.PreferSize);
 
-        // Soft-float mode: a riscv64 target without the F or D extension.
-        // Resolved reflectively: the enum members only exist in compiler
-        // packages that model F/D/C/A (see riscvIsaAware); on older packages
-        // this stays false and the ISA-derived behaviour of that package applies.
-        bool zkSoftFloat = false;
-        if (riscvIsaAware)
-        {
-            foreach (var extName in new[] { "RiscV64_F", "RiscV64_D" })
-            {
-                var extField = typeof(Internal.JitInterface.InstructionSet).GetField(extName);
-                if (extField != null)
-                {
-                    var extSet = (Internal.JitInterface.InstructionSet)extField.GetValue(null);
-                    zkSoftFloat |= !instructionSetSupport.IsInstructionSetSupported(extSet);
-                }
-            }
-        }
+        // The ABI is a property of the target, not of the instruction set:
+        // the compiler takes the lp64 calling convention, the JIT flag and
+        // the ELF float-ABI marker from TargetAbi. A riscv64 target without F
+        // or D is lp64; the compiler refuses lp64 with F or D.
+        bool softFloat = targetArchitecture == TargetArchitecture.RiscV64
+            && (!instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_F)
+                || !instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_D));
 
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
-        var targetAbi = TargetAbi.NativeAot;
-        if (zkSoftFloat)
-        {
-            // The ABI is a property of the target, not of the instruction set: the
-            // compiler selects the lp64 (soft-float) calling convention, the JIT flag
-            // and the ELF float-ABI marker from TargetAbi, which the runtime, libm and
-            // compiler-rt of the zkVM toolchains (all built with -mabi=lp64) match.
-            // Resolved reflectively like the instruction sets above; on packages
-            // without the member the ISA-derived flag of that package applies.
-            if (Enum.TryParse(typeof(TargetAbi), "NativeAotRiscV64SoftFloat", out object softAbi))
-                targetAbi = (TargetAbi)softAbi;
-        }
+        var targetAbi = softFloat ? TargetAbi.NativeAotRiscV64SoftFloat : TargetAbi.NativeAot;
         var targetDetails = new TargetDetails(targetArchitecture, tsTargetOs, targetAbi, simdVectorLength);
         var ms = new MemoryStream();
 
@@ -1511,11 +1348,6 @@ internal class BuildCommand : CommandBase
         // Run the platform linker
         //
 
-        if (targetArchitecture == TargetArchitecture.RiscV64)
-        {
-            PatchRiscvAbi(objectFilePath);
-        }
-
         if (logger.IsVerbose)
             logger.LogMessage("Running the linker");
 
@@ -1664,16 +1496,10 @@ internal class BuildCommand : CommandBase
                         // musl's crt1.o with _start renamed (bflat.csproj): the
                         // platform entry point defines _start.
                         ldArgs.Append($"\"{firstLib}/crt1-platform.o\" ");
-                        if (softFloatAbi)
-                            PatchRiscvAbi(firstLib + "/crt1-platform.o");
                     }
                     else
                         ldArgs.Append($"\"{firstLib}/crt1.o\" ");
                     ldArgs.Append($"\"{firstLib}/crti.o\" ");
-                    if (softFloatAbi)
-                    {
-                        PatchRiscvAbi(firstLib + "/crti.o");
-                    }
                 }
                 else
                 {
@@ -1738,12 +1564,6 @@ internal class BuildCommand : CommandBase
                 if (stdlib == StandardLibType.DotNet)
                 {
                     ldArgs.Append("-latomic ");
-                    // The prebuilt .NET runtime blobs (bootstrapper, WorkstationGC,
-                    // PAL, minipal, libatomic, ...) can ship with the hard-float
-                    // (lp64d) marker; normalize them all to soft-float so ld.lld
-                    // accepts them against the soft-float crt1.o.
-                    if (softFloatAbi)
-                        PatchRiscvAbiRuntimeBlobs(firstLib, verbose);
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
                     ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
@@ -1779,24 +1599,15 @@ internal class BuildCommand : CommandBase
                  * hand it never takes musl's. */
                 platformLink?.AppendObjects(ldArgs, ObjectGroup.PreLibc);
                 ldArgs.Append($"\"{firstLib}/libc.a\" ");
-                // A soft-float platform is linked with the lp64 ABI marker
-                // (see PatchRiscvAbi on crt1.o/crti.o above). The bundled
-                // musl libc.a still carries the hard-float (lp64d) marker, so
-                // normalize it too or ld.lld rejects every member with
-                // "different floating-point ABI from crt1.o".
-                if (softFloatAbi)
-                    PatchRiscvAbiStaticLib(firstLib + "/libc.a", verbose);
 
                 /* The soft-float builtins. Without an FPU the compiler lowers
                  * every double operation to a call to __adddf3 and its 51
                  * siblings, and on riscv64 nothing else here defines them:
                  * the runtime's own C++ (the GC's cgroup limits, the yield
                  * normalization) calls them, and so does anything the guest
-                 * does with a double. The bundled libgcc.a is already built
-                 * lp64, so it needs no ABI patching, and it comes last
-                 * because these are the leaves - nothing it pulls in refers
-                 * back to libc. */
-                if (softFloatAbi)
+                 * does with a double. libgcc.a comes last because these are
+                 * the leaves - nothing it pulls in refers back to libc. */
+                if (softFloat)
                     ldArgs.Append($"\"{firstLib}/libgcc.a\" ");
             }
 
@@ -1814,9 +1625,6 @@ internal class BuildCommand : CommandBase
             else if (linkLibc == "musl")
             {
                 ldArgs.Append($"\"{firstLib}/crtn.o\" ");
-                // Same soft-float marker normalization as crt1.o/crti.o.
-                if (softFloatAbi)
-                    PatchRiscvAbi(firstLib + "/crtn.o");
             }
             else
             {

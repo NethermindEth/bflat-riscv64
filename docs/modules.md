@@ -654,15 +654,12 @@ which reads the `bflat-manifest.json` of every directory under
    — assembly is the one input that does not go through clang, since
    bitcode does not apply to it.
 4. Compiles each `.cpp` file with `clang++` and the same flags as (2).
-5. Patches each resulting object's ABI marker byte to keep the linker
-   happy when mixing soft-float-marked and hard-float-marked objects.
 
 The bflat build then runs `bflat-modules pack`, which copies each manifest
 and the files it names into `lib/modules/<name>/` in the compiler layout.
 
-Step 5 — patching offset `0x30` of the ELF e_flags — clears the
-hard-float bit so the bflat-side modules carry the `lp64` (soft-float)
-marker in their ELF header.
+`-mabi=lp64` gives each object the `lp64` (soft-float) marker in its ELF
+header, the same as the runtime and musl in the layout.
 
 That patch exists because the objects being linked together do not all
 agree on their marker. The modules are compiled `-mabi=lp64` and the
