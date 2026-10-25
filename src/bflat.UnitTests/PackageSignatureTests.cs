@@ -211,11 +211,42 @@ public class PackageSignatureTests
             new[] { signer.PublicKey }, new[] { (asset, "libs.zip") }, "release");
     }
 
-    private static bool Run(string program, string args, string key)
+    /// <summary>
+    /// The three steps of a release job: list-nupkg without a key, the
+    /// signature of the list alone (sign.yml), and embed, which checks the
+    /// signature with the public key.
+    /// </summary>
+    [Fact]
+    public void SignPackageScript_ListSignAndEmbed()
+    {
+        using var dir = new TempDir();
+        using var signer = new TestSigner();
+        using var other = new TestSigner();
+        string nupkg = signer.Nupkg(Path.Combine(dir.Path, "p.nupkg"), Entries, sign: false);
+        string lists = Path.Combine(dir.Path, "lists");
+        string script = Path.Combine(Repo.Root, "src", "bflat", "scripts", "sign_package.py");
+
+        if (!Run("python3", "--version", null) || !Run("openssl", "version", null))
+            return;
+
+        Assert.True(Run("python3", $"-I \"{script}\" list-nupkg \"{lists}\" \"{nupkg}\"", null));
+        string list = Path.Combine(lists, "p.nupkg.bflat-signature.sha256");
+        File.WriteAllBytes(list + ".sig", signer.Sign(File.ReadAllBytes(list)));
+
+        Assert.False(Run("python3", $"-I \"{script}\" embed \"{lists}\" \"{nupkg}\"", null, other.PublicKeyBase64));
+        Assert.Equal(PackageSignature.Status.Unsigned, PackageSignature.VerifyNupkg(nupkg, new[] { signer.PublicKey }));
+
+        Assert.True(Run("python3", $"-I \"{script}\" embed \"{lists}\" \"{nupkg}\"", null, signer.PublicKeyBase64));
+        Assert.Equal(PackageSignature.Status.Valid, PackageSignature.VerifyNupkg(nupkg, new[] { signer.PublicKey }));
+    }
+
+    private static bool Run(string program, string args, string key, string publicKeys = null)
     {
         var psi = new ProcessStartInfo(program, args) { RedirectStandardOutput = true, RedirectStandardError = true };
         if (key != null)
             psi.Environment["BFLAT_SIGNING_KEY"] = key;
+        if (publicKeys != null)
+            psi.Environment["BFLAT_SIGNING_PUBLIC_KEY"] = publicKeys;
         try
         {
             using Process p = Process.Start(psi);

@@ -30,8 +30,8 @@ There is one key pair for all the repositories.
 
 | Key | Where it is | Who uses it |
 |-----|-------------|-------------|
-| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The release jobs of bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC |
-| Public key | The GitHub Actions **variable** `BFLAT_SIGNING_PUBLIC_KEY` (base64 DER) | The bflat build and `build.sh modules`. bflat writes it into its binary. |
+| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The sign job (`sign.yml`) of the release workflows of bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC |
+| Public key | The GitHub Actions **variable** `BFLAT_SIGNING_PUBLIC_KEY` (base64 DER) | The bflat build and `build.sh modules`. bflat writes it into its binary. The publish jobs of the release workflows check the signature with it before they publish. |
 
 `BFLAT_SIGNING_PUBLIC_KEY` can have more than one key, separated by commas.
 A signature is valid if one of the keys made it. Use this to change the key:
@@ -67,9 +67,10 @@ The one exception is `.signature.p7s`: NuGet.org adds it after the push.
 In a dotnet-riscv release, both files are assets of the release. The list
 names the other assets.
 
-`src/bflat/scripts/sign_package.py` makes the signatures. The packages and
-dotnet-riscv have copies of it. `src/bflat/PackageSignature.cs` reads them;
-bflat and bflat-modules compile it.
+`src/bflat/scripts/sign_package.py` writes the lists, and openssl makes the
+signatures (see [The release jobs](#the-release-jobs)).
+`src/bflat/PackageSignature.cs` reads them; bflat and bflat-modules compile
+it.
 
 ## Rules
 
@@ -91,22 +92,63 @@ that bflat checked.
 
 ## The release jobs
 
-The package repositories sign the `.nupkg` after `dotnet pack` and before
-`dotnet nuget push` and the GitHub release:
+The private key is only in the job of the reusable workflow
+`.github/workflows/sign.yml` of this repository. That job runs no build:
+code that a release job builds or downloads never runs where the key is.
+A release job has three jobs:
 
-```console
-$ BFLAT_SIGNING_KEY=... python3 scripts/sign_package.py nupkg artifacts/package/release/*.nupkg
-```
+1. The build job makes the packages and writes the lists of their SHA-256
+   hashes into an artifact. It needs no key.
 
-dotnet-riscv and uGC sign the assets of the release before they make the
-release:
+   ```console
+   $ python3 scripts/sign_package.py list-nupkg signature artifacts/package/release/*.nupkg
+   $ python3 tools/sign_package.py list-files signature <asset>...
+   ```
 
-```console
-$ BFLAT_SIGNING_KEY=... python3 tools/sign_package.py files <dir> <asset>...
-```
+   `list-nupkg` writes `<package>.nupkg.bflat-signature.sha256` for each
+   package. `list-files` writes `bflat-signature.sha256` for the assets of a
+   release.
 
-The script stops with an error if `BFLAT_SIGNING_KEY` is not set. A release
-job thus cannot publish an unsigned release by mistake.
+2. The sign job calls `sign.yml` with the name of that artifact and the
+   secret. It signs each `*.sha256` list with
+   `openssl dgst -sha256 -sign`, and writes each list and its `.sig` into the
+   artifact `bflat-signatures`. It signs only a file of `<sha256>  <name>`
+   lines, and it shows each list in the log.
+
+   ```yaml
+   sign:
+     needs: build-nupkg
+     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@master
+     with:
+       lists: bflat-signature-lists
+     secrets:
+       BFLAT_SIGNING_KEY: ${{ secrets.BFLAT_SIGNING_KEY }}
+   ```
+
+3. The publish job adds the signatures and publishes. For a package,
+   `embed` makes sure that the package agrees with its list and adds the list
+   and the signature as two entries. For a release, `check-files` makes sure
+   that the assets agree with the list, and the two files are two more
+   assets. With the public keys in `BFLAT_SIGNING_PUBLIC_KEY`, both also check
+   the signature, as bflat does.
+
+   ```console
+   $ python3 scripts/sign_package.py embed signature nupkg/*.nupkg
+   $ python3 tools/sign_package.py check-files signature <asset>...
+   ```
+
+The package repositories sign before `dotnet nuget push` and the GitHub
+release. The sign job runs only when the release job publishes, so a build
+that publishes nothing needs no secret.
+
+To sign on one machine with the private key in `BFLAT_SIGNING_KEY`,
+`sign_package.py nupkg <package>...` and
+`sign_package.py files <out-dir> <file>...` do the three steps at once. The
+script stops with an error if `BFLAT_SIGNING_KEY` is not set.
+
+`src/bflat/scripts/sign_package.py` is the original. The packages,
+dotnet-riscv and uGC have copies (`scripts/` or `tools/`); keep them the
+same.
 
 To check a package by hand, with the public key in `BFLAT_SIGNING_PUBLIC_KEY`:
 
