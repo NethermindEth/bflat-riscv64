@@ -7,10 +7,15 @@
  * is loaded in ROM, and whatever must run from RAM is copied there by _start
  * (module.S) from one contiguous block.
  *
- * The prover's ROM is 2 MiB in every machine configuration
- * (circuit_defs/<machine>/src/lib.rs MAX_ROM_SIZE); the simulator does not
- * bound it. AIRBENDER_ROM_SIZE defaults to that limit so an image that would
- * not prove fails to link.
+ * Airbender v3's ROM is 4 MiB (common_constants/src/rom.rs ROM_BYTE_SIZE);
+ * earlier versions have 2 MiB (circuit_defs/<machine>/src/lib.rs
+ * MAX_ROM_SIZE), and the simulator does not bound it. AIRBENDER_ROM_SIZE
+ * defaults to the v3 limit so an image that would not prove fails to link.
+ *
+ * v3 also proves only the unsigned RV32M instructions. The JIT leaves the
+ * signed ones out of managed code (JitRiscVUnsignedMulDiv); for the native
+ * code, scripts/unsigned_muldiv.py moves each one into a trampoline in the
+ * area reserved at the end of .text.
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  */
@@ -54,6 +59,11 @@ SECTIONS
     __stop___unbox  = .;
 
     *(.text .text.*)
+    /* The native code is placed last, so all of it is within a jump of here. */
+    . = ALIGN(4);
+    __signed_tramp_start = .;
+    . += 2048;
+    __signed_tramp_end = .;
     . = ALIGN(16);
     __image_text_end = .;
   } >rom :text
@@ -164,7 +174,7 @@ SECTIONS
 
   /* The ROM image ends with the load copy of the RAM block. */
   __rom_image_end = __ram_init_load + (__ram_init_end - __ram_init_start);
-  ASSERT(__rom_image_end <= (DEFINED(AIRBENDER_ROM_SIZE) ? AIRBENDER_ROM_SIZE : 2M),
+  ASSERT(__rom_image_end <= (DEFINED(AIRBENDER_ROM_SIZE) ? AIRBENDER_ROM_SIZE : 4M),
          "image does not fit Airbender's ROM; link with --defsym=AIRBENDER_ROM_SIZE=<bytes> to simulate it anyway")
 
   /DISCARD/ : {
