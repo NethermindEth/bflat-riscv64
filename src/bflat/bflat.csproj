@@ -16,6 +16,16 @@
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <!-- LocalCompilerDir: a directory holding an ILCompiler build (ILCompiler*.dll,
+       Microsoft.DiaSymReader.dll, libjitinterface_x64.so and the
+       libclrjit_unix_*_x64.so cross JITs) to use in place of the released
+       compiler, e.g. one with a target no release has yet (riscv32). It is
+       packed as BFlat.Compiler 10.0.0-local, a version no release uses, so the
+       NuGet cache never holds the two under one version. -->
+  <PropertyGroup Condition="'$(LocalCompilerDir)' != ''">
+    <RuntimeVersion>10.0.0-local</RuntimeVersion>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Remove ZisK from all the automatic download/extract tasks -->
     <SupportedTarget Remove="linux-zisk-riscv64" />
@@ -248,6 +258,53 @@
           DestinationFiles="$(OutputPath)check_wrap_symbols.py" />
   </Target>
 
+  <!-- The host side of LocalCompilerDir: its JIT-EE interface and cross JITs
+       replace the released ones, which may not match its ILCompiler. -->
+  <Target Name="CopyLocalCompilerNative"
+          AfterTargets="CreateCompilerLayout"
+          Condition="'$(LocalCompilerDir)' != ''">
+    <ItemGroup>
+      <_LocalCompilerNative Include="$(LocalCompilerDir)/*.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LocalCompilerNative)" DestinationFolder="$(OutputPath)" />
+  </Target>
+
+  <!-- Airbender (RV32IM): lib/linux/riscv32/airbender holds everything the
+       target links, as the dotnet-riscv releases carry no riscv32 build yet:
+       the modules built for rv32 (build.sh modules riscv32) and the rv32
+       runtime, framework, musl and uGC that AirbenderLibsDir names
+       (scripts/stage_airbender_libs.sh lays one out). -->
+  <Target Name="CreateAirbenderLayout"
+          AfterTargets="CreateCompilerLayout"
+          Condition="'$(AirbenderLibsDir)' != ''">
+    <PropertyGroup>
+      <_AirbenderLib>$(OutputPath)lib\linux\riscv32\airbender\</_AirbenderLib>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AirbenderObject Include="nothread;noos;nofp;ubootstrap;stdcppshim;rhp;gs_cookie;rhp_native;pal;eh;tls;rng_stupid;rust_sys" />
+      <_AirbenderParams Include="nofp;rhp;gs_cookie;rhp_native;pal;eh;tls;rng_stupid;rust_sys;ugc-zero;zisk_subst" />
+      <_AirbenderLibs Include="$(AirbenderLibsDir)\**\*" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)modules\zkvm_airbender\module.rv32.o')"
+           Text="The rv32 modules are not built: run build.sh modules riscv32 first." />
+
+    <Copy SourceFiles="@(_AirbenderLibs)" DestinationFolder="$(_AirbenderLib)%(RecursiveDir)" />
+    <Copy SourceFiles="@(_AirbenderObject->'$(MSBuildThisFileDirectory)modules\%(Identity)\module.rv32.o')"
+          DestinationFiles="@(_AirbenderObject->'$(_AirbenderLib)%(Identity).o')" />
+    <Copy SourceFiles="@(_AirbenderParams->'$(MSBuildThisFileDirectory)modules\%(Identity)\module_params.yml')"
+          DestinationFiles="@(_AirbenderParams->'$(_AirbenderLib)%(Identity).params.yml')" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_airbender\script.ld"
+          DestinationFiles="$(_AirbenderLib)script.ld" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zkvm_airbender\module.rv32.o"
+          DestinationFiles="$(_AirbenderLib)entrypoint.o" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.substitutions.xml"
+          DestinationFiles="$(_AirbenderLib)zisk.substitutions.xml" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)modules\zisk_subst\zisk.snippets.cs"
+          DestinationFiles="$(_AirbenderLib)zisk.snippets.cs" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)scripts\airbender_patch.py"
+          DestinationFiles="$(OutputPath)airbender_patch.py" />
+  </Target>
+
   <!--
     Resolve the zkVM C#-snippet body substitutions against the CoreLib that
     this build just unpacked into the layout, and fail the build if any of
@@ -350,9 +407,36 @@
     package+version so the subsequent Restore re-extracts from our local
     source instead of any stale cached copy.
   -->
+  <!-- Packs LocalCompilerDir as the BFlat.Compiler package restore takes, and
+       drops the NuGet cache entry of its version: the next restore extracts this
+       build rather than the one an earlier build cached. -->
+  <Target Name="PackLocalCompilerNupkg"
+          BeforeTargets="Restore;DownloadCompilerNupkg"
+          Condition="'$(LocalCompilerDir)' != ''">
+    <PropertyGroup>
+      <_LocalCompilerStage>$(BaseIntermediateOutputPath)local-compiler/</_LocalCompilerStage>
+      <_NuGetGlobalPkgDir Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetGlobalPkgDir>
+      <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' != 'Windows_NT'">$(HOME)/.nuget/packages</_NuGetGlobalPkgDir>
+      <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' == 'Windows_NT'">$(USERPROFILE)\.nuget\packages</_NuGetGlobalPkgDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_LocalCompilerDll Include="$(LocalCompilerDir)/ILCompiler*.dll;$(LocalCompilerDir)/Microsoft.DiaSymReader.dll" />
+    </ItemGroup>
+    <Error Condition="'@(_LocalCompilerDll)' == ''" Text="LocalCompilerDir '$(LocalCompilerDir)' holds no ILCompiler*.dll." />
+
+    <RemoveDir Directories="$(_LocalCompilerStage)" />
+    <Copy SourceFiles="@(_LocalCompilerDll)" DestinationFolder="$(_LocalCompilerStage)lib/net6.0" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)BFlat.Compiler.local.nuspec"
+          DestinationFiles="$(_LocalCompilerStage)BFlat.Compiler.nuspec" />
+    <MakeDir Directories="$(_LocalPackagesDir)" />
+    <ZipDirectory SourceDirectory="$(_LocalCompilerStage)" DestinationFile="$(_CompilerNupkgLocalPath)" Overwrite="true" />
+    <Touch Files="$(_CompilerNupkgVersionMarker)" AlwaysCreate="true" />
+    <RemoveDir Directories="$([MSBuild]::NormalizePath('$(_NuGetGlobalPkgDir)', 'bflat.compiler', '$(RuntimeVersion)'))" />
+  </Target>
+
   <Target Name="DownloadCompilerNupkg"
           BeforeTargets="Restore"
-          Condition="!Exists('$(_CompilerNupkgLocalPath)') or !Exists('$(_CompilerNupkgVersionMarker)')">
+          Condition="'$(LocalCompilerDir)' == '' and (!Exists('$(_CompilerNupkgLocalPath)') or !Exists('$(_CompilerNupkgVersionMarker)'))">
 
     <Message Text="Downloading $(_CompilerNupkgName) (BlobsVersion=$(BlobsVersion)) ..." Importance="High" />
 

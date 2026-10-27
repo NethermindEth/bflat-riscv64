@@ -83,6 +83,11 @@ namespace System.CommandLine
                 instructionSetSupportBuilder.AddSupportedInstructionSet("c");
                 instructionSetSupportBuilder.AddSupportedInstructionSet("a");
             }
+            else if (BuildCommand.IsRiscV32(targetArchitecture))
+            {
+                // The rv32im baseline, as ilc's: C and A are opt-in.
+                instructionSetSupportBuilder.AddSupportedInstructionSet("base");
+            }
 
             // Whether to allow optimistically expanding the instruction sets beyond what was specified.
             // We seed this from optimizingForSize - if we're size-optimizing, we don't want to unnecessarily

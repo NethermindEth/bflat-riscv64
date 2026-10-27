@@ -95,7 +95,7 @@ internal class BuildCommand : CommandBase
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
-        ArgumentHelpName = "x86|x64|arm64|riscv64"
+        ArgumentHelpName = "x86|x64|arm64|riscv64|riscv32"
     };
     private static Option<string> TargetOSOption = new Option<string>("--os", "Target operating system")
     {
@@ -106,7 +106,7 @@ internal class BuildCommand : CommandBase
         ArgumentHelpName = "{isa1}[,{isaN}]|native"
     };
 
-    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim|sp1|openvm)");
+    private static Option<string> TargetLibcOption = new Option<string>("--libc", "Target libc (Windows: shcrt|none, Linux: glibc|bionic|musl|zisk|zisk_sim|sp1|openvm|airbender)");
 
     private static Option<string> MapFileOption = new Option<string>("--map", "Generate an object map file")
     {
@@ -316,6 +316,97 @@ internal class BuildCommand : CommandBase
     }
 
     /// <summary>
+    /// Appends the linker arguments of an Airbender image: the guest object
+    /// linked bare-metal against the rv32 runtime, musl and modules of the
+    /// Airbender layout, at the addresses of its linker script.
+    /// </summary>
+    /// <remarks>
+    /// No crt files: the entry point module copies the initialized data from ROM
+    /// to RAM, clears .bss and enters the runtime itself. nothread and noos
+    /// displace musl's thread and OS surface by definition, not by --wrap, so
+    /// they precede libc.a, whose members the linker then never takes.
+    /// </remarks>
+    void AppendAirbenderLinkArgs(StringBuilder ldArgs, string libPath, string objectFilePath, string outputFilePath,
+        TargetArchitecture arch, TargetOS os, string[] extraLd, List<string> extLibPaths, List<string> extLibWrapSymbols)
+    {
+        const string libc = "airbender";
+        string Lib(string name) => $"\"{Path.Combine(libPath, name)}\" ";
+        void Module(string name)
+        {
+            ldArgs.Append(Lib(name + ".o"));
+            AppendModuleParams(ldArgs, libPath, name, libc, arch, os);
+        }
+
+        ldArgs.Append("-flavor ld --no-relax -static --eh-frame-hdr -z nostart-stop-gc --gc-sections ");
+        ldArgs.Append($"-T{Lib("script.ld")}");
+        ldArgs.Append($"-o \"{outputFilePath}\" ");
+        ldArgs.Append($"\"{objectFilePath}\" ");
+        ldArgs.Append(Lib("libbootstrapper.o"));
+        foreach (string runtimeLib in new[] { "libSystem.Native.a", "libeventpipe-disabled.a", "libaotminipal.a",
+                     "libstandalonegc-disabled.a", "libstdc++compat.a", "libRuntime.WorkstationGC.a" })
+            ldArgs.Append(Lib(runtimeLib));
+        ldArgs.Append(Lib("nothread.o"));
+        ldArgs.Append(Lib("noos.o"));
+        ldArgs.Append(Lib("libc.a"));
+        ldArgs.Append(Lib("libatomic.a"));
+        ldArgs.Append(Lib("libclang_rt.builtins-riscv32.a"));
+        ldArgs.Append(Lib("entrypoint.o"));
+        Module("nofp");
+        ldArgs.Append("--whole-archive ");
+        ldArgs.Append(Lib("ubootstrap.o"));
+        ldArgs.Append(Lib("stdcppshim.o"));
+        foreach (string module in new[] { "rhp", "gs_cookie", "rhp_native", "pal", "eh", "tls" })
+            Module(module);
+        ldArgs.Append("--no-whole-archive ");
+        Module("rng_stupid");
+        Module("rust_sys");
+        AppendModuleParams(ldArgs, libPath, "ugc-zero", libc, arch, os);
+        ldArgs.Append(Lib("ugc.o"));
+
+        foreach (string ldArg in extraLd)
+            ldArgs.Append(ldArg.Replace("{libpath}", libPath) + " ");
+        foreach (string extLibPath in extLibPaths)
+            ldArgs.Append($"\"{extLibPath}\" ");
+        foreach (string symbol in extLibWrapSymbols)
+            ldArgs.Append($"--wrap={symbol} ");
+    }
+
+    /// <summary>
+    /// Writes the two files Airbender loads beside the ELF: &lt;output&gt;.bin, the
+    /// flat ROM image, and &lt;output&gt;.text, the instructions it decodes ahead
+    /// of the run.
+    /// </summary>
+    /// <returns>0, or the exit code of the failed llvm-objcopy.</returns>
+    /// <remarks>Both are read as little-endian words, so each is padded to a multiple of four bytes.</remarks>
+    static int WriteAirbenderImages(string elfPath, string homePath, bool print)
+    {
+        string objcopy = Environment.GetEnvironmentVariable("BFLAT_OBJCOPY")
+            ?? Path.Combine(homePath, "bin", "llvm-objcopy" + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : ""));
+        foreach ((string suffix, string sections) in new[] { (".bin", ""), (".text", "-j .text ") })
+        {
+            string imagePath = elfPath + suffix;
+            string args = $"-O binary {sections}\"{elfPath}\" \"{imagePath}\"";
+            if (print)
+                Console.WriteLine($"{objcopy} {args}");
+            using (Process objcopyProcess = Process.Start(objcopy, args))
+            {
+                objcopyProcess.WaitForExit();
+                if (objcopyProcess.ExitCode != 0)
+                    return objcopyProcess.ExitCode;
+            }
+
+            long length = new FileInfo(imagePath).Length;
+            if (length % 4 != 0)
+            {
+                using FileStream image = new(imagePath, FileMode.Append);
+                image.Write(new byte[4 - length % 4]);
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Collects the ILC-stage files (substitutions XML / body-substitution
     /// C# snippets) declared by any module's params.yml options.ilc section:
     ///   - substitutions: file.xml
@@ -489,9 +580,20 @@ internal class BuildCommand : CommandBase
     /// modules, the same soft-float musl, the same ISA gates and managed
     /// substitutions - and differ only in the entry point and linker script,
     /// which live in the target's own layout directory (see ZkvmLibPath).
+    /// Airbender is the exception: an RV32IM guest with its own layout of
+    /// rv32 modules and runtime, linked by a link step of its own.
     /// </summary>
     private static bool IsZkvm(string libc) =>
-        libc == "zisk" || libc == "zisk_sim" || libc == "sp1" || libc == "openvm";
+        libc == "zisk" || libc == "zisk_sim" || libc == "sp1" || libc == "openvm" || libc == "airbender";
+
+    /// <summary>
+    /// RiscV32, resolved by name: only compiler packages built with the riscv32
+    /// target have it, and bflat must still build against those that do not.
+    /// </summary>
+    private static readonly TargetArchitecture? RiscV32 =
+        Enum.TryParse(typeof(TargetArchitecture), "RiscV32", out object riscV32) ? (TargetArchitecture)riscV32 : null;
+
+    internal static bool IsRiscV32(TargetArchitecture architecture) => architecture == RiscV32;
 
     /// <summary>
     /// Lists the linker's --wrap targets that name a managed method the scanner
@@ -540,7 +642,7 @@ internal class BuildCommand : CommandBase
     /// is where bflat.csproj lays the shared module objects down.
     /// </summary>
     private static string ZkvmLibPath(string homePath, string libc) =>
-        Path.Combine(homePath, "lib", "linux", "riscv64", libc);
+        Path.Combine(homePath, "lib", "linux", libc == "airbender" ? "riscv32" : "riscv64", libc);
 
     public override int Handle(ParseResult result)
     {
@@ -583,6 +685,16 @@ internal class BuildCommand : CommandBase
             zkvmDefine = "ZKVM_SP1";
         else if (libc == "openvm")
             zkvmDefine = "ZKVM_OPENVM";
+        else if (libc == "airbender")
+            zkvmDefine = "ZKVM_AIRBENDER";
+        // The modules and runtime a zkVM target links: one rv64 set in the ZisK
+        // directory, shared by the rv64 targets, and Airbender's own rv32 set.
+        string moduleLibPath = libc == "airbender" ? ZkvmLibPath(homePath, libc) : ziskLibPath;
+        // Airbender images carry no unwind tables: they would not fit its 4 MiB
+        // ROM with a guest of any size, so an exception goes to the guest's
+        // ZkvmThrow handler, as under --remove-eh, which this implies.
+        if (libc == "airbender")
+            _removeEh = true;
         if (zkvmDefine != null)
         {
             var definesList = new List<string>(defines ?? Array.Empty<string>());
@@ -616,6 +728,7 @@ internal class BuildCommand : CommandBase
                 "x64" => TargetArchitecture.X64,
                 "arm64" => TargetArchitecture.ARM64,
                 "riscv64" => TargetArchitecture.RiscV64,
+                "riscv32" when RiscV32 != null => RiscV32.Value,
                 "x86" => TargetArchitecture.X86,
                 _ => throw new Exception($"Target architecture '{targetArchitectureStr}' is not supported"),
             };
@@ -796,6 +909,10 @@ internal class BuildCommand : CommandBase
             }
         }
 
+        // riscv32 has only the ilp32 soft-float ABI, which the compiler models
+        // with the same TargetAbi as riscv64's lp64.
+        zkSoftFloat |= IsRiscV32(targetArchitecture);
+
         var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
         var targetAbi = TargetAbi.NativeAot;
         if (zkSoftFloat)
@@ -955,6 +1072,7 @@ internal class BuildCommand : CommandBase
                 TargetArchitecture.X64 => "x64",
                 TargetArchitecture.X86 => "x86",
                 TargetArchitecture.RiscV64 => "riscv64",
+                _ when IsRiscV32(targetArchitecture) => "riscv32",
                 _ => throw new Exception(targetArchitecture.ToString()),
             };
             currentLibPath = Path.Combine(currentLibPath, archPart);
@@ -963,7 +1081,9 @@ internal class BuildCommand : CommandBase
             if (targetOS == TargetOS.Linux)
             {
                 var tmpLibc = libc;
-                if (IsZkvm(libc))
+                // The rv64 zkVM targets take their framework and runtime from the
+                // musl layout; Airbender's rv32 ones live in its own directory.
+                if (IsZkvm(libc) && libc != "airbender")
                     tmpLibc = "musl";
                 currentLibPath = Path.Combine(currentLibPath, tmpLibc ?? "glibc");
                 libPath = currentLibPath + separator + libPath;
@@ -1010,7 +1130,7 @@ internal class BuildCommand : CommandBase
         if (IsZkvm(libc))
         {
             (moduleSubstitutionFiles, List<string> snippetFiles) =
-                CollectModuleIlcFiles(ziskLibPath, libc, targetArchitecture, targetOS);
+                CollectModuleIlcFiles(moduleLibPath, libc, targetArchitecture, targetOS);
             // Compile against the IMPLEMENTATION assemblies (referenceFilePaths),
             // not the public ref assemblies (references): the snippet needs the
             // private nested types (Random.CompatSeedImpl, ...) that ref
@@ -1351,6 +1471,10 @@ internal class BuildCommand : CommandBase
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
+        // Airbender's ROM is 4 MiB: dehydrated data is about a third of the
+        // pointer-heavy data it rebuilds at startup.
+        if (libc == "airbender")
+            metadataOptions |= MetadataManagerOptions.DehydrateData;
         MetadataManager metadataManager = new UsageBasedMetadataManager(
             compilationGroup,
             typeSystemContext,
@@ -1445,16 +1569,21 @@ internal class BuildCommand : CommandBase
             // (JitConfigProvider.getIntConfigValue uses NumberStyles.AllowHexSpecifier),
             // so "2000" == 0x2000 == 8192.
 
-            // Max stack-allocatable object size (knob default 528 / 0x210).
-            // Lifting the in-loop heap restriction needs runtime patch
-            // 25_stackalloc_aggressive_riscv64.patch.
-            backendOptions.Add("JitObjectStackAllocationSize=2000"); // 0x2000 = 8192
+            // Airbender keeps the defaults of the three knobs below: its ROM is 4
+            // MiB, and on rv32 every inlined 64-bit operation takes twice the code.
+            if (libc != "airbender")
+            {
+                // Max stack-allocatable object size (knob default 528 / 0x210).
+                // Lifting the in-loop heap restriction needs runtime patch
+                // 25_stackalloc_aggressive_riscv64.patch.
+                backendOptions.Add("JitObjectStackAllocationSize=2000"); // 0x2000 = 8192
 
-            // Inlining caps, raised moderately. Stays on ExtendedDefaultPolicy
-            // (weighs code growth) rather than JitAggressiveInlining, which
-            // overflows the fixed ZisK ROM. Lower MaxIL if ROM overflows.
-            backendOptions.Add("JitExtDefaultPolicyMaxIL=200"); // 0x200 = 512 (default 0x80 = 128) max inlinee IL
-            backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
+                // Inlining caps, raised moderately. Stays on ExtendedDefaultPolicy
+                // (weighs code growth) rather than JitAggressiveInlining, which
+                // overflows the fixed ZisK ROM. Lower MaxIL if ROM overflows.
+                backendOptions.Add("JitExtDefaultPolicyMaxIL=200"); // 0x200 = 512 (default 0x80 = 128) max inlinee IL
+                backendOptions.Add("JitExtDefaultPolicyMaxBB=10");  // 0x10  = 16  (default 7)         max inlinee basic blocks
+            }
 
             // Elide RA spill/reload + frame in leaf methods. RyuJIT riscv64 uses
             // REG_RA as a hardcoded scratch for branch/compare constants, far-jump
@@ -1465,8 +1594,9 @@ internal class BuildCommand : CommandBase
             // zkVM targets only. Patch 23 states the precondition: sound on a
             // single-threaded deterministic guest with no GC thread suspension and
             // no return-address hijacking. A riscv64+musl/glibc process is neither,
-            // so it keeps the standard prologue.
-            if (IsZkvm(libc))
+            // so it keeps the standard prologue. Not yet on Airbender, whose rv32
+            // guest has not been validated with it.
+            if (IsZkvm(libc) && libc != "airbender")
             {
                 backendOptions.Add("RiscV64ElideLeafRaSave=1");
             }
@@ -1534,7 +1664,9 @@ internal class BuildCommand : CommandBase
             // dotnet-riscv fixup perf-83: every zkVM target links the non-collecting uGC (ugc-zero), so no
             // stack is ever scanned and zeroing a slot only because it holds GC references is dead work.
             // localsinit and read-before-write zeroing stay. Ignored by a JIT without the fixup.
-            backendOptions.Add("JitZkNoGcMustInit=1");
+            // Not yet on Airbender, whose rv32 guest has not been validated with it.
+            if (libc != "airbender")
+                backendOptions.Add("JitZkNoGcMustInit=1");
         }
 
         // zkVM per-site inline allocation (dotnet-riscv fixup 26). The JIT
@@ -1553,8 +1685,10 @@ internal class BuildCommand : CommandBase
         // RAM ZisK 1.4 reserves, and of the ZisK simulator by construction. SP1
         // (whose space runs to 2^48) and OpenVM (full 4 GiB u32 range since
         // MEM_BITS 29 -> 32 on the develop-v2.1.0 line) keep their RAM up to
-        // 0xbfff0000 and the cell 8 bytes below it.
-        string zkBumpAddr = libc == "zisk" || libc == "zisk_sim" ? "bffbfff8" : IsZkvm(libc) ? "bffefff8" : null;
+        // 0xbfff0000 and the cell 8 bytes below it. Airbender's rv32 guest keeps
+        // the helper call: it has not been validated with the inline bump.
+        string zkBumpAddr = libc == "zisk" || libc == "zisk_sim" ? "bffbfff8"
+            : IsZkvm(libc) && libc != "airbender" ? "bffefff8" : null;
         if (zkBumpAddr != null)
         {
             backendOptions.Add($"JitZkBumpAddr={zkBumpAddr}");
@@ -1595,6 +1729,26 @@ internal class BuildCommand : CommandBase
             backendOptions.Add(libc == "sp1"
                 ? "JitRiscV64StrictAlign=1"
                 : "JitRiscV64StrictAlign=0");
+        }
+        else if (libc == "airbender")
+        {
+            // Airbender traps on any misaligned load or store, but testing every
+            // access as SP1 does doubles the code, which its 4 MiB ROM cannot hold.
+            // The JIT instead expands byte-wise the accesses flagged unaligned and
+            // those whose constant offset alone breaks the alignment, and trusts
+            // the alignment of every base.
+            backendOptions.Add("JitNoUnalignedAccess=1");
+            backendOptions.Add("JitRiscV64StrictAlign=0");
+
+            // A callee marked AggressiveInlining with more than 0x80 (128) bytes
+            // of IL is judged like any other. On rv32 the UInt256 helpers inline
+            // into frames of several KB that hold the image over the ROM.
+            backendOptions.Add("JitForceInlineMaxIL=80");
+
+            // Airbender v3 proves only the unsigned RV32M instructions: mulh,
+            // mulhsu, div and rem are built from unsigned ones. Native code gets
+            // the same in post-link (airbender_patch.py).
+            backendOptions.Add("JitRiscVUnsignedMulDiv=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
@@ -1899,6 +2053,11 @@ internal class BuildCommand : CommandBase
             {
                 ldArgs.Append($"\"{extLibPath}\" ");
             }
+        }
+        else if (libc == "airbender")
+        {
+            AppendAirbenderLinkArgs(ldArgs, moduleLibPath, objectFilePath, outputFilePath, targetArchitecture, targetOS,
+                extraLd, downloadedLibPaths, extLibWrapSymbols);
         }
         else if (targetOS == TargetOS.Linux)
         {
@@ -2325,6 +2484,19 @@ internal class BuildCommand : CommandBase
                 Console.Error.WriteLine("error: patch_elf --nop-fences --nop-zero-words failed for the sp1 image");
                 exitCode = patchExitCode != 0 ? patchExitCode : 1;
             }
+        }
+
+        if (libc == "airbender" && exitCode == 0)
+        {
+            /* The native code carries what Airbender cannot run: FENCE, which
+             * it rejects, and the signed RV32M instructions, which v3 does not
+             * prove. The JIT emits neither for managed code. In place, like
+             * sp1 above. */
+            exitCode = RunCommand(Path.Combine(homePath, "airbender_patch.py"), $"\"{outputFilePath}\"", printCommands);
+            if (exitCode != 0)
+                Console.Error.WriteLine("error: airbender_patch.py failed for the airbender image");
+            else
+                exitCode = WriteAirbenderImages(outputFilePath, homePath, printCommands);
         }
 
         // Exact whole-image ISA verification: decode the linked binary and fail

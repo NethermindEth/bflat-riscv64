@@ -7,6 +7,9 @@
 options:
   ld:
     - value: --wrap=RhpAssignRefRiscV64
+      arch: riscv64
+    - value: --wrap=RhpAssignRefRiscV32
+      arch: riscv32
     - value: --wrap=RhpCheckedAssignRef
     - value: --wrap=RhpByRefAssignRef
     - value: --wrap=RhpAssignRef

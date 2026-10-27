@@ -173,6 +173,41 @@ function build_modules()
 	popd
 }
 
+# The modules the Airbender (RV32IM) target links, built for rv32im/ilp32 as
+# module.rv32.o beside the rv64 module.o. Needs an rv32 musl sysroot
+# (RV32_SYSROOT) and the libc++ headers the C++ modules include
+# (RV32_CXX_INCLUDE), which dotnet-riscv's build_musl_rv32im.sh produces, and
+# the Linux UAPI headers when the sysroot lacks them (RV32_KERNEL_INCLUDE).
+# No LTO: Airbender's link takes no bitcode.
+function build_modules_rv32()
+{
+	[ -d "${RV32_SYSROOT}/usr/include" ] || fail "RV32_SYSROOT must point at an rv32 musl sysroot"
+	[ -d "${RV32_CXX_INCLUDE}" ] || fail "RV32_CXX_INCLUDE must point at the libc++ headers"
+
+	local cflags="--target=riscv32-unknown-linux-musl --sysroot=${RV32_SYSROOT} -march=rv32im -mabi=ilp32 -mcmodel=medany -O2 -ffunction-sections -fdata-sections -fno-stack-protector -DBFLAT_DOTNET=${dotnet_version}"
+	if [ -n "${RV32_KERNEL_INCLUDE}" ] ; then
+		cflags="${cflags} -idirafter ${RV32_KERNEL_INCLUDE}"
+	fi
+	local asflags="--target=riscv32-unknown-elf -march=rv32im -mabi=ilp32 -c -x assembler -Wa,--defsym,BFLAT_RV32=1 -Wa,--defsym,BFLAT_DOTNET=${dotnet_version}"
+
+	pushd ${TOP_DIR}/src/bflat/modules
+		for mod in nothread noos nofp rhp gs_cookie pal eh tls rng_stupid rust_sys security-stub ; do
+			echo Building rv32 module $mod
+			clang ${cflags} -c $mod/module.c -o $mod/module.rv32.o
+			on_fail $? "Failed to compile rv32 module $mod"
+		done
+		for mod in ubootstrap stdcppshim ; do
+			echo Building rv32 module $mod
+			clang++ ${cflags} -std=c++17 -fno-exceptions -fno-rtti -isystem ${RV32_CXX_INCLUDE} -c $mod/module.cpp -o $mod/module.rv32.o
+			on_fail $? "Failed to compile rv32 module $mod"
+		done
+		clang ${asflags} rhp_native/module.S -o rhp_native/module.rv32.o
+		on_fail $? "Failed to assemble rv32 module rhp_native"
+		clang ${asflags} zkvm_airbender/module.S -o zkvm_airbender/module.rv32.o
+		on_fail $? "Failed to assemble rv32 module zkvm_airbender"
+	popd
+}
+
 case $flavor in
 	generic)
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
@@ -196,6 +231,14 @@ case $flavor in
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -p:DotnetVersion=${dotnet_version} -t:BuildLayouts -c:Release
 			on_fail $? "Failed to build layouts (riscv64, ${variant}, net${dotnet_version}.0)"
+		fi
+		;;
+	riscv32)
+		if [ "${what}" == "modules" ] ; then
+			build_modules_rv32
+			on_fail $? "Failed to build rv32 modules"
+		else
+			fail "The riscv32 flavor builds only modules; bflat itself is built with the riscv64 flavor"
 		fi
 		;;
 	*)

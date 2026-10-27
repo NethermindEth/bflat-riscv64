@@ -38,19 +38,19 @@ options:
     # what routes the bytes to their host-visible output (pal's
     # zkvm_console_write); on ZisK the wrapper swallows them.
     - value: --wrap=System_Console_Interop_Sys__InitializeTerminalAndSignalHandling
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]
     - value: --wrap=SystemNative_SetTerminalInvalidationHandler
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]
     - value: --wrap=SystemNative_Write
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]
     # Console.OpenStandardOutput() fstats the descriptor before handing back a
     # stream. Unwrapped, that reaches noos, which terminates the guest with 253
     # on an OS call it cannot service - so any Console use killed the guest.
     - value: --wrap=SystemNative_FStat
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]
     # Dup is fcntl(F_DUPFD_CLOEXEC) underneath, and IsATty would send .NET into
     # termios; both are answered here rather than trapped in noos.
     - value: --wrap=SystemNative_Dup
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]
     - value: --wrap=SystemNative_IsATty
-      libc: [zisk, sp1, openvm]
+      libc: [zisk, sp1, openvm, airbender]

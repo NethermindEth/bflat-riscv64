@@ -306,6 +306,7 @@ internal static class ExtLibResolver
             TargetArchitecture.X86    => "x86",
             TargetArchitecture.ARM64  => "arm64",
             TargetArchitecture.RiscV64 => "riscv64",
+            _ when BuildCommand.IsRiscV32(targetArch) => "riscv32",
             _ => throw new Exception($"Unsupported architecture: {targetArch}")
         };
 

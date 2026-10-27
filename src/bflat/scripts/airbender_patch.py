@@ -1,13 +1,17 @@
-"""Moves every signed RV32M instruction (mulh, mulhsu, div, rem) of an ELF32 RISC-V image out of line.
+#!/usr/bin/env python3
+"""Rewrites the native instructions of an Airbender ELF32 image that Airbender cannot run.
 
-Airbender v3 proves only the unsigned RV32M instructions. The JIT builds managed code without the signed
-ones (JitRiscVUnsignedMulDiv); this handles the native code, which the C/C++ compilers emit them in. Each
-instruction becomes a jump to a trampoline that computes the same result from unsigned instructions, with
-RISC-V's results for a zero divisor and for MinValue / -1, saving its scratch registers on the stack. The
-trampolines go into __signed_tramp_start..__signed_tramp_end, which the linker script reserves at the end
-of .text so every native site is within a jump's reach.
+- FENCE and FENCE.I become NOP: Airbender rejects them, and a single-hart guest has nothing to order.
+- The signed RV32M instructions (mulh, mulhsu, div, rem) move out of line: Airbender v3 proves only the
+  unsigned ones. Each becomes a jump to a trampoline that computes the same result from unsigned
+  instructions, with RISC-V's results for a zero divisor and for MinValue / -1, saving its scratch registers
+  on the stack. The trampolines go into __signed_tramp_start..__signed_tramp_end, which the linker script
+  reserves at the end of .text so every native site is within a jump's reach.
 
-Usage: unsigned_muldiv.py <elf>  (rewrites the ELF in place)
+The JIT emits neither for managed code (no fences in stubs, JitRiscVUnsignedMulDiv); the C/C++ compilers emit
+both. Only words inside a sized function are rewritten.
+
+Usage: airbender_patch.py <elf>  (rewrites the ELF in place)
 """
 import bisect
 import struct
@@ -41,12 +45,12 @@ def symbol(name):
     for sym_name, value, _, _ in symbols():
         if sym_name == name:
             return value
-    raise SystemExit(f"unsigned_muldiv: symbol {name} not found")
+    raise SystemExit(f"airbender_patch: symbol {name} not found")
 
 
 # Only words inside a sized function are instructions: ILC parks data in .text too, and a data word that
-# happens to look like a signed instruction must keep its value. The native code the signed instructions
-# come from always has sized function symbols.
+# happens to look like one of these instructions must keep its value. The native code they come from always
+# has sized function symbols.
 STT_FUNC = 2
 functions = sorted((value, value + size) for _, value, size, kind in symbols() if kind == STT_FUNC and size > 0)
 function_starts = [start for start, _ in functions]
@@ -61,7 +65,7 @@ def file_offset(addr):
     for sh in sections:
         if sh[1] == 1 and sh[3] <= addr < sh[3] + sh[5]:
             return sh[4] + addr - sh[3]
-    raise SystemExit(f"unsigned_muldiv: address {addr:#x} is not in a PROGBITS section")
+    raise SystemExit(f"airbender_patch: address {addr:#x} is not in a PROGBITS section")
 
 
 def r_type(f7, rs2, rs1, f3, rd, op=0x33):
@@ -117,7 +121,8 @@ def body(f3, a, b, t0, t1, t2):
 tramp_start = tramp = symbol("__signed_tramp_start")
 tramp_end = symbol("__signed_tramp_end")
 text = [sh for sh in sections if sh[1] == 1 and sh[2] & 0x4]  # executable PROGBITS
-patched = skipped = 0
+NOP = addi(ZERO, ZERO, 0)
+fences = patched = skipped = 0
 for sh in text:
     for addr in range(sh[3], sh[3] + sh[5] - 3, 4):
         if tramp_start <= addr < tramp_end:
@@ -125,13 +130,19 @@ for sh in text:
         p = sh[4] + addr - sh[3]
         insn, = struct.unpack_from("<I", data, p)
         f3, rd, a, b = (insn >> 12) & 7, (insn >> 7) & 31, (insn >> 15) & 31, (insn >> 20) & 31
-        if (insn & 0x7F) != 0x33 or (insn >> 25) != 1 or f3 not in (1, 2, 4, 6):
+        is_fence = (insn & 0x7F) == 0x0F and f3 in (0, 1)  # MISC-MEM: FENCE, FENCE.I
+        is_signed = (insn & 0x7F) == 0x33 and (insn >> 25) == 1 and f3 in (1, 2, 4, 6)
+        if not (is_fence or is_signed):
             continue
         if not in_function(addr):
             skipped += 1
             continue
+        if is_fence:
+            struct.pack_into("<I", data, p, NOP)
+            fences += 1
+            continue
         if rd == ZERO:
-            struct.pack_into("<I", data, p, addi(ZERO, ZERO, 0))
+            struct.pack_into("<I", data, p, NOP)
             patched += 1
             continue
         assert SP not in (rd, a, b), f"stack pointer operand at {addr:#x}"
@@ -141,10 +152,11 @@ for sh in text:
         code += [sw(t0, SP, 12), lw(t0, SP, 0), lw(t1, SP, 4), lw(t2, SP, 8), lw(rd, SP, 12), addi(SP, SP, 16)]
         code.append(jal(ZERO, addr + 4 - (tramp + 4 * len(code))))
         if tramp + 4 * len(code) > tramp_end:
-            raise SystemExit("unsigned_muldiv: trampoline area full")
+            raise SystemExit("airbender_patch: trampoline area full")
         struct.pack_into(f"<{len(code)}I", data, file_offset(tramp), *code)
         struct.pack_into("<I", data, p, jal(ZERO, tramp - addr))
         tramp += 4 * len(code)
         patched += 1
 open(path, "wb").write(data)
-print(f"unsigned_muldiv: {patched} signed mul/div moved out of line; {skipped} matching word(s) outside any function left untouched")
+print(f"airbender_patch: {fences} fence(s) to NOP, {patched} signed mul/div moved out of line; "
+      f"{skipped} matching word(s) outside any function left untouched")

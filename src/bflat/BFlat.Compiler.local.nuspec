@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The package bflat.csproj packs from LocalCompilerDir (see PackLocalCompilerNupkg). -->
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>BFlat.Compiler</id>
+    <version>10.0.0-local</version>
+    <authors>Contributors</authors>
+    <description>A local ILCompiler build</description>
+    <dependencies>
+      <group targetFramework="net6.0" />
+    </dependencies>
+  </metadata>
+</package>

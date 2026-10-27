@@ -14,7 +14,7 @@
  *
  * v3 also proves only the unsigned RV32M instructions. The JIT leaves the
  * signed ones out of managed code (JitRiscVUnsignedMulDiv); for the native
- * code, scripts/unsigned_muldiv.py moves each one into a trampoline in the
+ * code, scripts/airbender_patch.py moves each one into a trampoline in the
  * area reserved at the end of .text.
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
@@ -73,18 +73,10 @@ SECTIONS
     *(.rodata .rodata.*)
   } >rom :rodata
 
-  /* DWARF unwind tables, named for pal/eh's synthetic program headers. */
-  .eh_frame_hdr ALIGN(8) : {
-    __eh_frame_hdr_start = .;
-    KEEP(*(.eh_frame_hdr))
-    __eh_frame_hdr_end = .;
-  } >rom :rodata
-
-  .eh_frame ALIGN(8) : {
-    __eh_frame_start = .;
-    KEEP(*(.eh_frame .eh_frame.*))
-    __eh_frame_end = .;
-  } >rom :rodata
+  /* No unwind tables (see /DISCARD/ below): pal/eh's synthetic program
+   * headers describe an empty .eh_frame_hdr. */
+  __eh_frame_hdr_start = .;
+  __eh_frame_hdr_end = .;
 
   /* Everything initialised that runs from RAM, as one block _start copies:
    * keep every PROGBITS section between __ram_init_start and __ram_init_end,
@@ -177,7 +169,13 @@ SECTIONS
   ASSERT(__rom_image_end <= (DEFINED(AIRBENDER_ROM_SIZE) ? AIRBENDER_ROM_SIZE : 4M),
          "image does not fit Airbender's ROM; link with --defsym=AIRBENDER_ROM_SIZE=<bytes> to simulate it anyway")
 
+  /* The unwind tables would take about half a MiB of a guest's ROM; an
+   * Airbender image routes every exception to the guest's ZkvmThrow handler
+   * instead (bflat links it as under --remove-eh). */
   /DISCARD/ : {
+    *(.eh_frame_hdr)
+    *(.eh_frame .eh_frame.*)
+    *(.dotnet_eh_table)
     *(.debug*)
     *(.comment)
     *(.riscv.attributes)

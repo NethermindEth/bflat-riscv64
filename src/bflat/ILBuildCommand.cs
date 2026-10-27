@@ -151,6 +151,8 @@ internal class ILBuildCommand : CommandBase
                 TargetArchitecture.ARM => "ARM",
                 TargetArchitecture.ARM64 => "ARM64",
                 TargetArchitecture.RiscV64 => "RISCV64",
+                _ when BuildCommand.IsRiscV32(arch) => "RISCV32",
+                _ => throw new NotSupportedException(arch.ToString()),
             },
             os switch
             {

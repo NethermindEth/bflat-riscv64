@@ -75,6 +75,33 @@ per variant, so nothing is re-downloaded. The Docker image packages
 whichever variant was built last for its `DOTNET_VERSION`
 (`--build-arg DOTNET_VERSION=10|11`, default 11).
 
+## Airbender (riscv32)
+
+`--arch riscv32 --libc airbender` builds an RV32IM guest for ZKsync Airbender
+v3. No dotnet-riscv release carries a riscv32 compiler or runtime yet, so the
+target takes local builds, given as MSBuild properties:
+
+- `LocalCompilerDir`: an ILCompiler build with the riscv32 target, holding
+  `ILCompiler*.dll`, `Microsoft.DiaSymReader.dll`, `libjitinterface_x64.so`
+  and the `libclrjit_unix_*_x64.so` cross JITs. bflat packs it as
+  `BFlat.Compiler 10.0.0-local` and uses its JITs in place of the released ones.
+- `AirbenderLibsDir`: the rv32 runtime, framework, musl and uGC, laid out by
+  `src/bflat/scripts/stage_airbender_libs.sh`.
+
+The modules are built for rv32 first, against an rv32 musl sysroot:
+
+```bash
+$ RV32_SYSROOT=<sysroot> RV32_CXX_INCLUDE=<libc++ headers> RV32_KERNEL_INCLUDE=<linux headers> \
+    ./build.sh modules riscv32
+$ dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 \
+    -p:LocalCompilerDir=<compiler> -p:AirbenderLibsDir=<libs>
+```
+
+The layout lands in `lib/linux/riscv32/airbender`. An Airbender build writes
+the ELF and, beside it, `<output>.bin` (the ROM image) and `<output>.text`
+(the instructions), which the Airbender tools load. The image has no unwind
+tables: `--libc airbender` implies `--remove-eh`.
+
 ## Checks you can run locally
 
 These are the same gates CI runs. [Verification](docs/verification.md)
