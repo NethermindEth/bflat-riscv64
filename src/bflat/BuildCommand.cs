@@ -1594,8 +1594,8 @@ internal class BuildCommand : CommandBase
             // zkVM targets only. Patch 23 states the precondition: sound on a
             // single-threaded deterministic guest with no GC thread suspension and
             // no return-address hijacking. A riscv64+musl/glibc process is neither,
-            // so it keeps the standard prologue. Not yet on Airbender, whose rv32
-            // guest has not been validated with it.
+            // so it keeps the standard prologue. Airbender sets it with its own
+            // options below.
             if (IsZkvm(libc) && libc != "airbender")
             {
                 backendOptions.Add("RiscV64ElideLeafRaSave=1");
@@ -1664,7 +1664,7 @@ internal class BuildCommand : CommandBase
             // dotnet-riscv fixup perf-83: every zkVM target links the non-collecting uGC (ugc-zero), so no
             // stack is ever scanned and zeroing a slot only because it holds GC references is dead work.
             // localsinit and read-before-write zeroing stay. Ignored by a JIT without the fixup.
-            // Not yet on Airbender, whose rv32 guest has not been validated with it.
+            // Airbender sets it with its own options below.
             if (libc != "airbender")
                 backendOptions.Add("JitZkNoGcMustInit=1");
         }
@@ -1740,15 +1740,32 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitNoUnalignedAccess=1");
             backendOptions.Add("JitRiscV64StrictAlign=0");
 
-            // A callee marked AggressiveInlining with more than 0x80 (128) bytes
+            // A callee marked AggressiveInlining with more than 0xC0 (192) bytes
             // of IL is judged like any other. On rv32 the UInt256 helpers inline
-            // into frames of several KB that hold the image over the ROM.
-            backendOptions.Add("JitForceInlineMaxIL=80");
+            // into frames of several KB: 0x100 holds the image over the ROM, and
+            // 0xE0 buys little over 0xC0 for 200 KB more.
+            backendOptions.Add("JitForceInlineMaxIL=C0");
 
             // Airbender v3 proves only the unsigned RV32M instructions: mulh,
             // mulhsu, div and rem are built from unsigned ones. Native code gets
             // the same in post-link (airbender_patch.py).
             backendOptions.Add("JitRiscVUnsignedMulDiv=1");
+
+            // The zkVM register tuning ZisK uses (perf-61/62/63, perf-83, patch
+            // 23+31): every callee-saved register a method touches costs its
+            // save and restore, and the guest links the non-moving, non-collecting
+            // uGC. Validated on the Airbender guest's mainnet blocks.
+            backendOptions.Add("JitZkNoPinning=1");
+            backendOptions.Add("JitZkSynthesizeCounts=1");
+            backendOptions.Add("JitZkSpillKeepReg=1");
+            backendOptions.Add("JitZkColdCallSpill=7d");
+            backendOptions.Add("JitZkNoGcMustInit=1");
+            backendOptions.Add("RiscV64ElideLeafRaSave=1");
+
+            // libairbender's u256 delegation, emitted in place of the call: the
+            // operands are in x10-x12 by the calling convention and the circuit
+            // writes its flag back to x12. A JIT without the knob keeps the call.
+            backendOptions.Add("JitZkDelegationPInvokes=airbender_u256_op:7ca");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
