@@ -9,7 +9,8 @@ name: Sign for bflat
 #
 #   sign:
 #     needs: build
-#     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@master
+#     permissions: {}
+#     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@<sha> # master
 #     with:
 #       lists: bflat-signature-lists
 #     secrets:
@@ -17,6 +18,10 @@ name: Sign for bflat
 #
 # The output artifact (signatures, default bflat-signatures) has each list
 # and its signature, <list>.sig.
+#
+# The callers give a commit of master by its SHA, not the branch, because
+# this job gets the private key. After a change here, update the SHA in
+# each caller.
 
 on:
   workflow_call:

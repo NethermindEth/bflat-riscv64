@@ -116,12 +116,17 @@ A release job has three jobs:
    secret. It signs each `*.sha256` list with
    `openssl dgst -sha256 -sign`, and writes each list and its `.sig` into the
    artifact `bflat-signatures`. It signs only a file of `<sha256>  <name>`
-   lines, and it shows each list in the log.
+   lines, and it shows each list in the log. The callers give the workflow
+   by the SHA of a commit of `master`, not by the branch: the job gets the
+   private key, so a change to `sign.yml` must not reach the releases before
+   the callers take it. After a change to `sign.yml`, update the SHA in
+   bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC.
 
    ```yaml
    sign:
      needs: build-nupkg
-     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@master
+     permissions: {}
+     uses: NethermindEth/bflat-riscv64/.github/workflows/sign.yml@<sha> # master
      with:
        lists: bflat-signature-lists
      secrets:
