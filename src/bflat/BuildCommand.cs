@@ -1770,6 +1770,10 @@ internal class BuildCommand : CommandBase
             // The inliner's profitability multiplier raised as for ZisK (perf-57): -1.6% cycles on the
             // heaviest mainnet block for 270 KB of the ROM.
             backendOptions.Add("JitInlineAdditionalMultiplier=3");
+
+            // The EVM guest's handlers take their arguments in s1-s8, which no call or delegation in
+            // them clobbers: -3.3% cycles on the heaviest mainnet block.
+            backendOptions.Add("JitZkHandlerConv=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
