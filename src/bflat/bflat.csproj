@@ -82,11 +82,16 @@
        of a BuildLayouts pass (OutputPath and friends) are for bflat, not for
        the tool. Restore runs as its own pass (a new session id forces a
        fresh evaluation), because the tool is not a reference of bflat and so
-       the bflat restore does not cover it. -->
+       the bflat restore does not cover it. The release check runs this
+       target before the restore of bflat, so the global properties of a
+       restore are removed too: the .NET 11 SDK restores with
+       EnableDefaultCompileItems=false (and the same for None and
+       EmbeddedResource items), and with it the build of the tool compiles
+       no source. -->
   <Target Name="BuildBflatModulesTool" Returns="@(_BflatModulesTool)">
     <PropertyGroup>
       <_BflatModulesProject>$(MSBuildThisFileDirectory)..\bflat-modules\bflat-modules.csproj</_BflatModulesProject>
-      <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Flavor;Platform</_BflatModulesRemoved>
+      <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Flavor;Platform;MSBuildRestoreSessionId;MSBuildIsRestoring;ExcludeRestorePackageImports;EnableDefaultCompileItems;EnableDefaultEmbeddedResourceItems;EnableDefaultNoneItems</_BflatModulesRemoved>
     </PropertyGroup>
     <MSBuild Projects="$(_BflatModulesProject)"
              Targets="Restore"
