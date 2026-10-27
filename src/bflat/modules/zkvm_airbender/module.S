@@ -57,9 +57,23 @@ _start:
     j       1b
 2:
     /* RAM starts zeroed in the circuit, but the simulator may hand over a
-     * dirty image; zero .bss explicitly so both agree. */
+     * dirty image; zero .bss explicitly so both agree. Eight words a round
+     * while eight remain: .bss is megabytes, and the loop's own instructions
+     * would be three of every four. */
     la      t1, _bss_start
     la      t2, _bss_end
+    addi    t3, t2, -32
+6:  bltu    t3, t1, 3f
+    sw      zero, 0(t1)
+    sw      zero, 4(t1)
+    sw      zero, 8(t1)
+    sw      zero, 12(t1)
+    sw      zero, 16(t1)
+    sw      zero, 20(t1)
+    sw      zero, 24(t1)
+    sw      zero, 28(t1)
+    addi    t1, t1, 32
+    j       6b
 3:  bgeu    t1, t2, 4f
     sw      zero, 0(t1)
     addi    t1, t1, 4
