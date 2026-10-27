@@ -1,62 +1,34 @@
 <Project>
-  <!-- Inference -->
+  <!-- The runtime release that bflat bundles. bflat builds for .NET 11 only,
+       with the perf runtime of dotnet-riscv. -->
   <PropertyGroup>
-    <!-- Infer DotNet version. Select with -p:DotnetVersion=10|11 (default: 11). -->
-    <DotnetVersion Condition="'$(DotnetVersion)' == ''">11</DotnetVersion>
-  </PropertyGroup>
-
-  <!-- Compiler build variants: which runtime/blob release gets bundled.
-       Select with -p:Variant=perf|min. Default: perf. -->
-  <PropertyGroup>
-    <Variant Condition="'$(Variant)' == ''">perf</Variant>
+    <RuntimeUri>https://github.com/NethermindEth/dotnet-riscv/releases/download/</RuntimeUri>
+    <BlobsUri>https://github.com/NethermindEth/dotnet-riscv/releases/download/</BlobsUri>
   </PropertyGroup>
 
   <PropertyGroup>
-
-    <!-- Infer blob source -->
-    <BlobSource>bflattened</BlobSource>
-    <BlobSource Condition="'$(Flavor)' == 'riscv64' or '$(DotnetVersion)' == '10' or '$(DotnetVersion)' == '11'">nethermind</BlobSource>
-  </PropertyGroup>
-
-  <!-- Infer blob sources -->
-  <PropertyGroup>
-    <RuntimeUri Condition="'$(BlobSource)' == 'nethermind'">https://github.com/NethermindEth/dotnet-riscv/releases/download/</RuntimeUri>
-    <BlobsUri Condition="'$(BlobSource)' == 'nethermind'">https://github.com/NethermindEth/dotnet-riscv/releases/download/</BlobsUri>
-    <RuntimeUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/runtime/releases/download/</RuntimeUri>
-    <BlobsUri Condition="'$(BlobSource)' == 'bflattened'">https://github.com/bflattened/blobs/releases/download/</BlobsUri>
-  </PropertyGroup>
-
-  <!-- Infer dotnet/blob/codeanalysis version -->
-  <PropertyGroup>
-    <!-- NuGet version of the bflat.compiler package shipped inside each
+    <!-- NuGet version of the bflat.compiler package shipped inside the
          release. The .NET 11 releases still ship the package versioned
-         10.0.0 (bflat.compiler.10.0.0.nupkg), so this does not follow
-         DotnetVersion. -->
-    <RuntimeVersion Condition="'$(DotnetVersion)' == '10'">10.0.0</RuntimeVersion>
-    <RuntimeVersion Condition="'$(DotnetVersion)' == '11'">10.0.0</RuntimeVersion>
+         10.0.0 (bflat.compiler.10.0.0.nupkg). -->
+    <RuntimeVersion>10.0.0</RuntimeVersion>
 
-    <!-- dotnet-riscv release tag per .NET line and variant. The tag is the
-         SDK version of the VMR the runtime was built from plus the fixup
-         profile: "upstream" is the soft-float (lp64/rv64im) series meant for
-         dotnet/runtime, "upstream-perf" adds the zkVM code-quality patches
-         on top. min -> upstream, perf -> upstream-perf. -->
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'perf'">10.0.114-upstream-perf.r392</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '10' and '$(Variant)' == 'min'">10.0.114-upstream.r393</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">11.0.100-upstream-perf.r396</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'min'">11.0.100-rtm.26513.199-upstream</RuntimeReleaseTag>
+    <!-- dotnet-riscv release tag. The tag is the SDK version of the VMR the
+         runtime was built from plus the fixup profile: "upstream-perf" is the
+         soft-float (lp64/rv64im) series meant for dotnet/runtime with the
+         zkVM code-quality patches on top. The release must be signed
+         (docs/signing.md). -->
+    <RuntimeReleaseTag>11.0.100-upstream-perf.r400</RuntimeReleaseTag>
 
     <!-- Whether the release has the linux-x64 target of bflat (the x64 JIT,
          runtime and glibc sysroot that the runtime-x64 job of dotnet-riscv
-         makes). The releases above are older than that job; set this per
-         tag when a release has the assets, or with -p:BflatTargetLinuxX64=true
-         for a test. -->
-    <BflatTargetLinuxX64 Condition="'$(BflatTargetLinuxX64)' == ''">false</BflatTargetLinuxX64>
+         makes). -p:BflatTargetLinuxX64=false builds without it. -->
+    <BflatTargetLinuxX64 Condition="'$(BflatTargetLinuxX64)' == ''">true</BflatTargetLinuxX64>
 
-    <!-- Only this package carries the widening-cast and Zb lowering fixes from
+    <!-- The package carries the widening-cast and Zb lowering fixes from
          dotnet-riscv#9. bflat reports it as the compiler capability
          "zb-lowering-fixes", which platform manifests can test (a platform
          whose decoder has Zba/Zbb/Zbs enables them only then). -->
-    <DefineConstants Condition="'$(DotnetVersion)' == '11' and '$(Variant)' == 'perf'">$(DefineConstants);RISCV64_ZB_LOWERING_FIXES</DefineConstants>
+    <DefineConstants>$(DefineConstants);RISCV64_ZB_LOWERING_FIXES</DefineConstants>
 
     <!-- Cache key for everything fetched per release. RuntimeVersion stays
          the plain NuGet version: every release ships

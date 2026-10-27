@@ -76,13 +76,13 @@ a host approximation. That is what makes some of them possible at all:
   `__wrap_exit(42)` genuinely terminates that child with status 42.
 - **Assembly modules are covered.** A small shim marshals the `t3/t4/t5`
   register convention that the C ABI cannot express, so the GC write
-  barriers are tested directly — including their version-dependent `t3`
-  post-increment, pinned from both sides.
+  barriers are tested directly — including their `t3` contract (.NET 11
+  keeps `t3`; .NET 10 incremented it).
 
 ```console
 $ ./src/bflat/modules/tests/run_tests.sh
 pal                137 passed, 0 failed
-rhp_native(net10)   26 passed, 0 failed
+rhp_native          26 passed, 0 failed
 ...
 module unit tests: all suites passed
 ```
@@ -150,7 +150,7 @@ GC and llvm-libunwind among them, are compiled outside ILC.
 ## Analyzers on the driver
 
 The C# driver builds with every .NET analyzer enabled (`AnalysisMode=All`)
-on both .NET 10 and .NET 11, with `-warnaserror`. `.editorconfig` decides
+on .NET 11, with `-warnaserror`. `.editorconfig` decides
 which rules are errors, which stay warnings and which are off, each
 exemption with a reason next to it. The rules kept as errors are defect
 classes — dead conditions, leaked disposables, inexact reads, ignored

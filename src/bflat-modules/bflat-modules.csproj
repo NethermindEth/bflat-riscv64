@@ -12,7 +12,7 @@
     <OutputType>Exe</OutputType>
     <!-- Any SDK that builds bflat builds this; LatestMajor lets an
          SDK-11-only machine run it. -->
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <RollForward>LatestMajor</RollForward>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>

@@ -5,7 +5,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net$(DotnetVersion).0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Every .NET analyzer is on; .editorconfig decides which ones are
          errors, which stay warnings and which are off (with reasons). -->
@@ -25,10 +25,6 @@
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
       <_Parameter1>MicrosoftCodeAnalysisCSharpVersion</_Parameter1>
       <_Parameter2>$(MicrosoftCodeAnalysisCSharpVersion)</_Parameter2>
-    </AssemblyAttribute>
-    <AssemblyAttribute Include="System.Reflection.AssemblyMetadata">
-      <_Parameter1>BflatVariant</_Parameter1>
-      <_Parameter2>$(Variant)</_Parameter2>
     </AssemblyAttribute>
     <!-- The public keys that the signatures of extlib packages must come
          from (docs/signing.md). CI takes them from the GitHub Actions
@@ -90,7 +86,7 @@
   <Target Name="BuildBflatModulesTool" Returns="@(_BflatModulesTool)">
     <PropertyGroup>
       <_BflatModulesProject>$(MSBuildThisFileDirectory)..\bflat-modules\bflat-modules.csproj</_BflatModulesProject>
-      <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Variant;DotnetVersion;Flavor;Platform</_BflatModulesRemoved>
+      <_BflatModulesRemoved>OutputPath;IntermediateOutputPath;CompilerHost;DownloadCachePath;Flavor;Platform</_BflatModulesRemoved>
     </PropertyGroup>
     <MSBuild Projects="$(_BflatModulesProject)"
              Targets="Restore"
@@ -141,33 +137,24 @@
           DestinationFiles="$(OutputPath)check_wrap_symbols.py" />
   </Target>
 
-  <Target Name="ValidateVariant"
-          BeforeTargets="Restore;CollectPackageReferences;DownloadCompilerNupkg;Build">
-    <Error Condition="'$(Variant)' != 'perf' and '$(Variant)' != 'min'"
-           Text="Unknown Variant '$(Variant)'. Supported variants: perf, min (see bflat.variant.props for the release tag each resolves to)." />
-    <Error Condition="'$(DotnetVersion)' != '10' and '$(DotnetVersion)' != '11'"
-           Text="Unknown DotnetVersion '$(DotnetVersion)'. Supported versions: 10, 11." />
-    <Error Condition="'$(RuntimeReleaseTag)' == ''"
-           Text="No dotnet-riscv release tag for DotnetVersion=$(DotnetVersion) Variant=$(Variant) (see bflat.variant.props)." />
-  </Target>
-
-  <!-- Variants share bin/ and obj/, so extract semaphores from a previous
-       build of variant A stay newer than A's cached zips even after variant B
-       has overwritten the output tree. Wipe them whenever the variant being
+  <!-- Releases share bin/ and obj/, so extract semaphores from a build of
+       release A stay newer than A's cached zips even after a build of release
+       B has overwritten the output tree. Wipe them whenever the release being
        built differs from the last one extracted, forcing re-extraction from
-       the (per-variant) download cache. -->
+       the (per-release) download cache. -->
   <PropertyGroup>
-    <_VariantStamp>$(IntermediateOutputPath)variant-$(BlobsVersion).stamp</_VariantStamp>
+    <_ReleaseStamp>$(IntermediateOutputPath)release-$(BlobsVersion).stamp</_ReleaseStamp>
   </PropertyGroup>
-  <Target Name="ResetVariantState"
+  <Target Name="ResetReleaseState"
           BeforeTargets="ExtractHostCompiler;ExtractCompilerBlob;ExtractRefs;ExtractLibraries;ExtractSdkBlobs"
-          Condition="!Exists('$(_VariantStamp)')">
+          Condition="!Exists('$(_ReleaseStamp)')">
     <ItemGroup>
-      <_StaleVariantFiles Include="$(IntermediateOutputPath)*.semaphore" />
-      <_StaleVariantFiles Include="$(IntermediateOutputPath)variant-*.stamp" />
+      <_StaleReleaseFiles Include="$(IntermediateOutputPath)*.semaphore" />
+      <_StaleReleaseFiles Include="$(IntermediateOutputPath)release-*.stamp" />
+      <_StaleReleaseFiles Include="$(IntermediateOutputPath)variant-*.stamp" />
     </ItemGroup>
-    <Delete Files="@(_StaleVariantFiles)" />
-    <Touch Files="$(_VariantStamp)" AlwaysCreate="true" />
+    <Delete Files="@(_StaleReleaseFiles)" />
+    <Touch Files="$(_ReleaseStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- Runtime artifact caches are keyed by $(BlobsVersion), not

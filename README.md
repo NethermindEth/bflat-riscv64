@@ -74,8 +74,7 @@ nine mainnet blocks of its `stateless-tests` suite on Zisk, SP1 and OpenVM
 alike, with matching output. The `platform/` directory of each package has
 the target's memory map, entry sequence and exit protocol.
 
-Bflat itself builds against .NET 10 or .NET 11; see
-[BUILDING.md](BUILDING.md) for the version and variant matrix.
+Bflat itself builds against .NET 11; see [BUILDING.md](BUILDING.md).
 
 ## Design choices
 
@@ -186,8 +185,8 @@ the target platform. On a match, `static_lib` is linked into the binary and
 
 ## Building
 
-See [BUILDING.md](BUILDING.md) for the build, the .NET version and variant
-matrix, and the test, fuzzing and verification workflows.
+See [BUILDING.md](BUILDING.md) for the build, the .NET version and the
+runtime, and the test, fuzzing and verification workflows.
 
 ## License
 

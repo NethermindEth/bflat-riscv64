@@ -2,13 +2,10 @@
  * @file
  * @brief Unit tests for rhp_native/module.S (the GC write-barrier stubs).
  *
- * Built TWICE by run_tests.sh, once per runtime contract
- * (-DBFLAT_DOTNET=10/11 here, --defsym BFLAT_DOTNET=... for the assembler),
- * because the t3 post-increment is version-dependent: .NET 10's
- * WriteBarriers.S documents "t3 incremented by 8", .NET 11 changed it to
- * "t3 preserved" and the JIT now reuses t3 after the call. A stale +8 under
- * .NET 11 silently corrupts Dictionary inserts, so both contracts are
- * pinned here rather than assumed.
+ * The single-assign helpers must keep t3: .NET 10's WriteBarriers.S
+ * documented "t3 incremented by 8", .NET 11 changed it to "t3 preserved"
+ * and the JIT reuses t3 after the call. A stale +8 silently corrupts
+ * Dictionary inserts, so the contract is pinned here rather than assumed.
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  */
@@ -16,15 +13,7 @@
 
 #include "common.h"
 
-#ifndef BFLAT_DOTNET
-#error "BFLAT_DOTNET is not set (run_tests.sh passes -DBFLAT_DOTNET=10|11)"
-#endif
-
-#if BFLAT_DOTNET < 11
-#define DEST_DELTA 8 /* .NET 10: helper advances t3 past the written slot */
-#else
-#define DEST_DELTA 0 /* .NET 11: t3 preserved for caller reuse */
-#endif
+#define DEST_DELTA 0 /* t3 preserved for caller reuse */
 
 struct tregs {
     uint64_t t3; /* destination */
@@ -72,13 +61,12 @@ static void check_single_assign(void (*fn)(void), const char *name)
     CHECK(heap[1] == 0xEEEEEEEEEEEEEEEEULL);
     CHECK(heap[3] == 0xEEEEEEEEEEEEEEEEULL);
 
-    /* versioned t3 contract */
+    /* t3 contract */
     if (r.t3 != (uint64_t)&heap[2] + DEST_DELTA) {
         t_fail++;
         fprintf(stderr,
-                "FAIL %s: t3 delta = %lld, expected %d (BFLAT_DOTNET=%d)\n",
-                name, (long long)(r.t3 - (uint64_t)&heap[2]), DEST_DELTA,
-                BFLAT_DOTNET);
+                "FAIL %s: t3 delta = %lld, expected %d\n",
+                name, (long long)(r.t3 - (uint64_t)&heap[2]), DEST_DELTA);
     } else {
         t_pass++;
     }
@@ -144,6 +132,5 @@ int main(void)
         CHECK(heap[4] == 0);
     }
 
-    TEST_MAIN_END(BFLAT_DOTNET < 11 ? "rhp_native(net10)"
-                                    : "rhp_native(net11)");
+    TEST_MAIN_END("rhp_native");
 }

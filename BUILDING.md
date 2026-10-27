@@ -27,53 +27,18 @@ $ dotnet build src/bflat/bflat.csproj -t:BuildLayouts
 
 They land in a `layouts` directory at the repo root.
 
-## Target .NET version
+## Target .NET version and runtime
 
-bflat builds for .NET 10 or .NET 11 (default: 11), selected with the
-`DotnetVersion` MSBuild property:
+bflat builds for .NET 11 (`net11.0`) and bundles the perf runtime of
+dotnet-riscv: the upstream series plus the zkVM code-quality patches (an
+`*-upstream-perf` release). The release tag is in
+`src/bflat/bflat.variant.props`, and `bflat --info` prints it. The build
+needs a .NET 11 SDK; the Docker build environment (`Dockerfile.build`) has
+one.
 
-```bash
-$ dotnet build src/bflat/bflat.csproj -p:DotnetVersion=10
-```
-
-or as the fourth argument of `build.sh`:
-
-```bash
-$ ./build.sh all riscv64 min 10
-```
-
-This picks both the TargetFramework (`net10.0`/`net11.0`) and the bundled
-runtime release line; the two build into separate `src/bflat/bin/…/net1X.0`
-trees. A .NET 11 SDK can build both flavors (downlevel targeting), so one
-install covers everything. The Docker build environment
-(`Dockerfile.build`) defaults to an SDK 11 preview; pass
-`--build-arg SDK_VERSION=10.0.100` for a pure-.NET-10 environment. To *run*
-the `net10.0` build where only the .NET 11 runtime is installed, set
-`DOTNET_ROLL_FORWARD=LatestMajor`.
-
-## Build variants
-
-Two variants differ in which runtime release gets bundled:
-
-- `perf` — the upstream series plus the zkVM code-quality patches
-  (dotnet-riscv `*-upstream-perf` releases)
-- `min` — the upstream series only (`*-upstream` releases)
-
-The mapping lives in `src/bflat/bflat.variant.props`, and `bflat --info`
-prints the bundled version. Select with the `Variant` property (default:
-`perf`):
-
-```bash
-$ dotnet build src/bflat/bflat.csproj -p:Variant=min
-$ ./build.sh all riscv64 min
-```
-
-Within one target .NET version both variants build into the same
-`src/bflat/bin/…` tree and overwrite each other; switching variants
-re-extracts the runtime artifacts from the download cache, which is keyed
-per variant, so nothing is re-downloaded. The Docker image packages
-whichever variant was built last for its `DOTNET_VERSION`
-(`--build-arg DOTNET_VERSION=10|11`, default 11).
+The build output and the download cache are keyed by the release tag, so a
+new tag re-extracts the runtime artifacts and downloads only the new
+release.
 
 ## Checks you can run locally
 
@@ -125,8 +90,8 @@ the signal.
 
 The assembly modules are covered too. `rhp_native` is exercised through a
 shim that marshals the t3/t4/t5 register convention the C ABI cannot
-express, built twice — once per `BFLAT_DOTNET` contract — so the
-version-dependent write-barrier behaviour is pinned from both sides.
+express, so the write-barrier contract (`t3` kept, as .NET 11 wants) is
+pinned.
 The zkVM entry points are not here: they are in the platform packages
 (bflat-libziskos, bflat-sp1, bflat-openvm), with their unit tests
 (`tests/platform/run.sh` in each package, the same harness under qemu).
