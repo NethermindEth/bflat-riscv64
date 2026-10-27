@@ -1766,6 +1766,10 @@ internal class BuildCommand : CommandBase
             // operands are in x10-x12 by the calling convention and the circuit
             // writes its flag back to x12. A JIT without the knob keeps the call.
             backendOptions.Add("JitZkDelegationPInvokes=airbender_u256_op:7ca");
+
+            // The inliner's profitability multiplier raised as for ZisK (perf-57): -1.6% cycles on the
+            // heaviest mainnet block for 270 KB of the ROM.
+            backendOptions.Add("JitInlineAdditionalMultiplier=3");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
