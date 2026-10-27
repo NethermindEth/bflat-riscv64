@@ -444,7 +444,7 @@ module has sources but no tests, the test run fails.
 ```json
 "external": {
   "repo": "https://github.com/NethermindEth/uGC",
-  "tag": "v1.0.7",
+  "tag": "v1.0.13",
   "release": "ugc-riscv64.tar.gz",
   "dir": "release"
 }
