@@ -212,7 +212,7 @@ list item. A key that bflat does not know is an error.
 | `when` | The module build compiles the source only if this condition is true. The condition can test only `arch` and `os`, because the module build does not know the guest. |
 
 `build.sh` supplies the common flags: target triple, `-march`, `-mabi`,
-LTO, `-O3` and `BFLAT_DOTNET`. A module can add flags. A module must not set
+LTO and `-O3`. A module can add flags. A module must not set
 the common flags again.
 
 Two sources must not give the same object file. Use `output` to give one of
@@ -424,7 +424,7 @@ file exists. `run_tests.sh` does not read this section yet.
   { "file": "../tests/test_pal.c", "runner": "qemu",
     "cflags": ["-Wl,--allow-multiple-definition"] },
   { "file": "../tests/test_rhp_native.c", "runner": "qemu",
-    "matrix": { "BFLAT_DOTNET": ["11"] } }
+    "matrix": { "TEST_ITERATIONS": ["1", "100"] } }
 ]
 ```
 

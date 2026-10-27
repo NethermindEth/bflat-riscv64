@@ -160,34 +160,17 @@ run_one test_stdcppshim \
 	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_stdcppshim.cpp" \
 	"${MOD_DIR}/stdcppshim/module.cpp" -Wl,--wrap=malloc
 
-# ubootstrap's classlib table is contract-versioned; the test pins the
-# .NET 11 layout (slot 4 = ResolveDispatch).
+# The test pins the .NET 11 layout of ubootstrap's classlib table (slot 4 =
+# ResolveDispatch).
 run_one test_ubootstrap \
-	${CXX} ${CXXFLAGS} -DBFLAT_DOTNET=11 "${TESTS_DIR}/test_ubootstrap.cpp" \
+	${CXX} ${CXXFLAGS} "${TESTS_DIR}/test_ubootstrap.cpp" \
 	"${MOD_DIR}/ubootstrap/module.cpp"
 
 # --- assembly modules -------------------------------------------------
 
-# rhp_native twice: the write barriers' t3 post-increment is contract-
-# versioned, and build.sh selects it with --defsym BFLAT_DOTNET.
-#
-# The version reaches the ASSEMBLER only (-Wa,--defsym). It must NOT be a
-# -D: gcc runs .S files through cpp first, so -DBFLAT_DOTNET=11 would
-# rewrite the `.ifndef BFLAT_DOTNET` directive itself into `.ifndef 11`.
-# Hence the separate assemble step; the C side gets its own -D.
-for v in 10 11 ; do
-	obj="${OUT_DIR}/rhp_native_${v}.o"
-	if ! ${CC} -c -Wa,--defsym,BFLAT_DOTNET=${v} \
-			"${MOD_DIR}/rhp_native/module.S" -o "${obj}" ; then
-		echo "BUILD FAIL: rhp_native asm (net${v})"
-		failures=$((failures + 1))
-		continue
-	fi
-	run_one "test_rhp_native_net${v}" \
-		${CC} ${CFLAGS} -DBFLAT_DOTNET=${v} \
-		"${TESTS_DIR}/test_rhp_native.c" "${TESTS_DIR}/asm_shim.S" \
-		"${obj}"
-done
+run_one test_rhp_native \
+	${CC} ${CFLAGS} "${TESTS_DIR}/test_rhp_native.c" "${TESTS_DIR}/asm_shim.S" \
+	"${MOD_DIR}/rhp_native/module.S"
 
 # The zkVM entry points and their tests (test_entry.c, test_mem.c) are in
 # the platform packages: tests/platform/run.sh in bflat-libziskos,

@@ -13,36 +13,25 @@
  * dropping the heap-bounds check and card-mark of the originals.
  * Convention: t3 = destination, t4 = value, t5 = source (byref copy).
  *
- * The single-assign helpers' t3 post-increment is CONTRACT-VERSIONED. .NET 10's
- * riscv64 WriteBarriers.S documents "On exit: t3 incremented by 8" and the JIT
- * consumes that; .NET 11 (preview7) changed the contract to "t3 preserved" and
- * the JIT now REUSES t3 after the call. A stale +8 under .NET 11 makes the very
- * next reuse land 8 bytes high - e.g. Dictionary`2<__Canon,TValue>.TryInsert
+ * The single-assign helpers keep t3. .NET 10's riscv64 WriteBarriers.S
+ * documented "On exit: t3 incremented by 8"; .NET 11 changed the contract to
+ * "t3 preserved", and the JIT REUSES t3 after the call. A stale +8 makes the
+ * very next reuse land 8 bytes high - e.g. Dictionary`2<__Canon,TValue>.TryInsert
  * stores the key via this helper then writes `entry.value` at 0x10(t3): with
  * the increment the value lands in the next entry's slot and the dictionary
- * silently loses every value. BFLAT_DOTNET is passed by build.sh (--defsym)
- * and has no default: guessing a line here picks a barrier silently.
+ * silently loses every value.
  */
-.ifndef BFLAT_DOTNET
-.error "BFLAT_DOTNET is not set (assemble with --defsym BFLAT_DOTNET=10|11)"
-.endif
 
 .globl __wrap_RhpAssignRefRiscV64
 .type  __wrap_RhpAssignRefRiscV64, @function
 __wrap_RhpAssignRefRiscV64:
     sd   t4, 0(t3)
-.if BFLAT_DOTNET < 11
-    addi t3, t3, 8              /* .NET 10 contract: caller expects t3 += 8 */
-.endif
     ret
 
 .globl __wrap_RhpCheckedAssignRef
 .type  __wrap_RhpCheckedAssignRef, @function
 __wrap_RhpCheckedAssignRef:
     sd   t4, 0(t3)
-.if BFLAT_DOTNET < 11
-    addi t3, t3, 8              /* .NET 10 contract: caller expects t3 += 8 */
-.endif
     ret
 
 .globl __wrap_RhpByRefAssignRef

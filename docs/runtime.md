@@ -126,20 +126,14 @@ symbol.
 
 ## How the artifact reaches bflat
 
-bflat does not fetch the runtime ad-hoc. Each build resolves a release tag
-from two properties in
+bflat does not fetch the runtime ad-hoc. The release tag is
+`RuntimeReleaseTag` in
 [`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props):
-
-- **`DotnetVersion`** (`10` or `11`) selects the .NET line;
-- **`Variant`** (`perf` or `min`) selects which runtime build gets bundled —
-  `min` is the upstream series alone (the `upstream` fixup profile), `perf`
-  adds the zkVM code-quality patches on top (`upstream-perf`).
-
-Together they resolve to a release tag — the SDK version of the VMR the
-runtime was built from plus the profile (`10.0.113-upstream-perf`,
-`11.0.100-rc.2.26460.199-upstream`, …). Tags move as releases are cut and
-the blob cache is keyed by them, so switching variant or .NET version
-re-downloads.
+a .NET 11 build of the `upstream-perf` fixup profile, which is the upstream
+series with the zkVM code-quality patches on top. The tag is the SDK version
+of the VMR the runtime was built from plus the profile
+(`11.0.100-upstream-perf.r400`). Tags move as releases are cut and the blob
+cache is keyed by them, so a new tag re-downloads.
 
 At build time the archives land in `lib/<os>/<arch>/<libc>` next to the
 bflat binary; when you run `bflat build`, those files are what the driver
@@ -163,9 +157,8 @@ and CoreLib agree with the ILCompiler of the release:
 
 Microsoft's x64 packages do not work with this ILCompiler, because the
 fixups change the JIT/EE interface. bflat uses the target when
-`BflatTargetLinuxX64` is `true` for the release tag in
-`bflat.variant.props`; the releases that are older than the job do not
-have the assets.
+`BflatTargetLinuxX64` in `bflat.variant.props` is `true` (the default);
+`-p:BflatTargetLinuxX64=false` builds without it.
 
 ## License
 

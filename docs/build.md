@@ -23,7 +23,7 @@ $ ./build.sh layouts riscv64    # produce the redistributable layouts
 `build.sh` wraps `dotnet build` and the cross-compilation of every C /
 C++ / asm module under `src/bflat/modules/`. You need:
 
-- A .NET SDK — see [.NET version and variant](#net-version-and-variant)
+- A .NET 11 SDK — see [.NET version and runtime](#net-version-and-runtime)
   for which one.
 - `clang` and `clang++` — they compile the C and C++ modules
   (cross-targeted with `--target=riscv64-linux-gnu`, so no separate cross
@@ -38,53 +38,22 @@ A Dockerfile (`Dockerfile.build`) bundles all of this; run
 `./build_docker_image.sh` once to build it, then `./docker_shell.sh` to
 get a shell with the toolchain in place.
 
-## .NET version and variant
+## .NET version and runtime
 
-bflat builds against **.NET 10 or .NET 11**, and bundles one of two
-runtime lines. Both are positional arguments of `build.sh`:
-
-```console
-$ ./build.sh bflat riscv64 <variant> <dotnet>
-$ ./build.sh bflat riscv64 min 10        # minimal runtime, .NET 10
-$ ./build.sh bflat riscv64 perf 10       # performance runtime, .NET 10
-$ ./build.sh bflat riscv64 min 11        # minimal runtime, .NET 11
-```
-
-or, driving MSBuild directly, `-p:DotnetVersion=` and `-p:Variant=`.
-
-<dl class="kv">
-  <dt><code>min</code></dt>
-  <dd>The minimal runtime build. Smaller image, fewer prover steps to
-    load.</dd>
-  <dt><code>perf</code></dt>
-  <dd>The performance-oriented runtime, paired with the
-    <a href="architecture.md#zkvm-ryujit-codegen-knobs">RyuJIT knobs</a>.
-    Published for .NET 10 only so far; asking for it on .NET 11 fails the
-    build with an explanation rather than downloading a tag that does not
-    exist.</dd>
-</dl>
-
-The default is .NET 11 with `min`. The two selectors decide the
-TargetFramework and the runtime release tag together, and the download cache
-is keyed by that tag. The mapping lives in
+bflat builds against **.NET 11** and bundles the performance-oriented
+runtime of dotnet-riscv (an `*-upstream-perf` release), paired with the
+<a href="architecture.md#zkvm-ryujit-codegen-knobs">RyuJIT knobs</a>. The
+release tag is in
 [`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props),
-which is the source of truth as release tags move.
+which is the source of truth as release tags move; the download cache is
+keyed by that tag.
 
-Three Docker images are published, one per supported combination:
+One Docker image is published: `nethermindeth/bflat-riscv64-11`.
 
-| Image | Variant | .NET |
-|-------|---------|------|
-| `nethermindeth/bflat-riscv64` | perf | 10 |
-| `nethermindeth/bflat-riscv64-min` | min | 10 |
-| `nethermindeth/bflat-riscv64-11-min` | min | 11 |
-
-**About the SDK.** A .NET 11 SDK builds both flavours, so one install
-covers compilation. Running is the other half: an SDK carries only its own
-major's runtime, so a `net10.0` bflat on an 11-only machine aborts with
-`framework '10.0.0' not found` unless you set
-`DOTNET_ROLL_FORWARD=LatestMajor`. The published images derive the SDK from
-`DOTNET_VERSION` and run `bflat --info` on the finished image, so a
-mismatch fails the image build instead of the first use.
+**About the SDK.** bflat needs a .NET 11 SDK to build and a .NET 11
+runtime to run. The published image installs a .NET 11 SDK and runs
+`bflat --info` on the finished image, so a mismatch fails the image build
+instead of the first use.
 
 ## Verifying a build
 

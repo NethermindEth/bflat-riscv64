@@ -22,34 +22,10 @@ function on_fail()
 
 what="$1"
 flavor="$2"
-variant="$3"
-dotnet_version="$4"
 
 if [ "$flavor" == "" ] ; then
 	flavor="generic"
 fi
-
-# Target .NET version: which TFM bflat is built for and which runtime blob
-# release line gets bundled.
-if [ "$dotnet_version" == "" ] ; then
-	dotnet_version="11"
-fi
-case $dotnet_version in
-	10|11) ;;
-	*) fail Unsupported dotnet version: "$dotnet_version" ;;
-esac
-
-# Compiler variant: which runtime blob release gets bundled.
-#   perf -> the upstream series plus the zkVM code-quality patches (upstream-perf)
-#   min  -> the upstream series only (upstream)
-# Default: perf. The release tag each resolves to lives in bflat.variant.props.
-if [ "$variant" == "" ] ; then
-	variant="perf"
-fi
-case $variant in
-	perf|min) ;;
-	*) fail Unsupported variant: "$variant" ;;
-esac
 
 cd $TOP_DIR
 
@@ -97,14 +73,11 @@ function build_modules()
 
 	# module_cc <source> <object> [extra flags...]
 	# Compile as C (clang + LTO so lld can do cross-module opt).
-	# -DBFLAT_DOTNET: some module bodies are contract-versioned against the
-	# target runtime (the C/C++ analog of the .S --defsym below, e.g.
-	# ubootstrap's classlib table slot 4).
 	function module_cc()
 	{
 		local src="$1" out="$2"
 		shift 2
-		clang ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
+		clang ${cflags_common} "$@" -c "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (C)"
 	}
 
@@ -114,20 +87,17 @@ function build_modules()
 	{
 		local src="$1" out="$2"
 		shift 2
-		clang++ ${cflags_common} -DBFLAT_DOTNET=${dotnet_version} "$@" -c "$src" -o "$out"
+		clang++ ${cflags_common} "$@" -c "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (C++)"
 	}
 
 	# module_as <source> <object> [extra flags...]
 	# Assemble (no LTO - bitcode doesn't apply).
-	# --defsym BFLAT_DOTNET: some .S bodies are contract-versioned against
-	# the target .NET runtime (e.g. the ref-assign write barrier's t3
-	# post-increment, dropped in .NET 11).
 	function module_as()
 	{
 		local src="$1" out="$2"
 		shift 2
-		riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 --defsym BFLAT_DOTNET=${dotnet_version} "$@" "$src" -o "$out"
+		riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 "$@" "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (Assembly)"
 	}
 
@@ -228,12 +198,12 @@ function build_modules()
 case $flavor in
 	generic)
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -p:DotnetVersion=${dotnet_version}
-			on_fail $? "Failed to build bflat (generic, ${variant}, net${dotnet_version}.0)"
+			dotnet build src/bflat/bflat.csproj
+			on_fail $? "Failed to build bflat (generic)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Variant=${variant} -p:DotnetVersion=${dotnet_version} -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (generic, ${variant}, net${dotnet_version}.0)"
+			dotnet build src/bflat/bflat.csproj -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (generic)"
 		fi
 		;;
 	riscv64)
@@ -242,12 +212,12 @@ case $flavor in
 			on_fail $? "Failed to build modules"
 		fi
 		if [ "${what}" == "bflat" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -p:DotnetVersion=${dotnet_version}
-			on_fail $? "Failed to build bflat (riscv64, ${variant}, net${dotnet_version}.0)"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64
+			on_fail $? "Failed to build bflat (riscv64)"
 		fi
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
-			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:Variant=${variant} -p:DotnetVersion=${dotnet_version} -t:BuildLayouts -c:Release
-			on_fail $? "Failed to build layouts (riscv64, ${variant}, net${dotnet_version}.0)"
+			dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -t:BuildLayouts -c:Release
+			on_fail $? "Failed to build layouts (riscv64)"
 		fi
 		;;
 	*)

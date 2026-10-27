@@ -53,16 +53,8 @@ extern "C" bool RhRegisterOSModule(void * pModule,
 
 /* .NET 11 (rc.2+) grew a pinModule parameter; the C++ mangled name follows
  * it, so the declaration has to match the runtime the module links against. */
-#ifndef BFLAT_DOTNET
-#error "BFLAT_DOTNET is not set (compile with -DBFLAT_DOTNET=10|11)"
-#endif
-#if BFLAT_DOTNET >= 11
 void* PalGetModuleHandleFromPointer(void* pointer, bool pinModule);
 #define BFLAT_PAL_GET_MODULE_HANDLE(p) PalGetModuleHandleFromPointer((p), false)
-#else
-void* PalGetModuleHandleFromPointer(void* pointer);
-#define BFLAT_PAL_GET_MODULE_HANDLE(p) PalGetModuleHandleFromPointer((p))
-#endif
 
 #if defined(HOST_X86) && defined(HOST_WINDOWS)
 #define STRINGIFY(s) #s
@@ -84,13 +76,9 @@ MANAGED_RUNTIME_EXPORT(GetRuntimeException)
 MANAGED_RUNTIME_EXPORT(RuntimeFailFast)
 MANAGED_RUNTIME_EXPORT(ThreadEntryPoint)
 MANAGED_RUNTIME_EXPORT(AppendExceptionStackFrame)
-/* ResolveDispatch (classlib slot 4) is a bflat-fork managed export that only
- * exists in the .NET 11 runtime blobs; the .NET 10 fork leaves slot 4 unused
- * (ICodeManager.h: "unused = 4"), so referencing it there is an undefined
- * symbol at link time. Gate the declaration/reference on the version. */
-#if BFLAT_DOTNET >= 11
+/* ResolveDispatch (classlib slot 4) is a bflat-fork managed export of the
+ * .NET 11 runtime blobs. */
 MANAGED_RUNTIME_EXPORT(ResolveDispatch)
-#endif
 MANAGED_RUNTIME_EXPORT(GetSystemArrayEEType)
 MANAGED_RUNTIME_EXPORT(OnFirstChanceException)
 MANAGED_RUNTIME_EXPORT(OnUnhandledException)
@@ -115,11 +103,7 @@ static const pfn c_classlibFunctions[] = {
     &MANAGED_RUNTIME_EXPORT_NAME(RuntimeFailFast),
     &MANAGED_RUNTIME_EXPORT_NAME(ThreadEntryPoint),
     &MANAGED_RUNTIME_EXPORT_NAME(AppendExceptionStackFrame),
-#if BFLAT_DOTNET >= 11
-    &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),  // slot 4: net11 dispatch resolver
-#else
-    nullptr,                                        // slot 4: unused on net10 (stock)
-#endif
+    &MANAGED_RUNTIME_EXPORT_NAME(ResolveDispatch),  // slot 4: dispatch resolver
     &MANAGED_RUNTIME_EXPORT_NAME(GetSystemArrayEEType),
     &MANAGED_RUNTIME_EXPORT_NAME(OnFirstChanceException),
     &MANAGED_RUNTIME_EXPORT_NAME(OnUnhandledException),

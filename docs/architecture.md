@@ -113,7 +113,7 @@ in Nethermind's zisk build passes it explicitly.
 References are resolved against the runtime's `lib/<os>/<arch>/<libc>`
 directory, downloaded from the
 [dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv) release
-matching the bflat version and variant.
+that bflat.variant.props names.
 
 ## Stage 1.5 — ILC-stage substitutions
 

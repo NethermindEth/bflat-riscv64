@@ -75,7 +75,6 @@ class Program
                     {
                         "BflatRuntimeVersion" => ".NET Runtime Version",
                         "MicrosoftCodeAnalysisCSharpVersion" => "C# Compiler Version",
-                        "BflatVariant" => "Variant",
                         _ => null,
                     };
 
