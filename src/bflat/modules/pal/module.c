@@ -673,6 +673,7 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 }
 extern char __zkvm_target_sp1 __attribute__((weak));
 extern char __zkvm_target_openvm __attribute__((weak));
+extern char __zkvm_target_airbender __attribute__((weak));
 
 
 extern long __real_syscall(long number, ...);
@@ -709,7 +710,7 @@ __wrap_syscall(long number, ...)
              * end the guest; the callers (NUMASupportInitialize's
              * get_mempolicy, membarrier probes) all cope with a failure. ZisK
              * emulates Linux syscalls, keep the passthrough there. */
-            if (&__zkvm_target_sp1 || &__zkvm_target_openvm)
+            if (&__zkvm_target_sp1 || &__zkvm_target_openvm || &__zkvm_target_airbender)
                 return -1;
             return __real_syscall(number, arg1, arg2, arg3, arg4, arg5, arg6);
     }
@@ -737,6 +738,14 @@ extern void zkvm_halt(unsigned char exit_code) __attribute__((weak));
  * rejects custom opcodes). Weak: only the OpenVM entry module defines them. */
 extern void zkvm_openvm_terminate(long code) __attribute__((weak, noreturn));
 extern void zkvm_openvm_print(const char *buf, long len) __attribute__((weak));
+
+/* Airbender has no syscalls either: its runtime library (bflat-airbender)
+ * ends the run by leaving the published output in x10-x25, or by writing the
+ * cycle CSR, which no circuit satisfies, and prints through the
+ * quasi-UART on the non-determinism CSR. Weak: only that library defines
+ * them. */
+extern void airbender_exit(int status) __attribute__((weak, noreturn));
+extern void airbender_uart_write(const char *buf, unsigned long len) __attribute__((weak));
 
 #if defined(__riscv)
 /* SP1 (sp1/crates/zkvm/entrypoint/src/syscalls/mod.rs): the syscall id goes
@@ -824,6 +833,9 @@ zkvm_raw_exit(long code)
     } else if (&__zkvm_target_openvm) {
         if (zkvm_openvm_terminate)
             zkvm_openvm_terminate(code);
+    } else if (&__zkvm_target_airbender) {
+        if (airbender_exit)
+            airbender_exit((int)code);
     } else {
         register long a0 __asm__("a0") = code;
         register long a7 __asm__("a7") = 93; /* ZisK CAUSE_EXIT */
@@ -872,6 +884,9 @@ zkvm_console_write(int fd, const char *buf, int len)
         } else if (&__zkvm_target_openvm) {
             if (zkvm_openvm_print)
                 zkvm_openvm_print(buf, len);
+        } else if (&__zkvm_target_airbender) {
+            if (airbender_uart_write)
+                airbender_uart_write(buf, (unsigned long)len);
         }
     }
 #else

@@ -27,35 +27,63 @@
 .set BFLAT_DOTNET, 10
 .endif
 
+/* One source for both widths: a reference is a register-sized word. The
+ * build assembles with plain `as` (no C preprocessor), so the rv32 variant is
+ * selected with --defsym BFLAT_RV32=1. */
+.ifdef BFLAT_RV32
+.set REF_SIZE, 4
+.macro ref_load rd, offset, base
+    lw   \rd, \offset(\base)
+.endm
+.macro ref_store rs, offset, base
+    sw   \rs, \offset(\base)
+.endm
+.else
+.set REF_SIZE, 8
+.macro ref_load rd, offset, base
+    ld   \rd, \offset(\base)
+.endm
+.macro ref_store rs, offset, base
+    sd   \rs, \offset(\base)
+.endm
+.endif
+
+/* The unchecked barrier carries the architecture in its name. */
+.ifdef BFLAT_RV32
+.globl __wrap_RhpAssignRefRiscV32
+.type  __wrap_RhpAssignRefRiscV32, @function
+__wrap_RhpAssignRefRiscV32:
+.else
 .globl __wrap_RhpAssignRefRiscV64
 .type  __wrap_RhpAssignRefRiscV64, @function
 __wrap_RhpAssignRefRiscV64:
-    sd   t4, 0(t3)
+.endif
+    ref_store t4, 0, t3
 .if BFLAT_DOTNET < 11
-    addi t3, t3, 8              /* .NET 10 contract: caller expects t3 += 8 */
+    addi t3, t3, REF_SIZE       /* .NET 10 contract: caller expects t3 += 8 */
 .endif
     ret
 
 .globl __wrap_RhpCheckedAssignRef
 .type  __wrap_RhpCheckedAssignRef, @function
 __wrap_RhpCheckedAssignRef:
-    sd   t4, 0(t3)
+    ref_store t4, 0, t3
 .if BFLAT_DOTNET < 11
-    addi t3, t3, 8              /* .NET 10 contract: caller expects t3 += 8 */
+    addi t3, t3, REF_SIZE       /* .NET 10 contract: caller expects t3 += 8 */
 .endif
     ret
 
 .globl __wrap_RhpByRefAssignRef
 .type  __wrap_RhpByRefAssignRef, @function
 __wrap_RhpByRefAssignRef:
-    ld   t4, 0(t5)
-    addi t5, t5, 8
-    sd   t4, 0(t3)
-    addi t3, t3, 8
+    ref_load  t4, 0, t5
+    addi t5, t5, REF_SIZE
+    ref_store t4, 0, t3
+    addi t3, t3, REF_SIZE
     ret
 
 .globl __wrap_RhpAssignRef
 .type  __wrap_RhpAssignRef, @function
 __wrap_RhpAssignRef:
-    sd   a1, 0(a0)
+    ref_store a1, 0, a0
     ret
