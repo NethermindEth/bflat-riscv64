@@ -56,29 +56,9 @@ _start:
     addi    t1, t1, 4
     j       1b
 2:
-    /* RAM starts zeroed in the circuit, but the simulator may hand over a
-     * dirty image; zero .bss explicitly so both agree. Eight words a round
-     * while eight remain: .bss is megabytes, and the loop's own instructions
-     * would be three of every four. */
-    la      t1, _bss_start
-    la      t2, _bss_end
-    addi    t3, t2, -32
-6:  bltu    t3, t1, 3f
-    sw      zero, 0(t1)
-    sw      zero, 4(t1)
-    sw      zero, 8(t1)
-    sw      zero, 12(t1)
-    sw      zero, 16(t1)
-    sw      zero, 20(t1)
-    sw      zero, 24(t1)
-    sw      zero, 28(t1)
-    addi    t1, t1, 32
-    j       6b
-3:  bgeu    t1, t2, 4f
-    sw      zero, 0(t1)
-    addi    t1, t1, 4
-    j       3b
-4:
+    /* .bss needs no clearing: RAM starts zeroed, in the circuit (its memory
+     * argument fixes the initial value at 0) and in the simulator alike, and
+     * nothing runs before this entry point. It is megabytes. */
     /* noos_start_main replaces musl's __libc_start_main: thread pointer,
      * .init_array, then the .NET start-up. It ends through musl's exit(),
      * which pal wraps into airbender_exit. */
