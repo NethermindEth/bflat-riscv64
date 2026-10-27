@@ -155,6 +155,11 @@ point at the linker-script symbols; the SP1 and OpenVM builds additionally
 check that `__wrap_main` returns `noos_main`'s value (SP1 halts with it) and
 that `syscall_keccak_f` tail-calls the target's own permutation name.
 
+**Airbender TLS layout.** `bash tests/run-airbender-tls.sh` checks that initialized
+RV32 TLS is included in the ROM load image and does not inflate the flat image
+past the 4 MiB limit. Needs clang, LLD, llvm-objcopy and Python 3.
+`BFLAT_LD` and `BFLAT_OBJCOPY` override the linker and objcopy executables.
+
 **Fuzzing.** pal's hand-written `vfprintf` parser and the bump-allocator
 family are fuzzed on the host with ASan+UBSan; the allocator target drives
 random malloc/realloc/calloc/aligned_alloc/mark/reset sequences with

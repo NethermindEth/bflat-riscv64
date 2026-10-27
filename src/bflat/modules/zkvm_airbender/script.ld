@@ -122,7 +122,7 @@ SECTIONS
     __tdata_end = .;
     . = ALIGN(4);
     __ram_init_end = .;
-  } >ram AT>rom :tls
+  } >ram AT>rom :data :tls
 
   __ram_init_load = LOADADDR(.modules);
   /* The TLS module copies the template from here; its RAM copy is the
