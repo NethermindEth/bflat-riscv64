@@ -1780,6 +1780,10 @@ internal class BuildCommand : CommandBase
             // uGC never scans stacks (see JitZkNoGcMustInit), so a byref cast to a pointer needs no non-GC
             // temp: the operands of a delegation go straight to their registers. -0.7% cycles there.
             backendOptions.Add("JitZkNoCastAwayGcTemp=1");
+
+            // A temp the importer spilled for such a value is cloned into its uses in the block too:
+            // -0.2% cycles there.
+            backendOptions.Add("JitZkForwardSubCheap=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
