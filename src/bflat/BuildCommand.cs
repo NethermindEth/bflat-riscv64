@@ -1784,6 +1784,10 @@ internal class BuildCommand : CommandBase
             // A temp the importer spilled for such a value is cloned into its uses in the block too:
             // -0.2% cycles there.
             backendOptions.Add("JitZkForwardSubCheap=1");
+
+            // The ROM sits at address 0 and reading it never faults, so a null check probe checks nothing:
+            // -0.2% cycles there.
+            backendOptions.Add("JitZkNoNullChecks=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
