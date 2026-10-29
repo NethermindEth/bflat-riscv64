@@ -1769,6 +1769,10 @@ internal class BuildCommand : CommandBase
             // The EVM guest's handlers take their arguments in s1-s8, which no call or delegation in
             // them clobbers: -3.3% cycles on the heaviest mainnet block.
             backendOptions.Add("JitZkHandlerConv=1");
+
+            // An inline argument that is a local plus constants is recomputed at each use rather than held
+            // in a register the delegations' operand moves go through: -0.4% cycles on the heaviest block.
+            backendOptions.Add("JitZkInlineCloneCheapArgs=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
