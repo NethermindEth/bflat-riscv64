@@ -1771,8 +1771,11 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitZkHandlerConv=1");
 
             // An inline argument that is a local plus constants is recomputed at each use rather than held
-            // in a register the delegations' operand moves go through: -0.4% cycles on the heaviest block.
+            // in a register the delegations' operand moves go through: -0.5% cycles on the heaviest block.
             backendOptions.Add("JitZkInlineCloneCheapArgs=1");
+
+            // For the same reason a local plus a constant is not CSEd outside loops: -0.15% cycles there.
+            backendOptions.Add("JitZkNoCheapAddCSE=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
