@@ -1776,6 +1776,10 @@ internal class BuildCommand : CommandBase
 
             // For the same reason a local plus a constant is not CSEd outside loops: -0.15% cycles there.
             backendOptions.Add("JitZkNoCheapAddCSE=1");
+
+            // uGC never scans stacks (see JitZkNoGcMustInit), so a byref cast to a pointer needs no non-GC
+            // temp: the operands of a delegation go straight to their registers. -0.7% cycles there.
+            backendOptions.Add("JitZkNoCastAwayGcTemp=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
