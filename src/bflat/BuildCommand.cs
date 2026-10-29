@@ -1471,10 +1471,6 @@ internal class BuildCommand : CommandBase
         if (stdlib == StandardLibType.DotNet)
             metadataOptions |= MetadataManagerOptions.DehydrateData;
 #endif
-        // Airbender's ROM is 4 MiB: dehydrated data is about a third of the
-        // pointer-heavy data it rebuilds at startup.
-        if (libc == "airbender")
-            metadataOptions |= MetadataManagerOptions.DehydrateData;
         MetadataManager metadataManager = new UsageBasedMetadataManager(
             compilationGroup,
             typeSystemContext,

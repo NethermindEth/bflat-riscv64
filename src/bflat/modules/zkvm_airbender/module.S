@@ -45,16 +45,39 @@ _start:
     .option pop
     la      sp, _init_stack_top
 
-    /* Initialised RAM: one block linked to run in RAM and loaded in ROM. */
+    /* Initialised RAM: one block linked to run in RAM and loaded in ROM, which
+     * the delegations cannot read. Eight words a round, then the rest one by
+     * one: without .NET's data rehydration the block is hundreds of KiB. */
     la      t0, __ram_init_load
     la      t1, __ram_init_start
     la      t2, __ram_init_end
-1:  bgeu    t1, t2, 2f
+    addi    t4, t2, -32
+    bgtu    t1, t4, 3f
+1:  lw      t3, 0(t0)
+    lw      t5, 4(t0)
+    lw      t6, 8(t0)
+    lw      a2, 12(t0)
+    lw      a3, 16(t0)
+    lw      a4, 20(t0)
+    lw      a5, 24(t0)
+    lw      a6, 28(t0)
+    sw      t3, 0(t1)
+    sw      t5, 4(t1)
+    sw      t6, 8(t1)
+    sw      a2, 12(t1)
+    sw      a3, 16(t1)
+    sw      a4, 20(t1)
+    sw      a5, 24(t1)
+    sw      a6, 28(t1)
+    addi    t0, t0, 32
+    addi    t1, t1, 32
+    bleu    t1, t4, 1b
+3:  bgeu    t1, t2, 2f
     lw      t3, 0(t0)
     sw      t3, 0(t1)
     addi    t0, t0, 4
     addi    t1, t1, 4
-    j       1b
+    j       3b
 2:
     /* .bss needs no clearing: RAM starts zeroed, in the circuit (its memory
      * argument fixes the initial value at 0) and in the simulator alike, and
