@@ -1736,11 +1736,10 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitNoUnalignedAccess=1");
             backendOptions.Add("JitRiscV64StrictAlign=0");
 
-            // A callee marked AggressiveInlining with more than 0xC0 (192) bytes
-            // of IL is judged like any other. On rv32 the UInt256 helpers inline
-            // into frames of several KB: 0x100 holds the image over the ROM, and
-            // 0xE0 buys little over 0xC0 for 200 KB more.
-            backendOptions.Add("JitForceInlineMaxIL=C0");
+            // A callee marked AggressiveInlining with more than 0x200 (512) bytes
+            // of IL is judged like any other: -1.4% cycles on the heaviest mainnet
+            // block over 0xC0, for 165 KB of the 4 MiB ROM; 0x300 buys nothing more.
+            backendOptions.Add("JitForceInlineMaxIL=200");
 
             // Airbender v3 proves only the unsigned RV32M instructions: mulh,
             // mulhsu, div and rem are built from unsigned ones. Native code gets
@@ -1764,8 +1763,8 @@ internal class BuildCommand : CommandBase
             backendOptions.Add("JitZkDelegationPInvokes=airbender_u256_op:7ca");
 
             // The inliner's profitability multiplier raised as for ZisK (perf-57): -1.6% cycles on the
-            // heaviest mainnet block for 270 KB of the ROM.
-            backendOptions.Add("JitInlineAdditionalMultiplier=3");
+            // heaviest mainnet block for 270 KB of the ROM at 3; 4 takes 0.1% more, 6 loses it again.
+            backendOptions.Add("JitInlineAdditionalMultiplier=4");
 
             // The EVM guest's handlers take their arguments in s1-s8, which no call or delegation in
             // them clobbers: -3.3% cycles on the heaviest mainnet block.
