@@ -1792,6 +1792,10 @@ internal class BuildCommand : CommandBase
             // A method marked to initialize its locals zeroes only its stackalloc, as SkipLocalsInit would
             // zero nothing: C# writes a local before it reads it. -0.26% cycles there.
             backendOptions.Add("JitZkInitLocallocOnly=1");
+
+            // A struct newobj stored straight into a local whose address the method takes is constructed
+            // there, not in a zeroed temp copied into it: -0.22% cycles there.
+            backendOptions.Add("JitZkNewObjInPlace=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
