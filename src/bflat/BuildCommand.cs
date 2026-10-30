@@ -1788,6 +1788,10 @@ internal class BuildCommand : CommandBase
             // The ROM sits at address 0 and reading it never faults, so a null check probe checks nothing:
             // -0.2% cycles there.
             backendOptions.Add("JitZkNoNullChecks=1");
+
+            // A method marked to initialize its locals zeroes only its stackalloc, as SkipLocalsInit would
+            // zero nothing: C# writes a local before it reads it. -0.26% cycles there.
+            backendOptions.Add("JitZkInitLocallocOnly=1");
         }
 
         backendOptions.AddRange(result.GetValueForOption(CodegenOptOption));
