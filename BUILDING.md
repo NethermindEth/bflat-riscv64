@@ -40,6 +40,41 @@ The build output and the download cache are keyed by the release tag, so a
 new tag re-extracts the runtime artifacts and downloads only the new
 release.
 
+## The riscv32 target (Airbender)
+
+`--arch riscv32` builds an RV32IM ilp32 guest for a riscv32 platform: ZKsync
+Airbender, whose platform and runtime library are the package
+[bflat-airbender](https://github.com/NethermindEth/bflat-airbender). The
+target needs a runtime release with the riscv32 target of dotnet-riscv (its
+JIT, the NativeAOT runtime and the rv32im musl), and the modules built for
+rv32 as well:
+
+```bash
+$ ./build.sh modules riscv64
+$ RV32_SYSROOT=<sysroot> ./build.sh modules riscv32
+$ dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:BflatTargetRiscV32=true
+```
+
+`RV32_SYSROOT` is the rv32im musl sysroot, with the libc++ and Linux
+headers: the `crossrootfs-musl-riscv32.tar.xz` asset of the same release,
+unpacked. `BflatTargetRiscV32=true` takes the release that has the riscv32
+target (`bflat.variant.props`) and adds `lib/linux/riscv32/musl` and the
+riscv32 JIT to the layout. The layout keeps the riscv64 target too.
+
+A guest:
+
+```bash
+$ bflat build --arch riscv32 --os linux --libc airbender --no-pie --no-pthread \
+    --extlib <bflat-airbender>/libairbender.bflat.manifest -o app app.cs
+```
+
+writes the ELF and, beside it, `app.bin` (the ROM image) and `app.text`
+(the instructions), which the Airbender tools load. The platform keeps no
+unwind tables, so the guest builds as with `--remove-eh`.
+`tests/build-airbender.sh` builds the test guests and
+`tests/run-airbender.sh` runs them on the Airbender simulator; CI does both
+(the `riscv32` build of "Build RISC-V64").
+
 ## Checks you can run locally
 
 These are the same gates CI runs. [Verification](docs/verification.md)
