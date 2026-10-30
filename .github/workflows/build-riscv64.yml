@@ -16,6 +16,11 @@ on:
         type: string
         default: main
         required: false
+      airbender_ref:
+        description: Branch of bflat-airbender to take the Airbender platform and libairbender from
+        type: string
+        default: main
+        required: false
 
 # The public key of the package signatures (docs/signing.md). The bflat
 # build checks the dotnet-riscv downloads with it and writes it into the
@@ -27,7 +32,10 @@ env:
   # bflat builds for .NET 11 with the perf runtime of dotnet-riscv
   # (bflat.variant.props). The SDK is the one the image ships.
   SDK_VERSION: 11.0.100-preview.6.26359.118
-  IMAGE: nethermindeth/bflat-riscv64-11
+  # The Airbender v3 simulator that runs the riscv32 guests: the cli of
+  # matter-labs/zksync-airbender on its dev branch, which has the 4 MiB ROM and
+  # proves only the unsigned RV32M instructions.
+  AIRBENDER_COMMIT: d2a36a7e083d82ee265f25d5381cc8318216f9ea
 
 jobs:
   acsl_check:
@@ -198,6 +206,11 @@ jobs:
       - name: Run module unit tests
         run: ./src/bflat/modules/tests/run_tests.sh
 
+  # Two builds of bflat, each with its own image: with the runtime release of
+  # bflat.variant.props, and with the release that has the riscv32 target too
+  # (BflatTargetRiscV32), whose image also builds the Airbender guests. Both
+  # run the riscv64 checks, so the riscv32 runtime fixups are checked against
+  # the riscv64 guests as well.
   build_riscv64:
     runs-on: ubuntu-latest
     permissions:
@@ -206,7 +219,19 @@ jobs:
     container:
       image: ubuntu:26.04
       options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
-    name: Build RISC-V64 on Ubuntu 26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: default
+            image: nethermindeth/bflat-riscv64-11
+          - sdk: riscv32
+            image: nethermindeth/bflat-riscv64-11-riscv32
+    env:
+      IMAGE: ${{ matrix.image }}
+      # A property of bflat.csproj, which MSBuild reads from the environment.
+      BflatTargetRiscV32: ${{ matrix.sdk == 'riscv32' }}
+    name: Build RISC-V64 on Ubuntu 26.04 (${{ matrix.sdk }} SDK)
     steps:
       - name: Install dependencies
         run: |
@@ -226,7 +251,8 @@ jobs:
             curl \
             ca-certificates \
             docker.io \
-            libicu-dev
+            libicu-dev \
+            xz-utils
           pip3 install lief pyelftools --break-system-packages
           # gcc-riscv64-linux-gnu only ships hard-float (lp64d) glibc stubs. We
           # compile native modules with -mabi=lp64 (soft-float) to match zisk's
@@ -247,6 +273,31 @@ jobs:
 
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
+
+      # The rv32 musl sysroot that the rv32 modules compile against: the
+      # crossrootfs asset of the release, checked against its signed list
+      # before it is unpacked (docs/signing.md).
+      - name: Fetch the riscv32 sysroot
+        if: matrix.sdk == 'riscv32'
+        run: |
+          set -e
+          tag="$(dotnet msbuild src/bflat/bflat.csproj -getProperty:RuntimeReleaseTag -p:BflatTargetRiscV32=true)"
+          url="https://github.com/NethermindEth/dotnet-riscv/releases/download/$tag"
+          mkdir -p /tmp/rv32-dl /opt/rv32
+          for f in crossrootfs-musl-riscv32.tar.xz bflat-signature.sha256 bflat-signature.sha256.sig; do
+            curl -fsSL -o "/tmp/rv32-dl/$f" "$url/$f"
+          done
+          if [ -n "$BFLAT_SIGNING_PUBLIC_KEY" ]; then
+            dotnet run --project src/bflat-modules/bflat-modules.csproj -c Release --no-build -- verify-release \
+              /tmp/rv32-dl/bflat-signature.sha256 /tmp/rv32-dl/bflat-signature.sha256.sig \
+              /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz=crossrootfs-musl-riscv32.tar.xz
+          fi
+          tar -xJf /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz -C /opt/rv32
+          echo "RV32_SYSROOT=/opt/rv32" >> "$GITHUB_ENV"
+
+      - name: Build modules (riscv32)
+        if: matrix.sdk == 'riscv32'
+        run: ./build.sh modules riscv32
 
       - name: Build bflat (riscv64)
         run: ./build.sh bflat riscv64
@@ -315,6 +366,38 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The Airbender platform and libairbender from bflat-airbender, built
+      # with the clang and lld of this job, and the test guests built with them
+      # in the image. tests/run-airbender.sh runs them in the next job.
+      - name: Build the Airbender guests
+        if: matrix.sdk == 'riscv32'
+        env:
+          AIRBENDER_REF: ${{ inputs.airbender_ref || 'main' }}
+        run: |
+          set -e
+          git clone --depth 1 --branch "$AIRBENDER_REF" https://github.com/NethermindEth/bflat-airbender.git /tmp/bflat-airbender
+          bash /tmp/bflat-airbender/build/build.sh airbender
+          id=$(docker create --platform linux/amd64 -e BFLAT_AIRBENDER=/airbender -e OUT=/guests $IMAGE:test \
+            bash /t/build-airbender.sh)
+          docker cp tests/. "$id:/t"
+          docker cp /tmp/bflat-airbender/output/airbender/. "$id:/airbender"
+          rc=0
+          docker start -a "$id" || rc=$?
+          if [ "$rc" = 0 ]; then
+            mkdir -p airbender-guests
+            docker cp "$id:/guests/." airbender-guests/
+          fi
+          docker rm "$id" > /dev/null
+          exit "$rc"
+
+      - name: Upload the Airbender guests
+        if: matrix.sdk == 'riscv32'
+        uses: actions/upload-artifact@v4
+        with:
+          name: airbender-guests
+          path: airbender-guests/
+          if-no-files-found: error
+
       - name: Check unaligned-access codegen per zkVM target
         # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
         run: |
@@ -340,3 +423,44 @@ jobs:
         run: |
           docker push $IMAGE:latest
           docker push "$IMAGE:$GITHUB_SHA"
+
+  # The Airbender guests of the riscv32 build, run on the Airbender v3
+  # simulator: the console, the input and output words, an accelerator, and
+  # the end of a failing run (tests/run-airbender.sh).
+  airbender_run:
+    needs: build_riscv64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: Run the Airbender guests (Airbender v3 simulator)
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download the Airbender guests
+        uses: actions/download-artifact@v4
+        with:
+          name: airbender-guests
+          path: airbender-guests
+
+      - name: Cache the Airbender cli
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: airbender/target/release/cli
+          key: airbender-cli-${{ env.AIRBENDER_COMMIT }}
+
+      # The repository pins its nightly toolchain (rust-toolchain.toml), which
+      # rustup installs by itself. It has no Cargo.lock, so the cache is keyed
+      # by the commit.
+      - name: Build the Airbender cli
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          git init -q airbender
+          git -C airbender fetch -q --depth 1 https://github.com/matter-labs/zksync-airbender "$AIRBENDER_COMMIT"
+          git -C airbender checkout -q FETCH_HEAD
+          cd airbender && cargo build --release -p cli
+
+      - name: Run the Airbender guests
+        run: AIRBENDER_CLI="$PWD/airbender/target/release/cli" GUESTS="$PWD/airbender-guests" tests/run-airbender.sh
