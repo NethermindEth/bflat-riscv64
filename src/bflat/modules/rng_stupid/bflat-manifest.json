@@ -3,8 +3,14 @@
   "schema": 2,
   "name": "rng_stupid",
   "description": "Deterministic randomness: proofs must be reproducible",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "normal", "order": 10}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "normal", "order": 10, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "normal", "order": 10, "when": {"arch": "riscv32"}}
+  ],
   "link": {
     "wrap": [
       "minipal_get_cryptographically_secure_random_bytes",

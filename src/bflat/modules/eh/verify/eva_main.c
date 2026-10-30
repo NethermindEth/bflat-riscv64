@@ -78,7 +78,7 @@ main(void)
     /*@ assert zk_eh_phdrs[1].p_memsz == sizeof(eva_eh_frame_hdr); */
 
     /* The stripped-unwind-tables shape: one header, no index to decode. */
-    zk_elf64_phdr stripped[2];
+    zk_elf_phdr stripped[2];
     uint16_t n = zk_eh_fill_phdrs(stripped, 0x80000000u, 0x1000u, 0, 0);
 
     /*@ assert n == 1; */

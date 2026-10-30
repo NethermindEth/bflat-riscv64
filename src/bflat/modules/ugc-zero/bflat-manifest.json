@@ -3,23 +3,41 @@
   "schema": 2,
   "name": "ugc-zero",
   "description": "uGC, the never-collecting GC, in place of the built-in clrgc",
-  "external": {
-    "repo": "https://github.com/NethermindEth/uGC",
-    "tag": "v1.0.13",
-    "release": "ugc-riscv64.tar.gz",
-    "dir": "release"
-  },
+  "external": [
+    {
+      "repo": "https://github.com/NethermindEth/uGC",
+      "tag": "v1.0.13",
+      "release": "ugc-riscv64.tar.gz",
+      "dir": "release",
+      "when": {"arch": "riscv64"}
+    },
+    {
+      "repo": "https://github.com/NethermindEth/uGC",
+      "tag": "v1.0.15",
+      "release": "ugc-riscv32.tar.gz",
+      "dir": "release-riscv32",
+      "when": {"arch": "riscv32"},
+      "note": "uGC v1.0.15: the first release with the riscv32 objects that place each object 8-byte aligned, as the riscv32 runtime sizes them (uGC#4)."
+    }
+  ],
   "objects": [
-    {"file": "release/uGC.cpp.obj", "order": 30},
-    {"file": "release/uGCHandleManager.cpp.obj", "order": 30},
-    {"file": "release/uGCHandleStore.cpp.obj", "order": 30},
-    {"file": "release/uGCHeap.cpp.obj", "order": 30},
+    {"file": "release/uGC.cpp.obj", "order": 30, "when": {"arch": "riscv64"}},
+    {"file": "release/uGCHandleManager.cpp.obj", "order": 30, "when": {"arch": "riscv64"}},
+    {"file": "release/uGCHandleStore.cpp.obj", "order": 30, "when": {"arch": "riscv64"}},
+    {"file": "release/uGCHeap.cpp.obj", "order": 30, "when": {"arch": "riscv64"}},
     {
       "file": "release/ugc_core.c.obj",
       "order": 30,
+      "when": {"arch": "riscv64"},
       "note": "uGC v1.0.7+: the C++ wrappers delegate to the formally verified C core, shipped as separate objects."
     },
-    {"file": "release/ugc_zalloc.c.obj", "order": 30}
+    {"file": "release/ugc_zalloc.c.obj", "order": 30, "when": {"arch": "riscv64"}},
+    {"file": "release-riscv32/uGC.cpp.obj", "order": 30, "when": {"arch": "riscv32"}},
+    {"file": "release-riscv32/uGCHandleManager.cpp.obj", "order": 30, "when": {"arch": "riscv32"}},
+    {"file": "release-riscv32/uGCHandleStore.cpp.obj", "order": 30, "when": {"arch": "riscv32"}},
+    {"file": "release-riscv32/uGCHeap.cpp.obj", "order": 30, "when": {"arch": "riscv32"}},
+    {"file": "release-riscv32/ugc_core.c.obj", "order": 30, "when": {"arch": "riscv32"}},
+    {"file": "release-riscv32/ugc_zalloc.c.obj", "order": 30, "when": {"arch": "riscv32"}}
   ],
   "link": {"wrap": ["GC_Initialize", "GC_VersionInfo"]},
   "codegen": {

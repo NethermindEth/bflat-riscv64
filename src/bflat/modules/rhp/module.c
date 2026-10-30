@@ -62,12 +62,34 @@ __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
  *
  * The offsets are AllocFast.S's (AsmOffsets): MethodTable m_usComponentSize
  * at 0 and m_uBaseSize at 4, the ee_alloc_context at the start of the thread
- * with combined_limit at 0 and alloc_ptr at 8, an array's length right after
- * its MethodTable pointer, and SZARRAY_BASE_SIZE 0x18. */
+ * with combined_limit at 0 and alloc_ptr one pointer later, an array's length
+ * right after its MethodTable pointer, and SZARRAY_BASE_SIZE three pointers. */
 typedef struct {
     uint8_t *combined_limit;
     uint8_t *alloc_ptr;
 } ee_alloc_context;
+
+#define SZARRAY_BASE_SIZE (3 * sizeof(void *))
+
+/* Every object starts 8-byte aligned, as the guests read array data through
+ * 8-byte-aligned pointers. Base sizes are multiples of 8 on 64-bit targets
+ * already; on 32-bit ones they are multiples of 4 and are rounded up here, as
+ * the riscv32 runtime's own allocation helpers do. */
+#if UINTPTR_MAX == 0xffffffffu
+#define OBJECT_SIZE(base) (((uintptr_t)(base) + 7) & ~(uintptr_t)7)
+#else
+#define OBJECT_SIZE(base) ((uintptr_t)(base))
+#endif
+
+/* The longest array whose size the bump path computes in a uintptr_t. With
+ * 64-bit sizes any valid length fits; with 32-bit ones the component size
+ * (up to 0xffff) times the length must stay below 2^32, so longer arrays take
+ * the runtime's checked path, as in its own AllocFast.S. */
+#if UINTPTR_MAX == 0xffffffffu
+#define MAX_BUMP_ARRAY_LENGTH 0x10000u
+#else
+#define MAX_BUMP_ARRAY_LENGTH 0x7fffffffu
+#endif
 
 extern ee_alloc_context *RhpGetThread(void);
 extern void *__real_RhpNewFast(const void *pEEType);
@@ -127,7 +149,7 @@ __wrap_RhpNewFast(const void *pEEType)
     uint8_t *obj;
     if (__builtin_expect(ctx == NULL, 0))
         bind_alloc_context();
-    else if (bump_alloc(ctx, *(const uint32_t *)((const uint8_t *)pEEType + 4), &obj)) {
+    else if (bump_alloc(ctx, OBJECT_SIZE(*(const uint32_t *)((const uint8_t *)pEEType + 4)), &obj)) {
         *(const void **)obj = pEEType;
         return obj;
     }
@@ -145,8 +167,8 @@ __wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
     uint8_t *obj;
     if (__builtin_expect(ctx == NULL, 0))
         bind_alloc_context();
-    else if (numElements <= 0x7fffffff &&
-             bump_alloc(ctx, (*(const uint16_t *)pEEType * numElements + 0x18 + 7) & ~(uintptr_t)7, &obj)) {
+    else if (numElements <= MAX_BUMP_ARRAY_LENGTH &&
+             bump_alloc(ctx, (*(const uint16_t *)pEEType * numElements + SZARRAY_BASE_SIZE + 7) & ~(uintptr_t)7, &obj)) {
         ((const void **)obj)[0] = pEEType;
         ((uintptr_t *)obj)[1] = numElements;
         return obj;
@@ -165,7 +187,8 @@ __wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
     if (__builtin_expect(ctx == NULL, 0))
         bind_alloc_context();
     /* AllocFast.S's bound, below which the size cannot overflow. */
-    else if (numElements < 0x8000000 && bump_alloc(ctx, numElements * 8 + 0x18, &obj)) {
+    else if (numElements < 0x8000000 &&
+             bump_alloc(ctx, OBJECT_SIZE(numElements * sizeof(void *) + SZARRAY_BASE_SIZE), &obj)) {
         ((const void **)obj)[0] = pEEType;
         ((uintptr_t *)obj)[1] = numElements;
         return obj;
@@ -208,7 +231,7 @@ __wrap_RhAllocateNewObject(const void *pEEType, uint32_t flags, void **pResult)
             bind_alloc_context();
             ctx = alloc_context;
         }
-        if (bump_alloc(ctx, *(const uint32_t *)((const uint8_t *)pEEType + 4), &obj)) {
+        if (bump_alloc(ctx, OBJECT_SIZE(*(const uint32_t *)((const uint8_t *)pEEType + 4)), &obj)) {
             *(const void **)obj = pEEType;
             *pResult = obj;
             return;
@@ -232,7 +255,7 @@ __wrap_RhAllocateNewArray(const void *pEEType, uint32_t numElements,
     ee_alloc_context *ctx = alloc_context;
     uint8_t *obj;
     if ((flags & ~(uint32_t)(GC_ALLOC_ZEROING_OPTIONAL | GC_ALLOC_PINNED_OBJECT_HEAP)) == 0 &&
-        numElements <= 0x7FFFFFC7) {
+        numElements <= 0x7FFFFFC7 && numElements <= MAX_BUMP_ARRAY_LENGTH) {
         if (__builtin_expect(ctx == NULL, 0)) {
             bind_alloc_context();
             ctx = alloc_context;

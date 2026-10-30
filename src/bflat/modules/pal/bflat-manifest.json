@@ -4,8 +4,14 @@
   "name": "pal",
   "description": "Deterministic OS surface, bump allocator, FP-free stdio",
   "note": "What differs between the zkVMs is not here: the guest's exit, its console and raw syscalls go to the zkvm_platform_* functions that the entry object of the platform defines (see the platform interface in docs/manifest.md), and the wraps for one platform are in its package. The accelerator arenas (ZK_ACCEL_ARENA) wrap functions of the zkVM accelerator standard; the bindings manifest of a package decides which ones.",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 60}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 60, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 60, "when": {"arch": "riscv32"}}
+  ],
   "link": {
     "wrap": [
       {
