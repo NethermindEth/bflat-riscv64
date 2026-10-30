@@ -126,6 +126,107 @@ public class ManifestTests
         Assert.Contains("Namespace.Type.Method", ex.Message, StringComparison.Ordinal);
     }
 
+    // A riscv32 platform without unwind tables, with the post-link steps of one.
+    private const string Rv32Platform = """
+        {
+          "schema": 2,
+          "name": "rv32vm",
+          "postlink": [
+            {"tool": "patch_elf", "args": ["--nop-fences", "--unsigned-muldiv"]},
+            {"tool": "flat_image", "args": ["--suffix", ".bin"]}
+          ],
+          "platform": {
+            "aliases": {"libc": "rv32vm"},
+            "base": {"os": "linux", "arch": "riscv32", "libc": "musl"},
+            "requires": ["nofp", "rhp_native", "ugc-zero"],
+            "unwind": false,
+            "linker_script": "rv32vm.ld",
+            "entry": "rv32vm_entry.o"
+          }
+        }
+        """;
+
+    private static ManifestLink Rv32Link(TempDir dir)
+    {
+        BflatManifest platform = BflatManifest.Load(dir.File("rv32vm.bflat.manifest", Rv32Platform));
+        var build = new ManifestTarget
+        {
+            Arch = "riscv32",
+            Os = "linux",
+            Libc = "rv32vm",
+            Eh = "unwind",
+            Stdlib = "dotnet",
+            Optimize = true,
+            Compiler = new HashSet<string>(StringComparer.Ordinal),
+        };
+        return ManifestLink.Create(platform, ManifestLink.LoadModules(Repo.Modules), ManifestLink.TargetFor(platform, build),
+            Array.Empty<BflatManifest>());
+    }
+
+    [Fact]
+    public void ARiscV32PlatformLinksTheRv32ObjectsOfTheModules()
+    {
+        using var dir = new TempDir();
+        ManifestLink link = Rv32Link(dir);
+
+        IEnumerable<string> objects = Enum.GetValues<ObjectGroup>().SelectMany(g => link.Objects(g)).Select(o => o.Path);
+        Assert.Contains(objects, p => p.EndsWith("/nofp/module.rv32.o", StringComparison.Ordinal));
+        Assert.Contains(objects, p => p.EndsWith("/ugc-zero/release-riscv32/uGCHeap.cpp.obj", StringComparison.Ordinal));
+        Assert.DoesNotContain(objects, p => p.EndsWith("/module.o", StringComparison.Ordinal) || p.Contains("/release/", StringComparison.Ordinal));
+        BflatManifest rhpNative = link.Manifests.Single(m => m.Name == "rhp_native");
+        Assert.Contains("RhpAssignRefRiscV32", link.Wraps(rhpNative));
+        Assert.DoesNotContain("RhpAssignRefRiscV64", link.Wraps(rhpNative));
+    }
+
+    [Fact]
+    public void APlatformWithoutUnwindTablesBuildsAsWithRemoveEh()
+    {
+        using var dir = new TempDir();
+
+        Assert.Equal("failfast", Rv32Link(dir).Target.Eh);
+    }
+
+    [Fact]
+    public void ThePostlinkStepsOfARiscV32PlatformAreRead()
+    {
+        using var dir = new TempDir();
+
+        Assert.Equal(new[] { ("patch_elf", "--nop-fences --unsigned-muldiv"), ("flat_image", "--suffix .bin") },
+            Rv32Link(dir).PostlinkSteps().Select(s => (s.Tool, string.Join(" ", s.Args))));
+    }
+
+    [Fact]
+    public void APostlinkToolMustBeBuiltIn()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("m/bflat-manifest.json", """{"schema": 2, "name": "m", "postlink": [{"tool": "objcopy"}]}""");
+
+        var ex = Assert.Throws<ManifestException>(() => BflatManifest.Load(path));
+        Assert.Contains("flat_image", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheExternalDownloadsOfUgcAreOnePerArchitecture()
+    {
+        BflatManifest ugc = ManifestLink.LoadModules(Repo.Modules)["ugc-zero"];
+
+        string Tag(string arch) => ugc.Externals
+            .Single(x => ManifestCondition.Applies(x.When, new ManifestTarget { Arch = arch, Os = "linux" })).Tag;
+        Assert.Equal("v1.0.13", Tag("riscv64"));
+        Assert.Equal("v1.0.15", Tag("riscv32"));
+    }
+
+    [Fact]
+    public void AnExternalConditionTestsOnlyTheTarget()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("m/bflat-manifest.json", """
+            {"schema": 2, "name": "m", "external": [{"repo": "https://example.org/r", "tag": "t", "release": "a.tar.gz", "dir": "d", "when": {"flag": "noos"}}]}
+            """);
+
+        Assert.Throws<ManifestException>(() => BflatManifest.Load(path));
+    }
+
     [Fact]
     public void AnUnknownKeyIsAnError()
     {

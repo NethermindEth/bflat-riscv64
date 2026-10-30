@@ -158,7 +158,7 @@ matches if one of its items matches.
 
 | Key | Values | Source |
 |-----|--------|--------|
-| `arch` | `x64`, `x86`, `arm64`, `riscv64` | `--arch`, or `base.arch` of the selected platform |
+| `arch` | `x64`, `x86`, `arm64`, `riscv64`, `riscv32` | `--arch`, or `base.arch` of the selected platform |
 | `os` | `linux`, `windows`, `uefi` | `--os`, or `base.os` of the selected platform |
 | `libc` | `glibc`, `musl`, `bionic`, `shcrt`, `none` | `--libc`, or `base.libc` of the selected platform |
 | `platform` | the `name` of a platform manifest, for example `zisk` | the selected platform. A stock target has no platform, so the key never matches. |
@@ -210,6 +210,23 @@ list item. A key that bflat does not know is an error.
 | `cflags`, `cxxflags`, `asflags` | Flags that the module adds after the common flags. A `.cpp` file gets `cflags` and `cxxflags`. |
 | `output` | The name of the object file. The default is `<stem>.o`. For example, `heap.c` gives `heap.o`. |
 | `when` | The module build compiles the source only if this condition is true. The condition can test only `arch` and `os`, because the module build does not know the guest. |
+
+The module build compiles for one architecture at a time: `build.sh modules
+riscv64` (the default) and `build.sh modules riscv32`. A module that a
+riscv32 platform links has its sources twice, each with its `arch`, and the
+riscv32 one with its own `output`, and its objects twice, each with its
+`arch`:
+
+```json
+"sources": [
+  {"file": "module.c", "when": {"arch": "riscv64"}},
+  {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+],
+"objects": [
+  {"file": "module.o", "group": "whole-archive", "order": 60, "when": {"arch": "riscv64"}},
+  {"file": "module.rv32.o", "group": "whole-archive", "order": 60, "when": {"arch": "riscv32"}}
+]
+```
 
 `build.sh` supplies the common flags: target triple, `-march`, `-mabi`,
 LTO and `-O3`. A module can add flags. A module must not set
@@ -358,7 +375,9 @@ its own `when`.
   links them as they are and changes no file. `bflat-modules check-abi`
   checks the layout when it is made. A package must also ship lp64
   objects; ld.lld refuses an lp64d object. `abi: "lp64"` records the ABI
-  of the platform.
+  of the platform. A riscv32 platform records `"ilp32"`: its layout
+  (`lib/linux/riscv32/musl`) is rv32im ilp32, and the compiler takes its
+  soft-float ABI with the TargetAbi of lp64.
 - `options` contains RyuJIT options. They are the same as `--codegenopt`.
   Write numbers in hex without `0x`, because RyuJIT reads them in this
   format. bflat and the schema reject a value with `0x`.
@@ -389,9 +408,14 @@ bflat runs the steps in sequence, after the link. Each step changes the
 output file in place: what `-o` names is the image that the zkVM runs. An
 argument can have its own `when`. If a step fails, the build fails.
 
-`tool` is the name of a tool that is **built into bflat**. The only tool is
-`patch_elf`. A package cannot add a tool and cannot run a program. If a
-package needs a new step, add the step to bflat.
+`tool` is the name of a tool that is **built into bflat**. A package cannot
+add a tool and cannot run a program. If a package needs a new step, add the
+step to bflat. The tools:
+
+| Tool | What it does |
+|------|--------------|
+| `patch_elf` | `scripts/patch_elf.py` rewrites the image in place. An ELF32 image (riscv32) takes only the passes that rewrite instruction words: `--nop-fences`, and `--unsigned-muldiv`, which moves each signed RV32M instruction of the native code into a trampoline built from unsigned ones (the linker script reserves `__signed_tramp_start` to `__signed_tramp_end`). |
+| `flat_image` | Writes `<output><suffix>`, the raw image of the output (`llvm-objcopy -O binary`), of the sections that `--section` names when it gives any, padded with zeros to a multiple of four bytes. Arguments: `--suffix <suffix>`, `--section <name>` (repeated). |
 
 ### `checks`: checks of the full image
 
@@ -450,6 +474,10 @@ module has sources but no tests, the test run fails.
 }
 ```
 
+`external` is one download or a list of them. Each can have a `when`, which,
+as for a source, can test only `arch` and `os`: ugc-zero takes the uGC
+release of each architecture.
+
 | Key | Meaning |
 |-----|---------|
 | `repo` | The repository URL. It must start with `https://`. |
@@ -457,6 +485,7 @@ module has sources but no tests, the test run fails.
 | `release` | The name of a release file. The build downloads it and extracts it into `dir`. |
 | `build` | Commands that build the files from source. The build clones the repository into `dir` and runs the commands there. |
 | `dir` | The directory that contains the files after the download. |
+| `when` | The build downloads the files only for these targets (`arch`, `os`). |
 
 Use `release` or `build`. Do not use the two together.
 
@@ -518,11 +547,12 @@ The SP1 platform, shortened:
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `aliases.libc` | no | `--libc <value>` selects this platform. Two platforms must not have the same alias. |
-| `base` | yes | The stock target that the platform uses for the sysroot, the runtime files and crt. Conditions read `base.arch`, `base.os` and `base.libc`. bflat links platforms for linux/riscv64 only. |
+| `base` | yes | The stock target that the platform uses for the sysroot, the runtime files and crt. Conditions read `base.arch`, `base.os` and `base.libc`. bflat links platforms for linux/riscv64 and linux/riscv32. |
 | `requires` | no | The modules from the layout that the guest needs. bflat uses a module only if the platform requires it. A required module must not be a platform. |
 | `flags` | no | Names that modules (and bflat) can test with `when.flag`. |
 | `linker_script` | yes | bflat gives it to the linker as `-T`. |
 | `entry` | yes | The object file that defines `_start`. bflat links it after the linker script; the platform's wraps and `link.ld` options follow it. |
+| `unwind` | no | `false`: the platform keeps no unwind tables, and bflat builds every guest as with `--remove-eh` (conditions see `eh: failfast`). The default is `true`. |
 
 The user selects a platform with its `--libc` alias:
 
@@ -629,10 +659,10 @@ the layout.
 | Command | Action |
 |---------|--------|
 | `bflat-modules check <modules-dir>` | Reads each manifest. Makes sure that the sources, the ILC files, the test files and the linker scripts exist, that each required module exists, and that the `--libc` aliases are unique. Needs no toolchain. |
-| `bflat-modules plan <modules-dir> <out-file>` | Writes the module build as shell commands (`module_begin`, `module_fetch_release`, `module_cc`, `module_cxx`, `module_as`, `module_end`). `build.sh modules` runs this command and then executes the file. `build.sh` defines the commands, so the toolchain and its flags stay in `build.sh`. |
-| `bflat-modules pack <modules-dir> <layout-modules-dir>` | Makes sure that each file in `objects`, `ilc` and `platform` exists. Copies each manifest and its files to `<layout-modules-dir>/<name>/`. A file of a different module must be a file that this module ships. `bflat.csproj` runs this command when it makes the layout. |
+| `bflat-modules plan <modules-dir> <out-file> [--arch riscv64\|riscv32]` | Writes the module build as shell commands (`module_begin`, `module_fetch_release`, `module_cc`, `module_cxx`, `module_as`, `module_end`). `build.sh modules` runs this command and then executes the file. `build.sh` defines the commands, so the toolchain and its flags stay in `build.sh`. |
+| `bflat-modules pack <modules-dir> <layout-modules-dir> [--arch <arch>,...]` | Makes sure that each file in `objects`, `ilc` and `platform` exists, except the objects whose condition names only architectures that the layout does not have (the list; default riscv64). Copies each manifest and its files to `<layout-modules-dir>/<name>/`. A file of a different module must be a file that this module ships. `bflat.csproj` runs this command when it makes the layout. |
 | `bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...] [--remove-eh] [-O0] [-v] [--compiler <capability>]` | Shows what the manifests give a guest build on a platform: the ISA, the ABI, the RyuJIT options, the defines, the feature switches, the ILC files, the post-link steps and the link command (with placeholders for the parts that bflat adds itself). It uses the same code as bflat. |
-| `bflat-modules check-abi <dir>` | Makes sure that each RISC-V object in `<dir>` (each `.o` file and each member of each `.a` file) has the lp64 soft-float ABI. `bflat.csproj` runs this command on `lib/linux/riscv64/musl` when it makes the layout. |
+| `bflat-modules check-abi <dir>` | Makes sure that each RISC-V object in `<dir>` (each `.o` file and each member of each `.a` file) has the soft-float ABI: lp64 for ELF64, ilp32 for ELF32, and not both in one directory. `bflat.csproj` runs this command on `lib/linux/riscv64/musl`, and on `lib/linux/riscv32/musl` when it has the riscv32 target, when it makes the layout. |
 
 To add a module, add a directory with a manifest and add the name of the
 module to `requires` of each platform that needs it (in the platform

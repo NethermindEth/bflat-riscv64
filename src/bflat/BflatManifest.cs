@@ -66,7 +66,7 @@ internal sealed class ManifestCondition
 
     internal static readonly Dictionary<string, string[]> AllowedValues = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
-        ["arch"] = new[] { "x64", "x86", "arm64", "riscv64" },
+        ["arch"] = new[] { "x64", "x86", "arm64", "riscv64", "riscv32" },
         ["os"] = new[] { "linux", "windows", "uefi" },
         ["libc"] = new[] { "glibc", "musl", "bionic", "shcrt", "none" },
         ["platform"] = null,
@@ -124,6 +124,10 @@ internal sealed class ManifestCondition
             throw r.Error(path, "an empty condition; leave 'when' out instead");
         return c;
     }
+
+    /// <summary>Whether the condition can hold for a target of one of <paramref name="arches"/>: it has no <c>arch</c> key, or names one of them.</summary>
+    public bool AllowsArch(IEnumerable<string> arches) =>
+        !_values.TryGetValue("arch", out string[] values) || values.Any(arches.Contains);
 
     public bool Holds(ManifestTarget t)
     {
@@ -205,6 +209,8 @@ internal sealed class ManifestItem
 
 internal sealed class ManifestExternal
 {
+    /// <summary>The module build downloads it only if this holds; like a source condition, it tests only arch and os.</summary>
+    public ManifestCondition When { get; init; }
     public string Repo { get; init; }
     public string Tag { get; init; }
     public string Release { get; init; }
@@ -222,10 +228,18 @@ internal sealed class ManifestPlatform
     public string[] Flags { get; init; } = Array.Empty<string>();
     public string LinkerScript { get; init; }
     public string Entry { get; init; }
+    /// <summary>False when the platform keeps no unwind tables: every build is as with <c>--remove-eh</c>.</summary>
+    public bool Unwind { get; init; } = true;
 }
 
 internal sealed class ManifestPostlinkStep
 {
+    /// <summary>
+    /// The tools built into bflat: patch_elf rewrites the image in place;
+    /// flat_image writes a raw image of it beside the output.
+    /// </summary>
+    internal static readonly string[] Tools = { "patch_elf", "flat_image" };
+
     public string Tool { get; init; }
     public List<ManifestItem> Args { get; } = new List<ManifestItem>();
     public ManifestCondition When { get; init; }
@@ -293,7 +307,7 @@ internal sealed class BflatManifest
     public bool HasCodegen => IsaDisable.Count > 0 || IsaEnable.Count > 0 || Abi != null || CodegenOptions.Count > 0;
 
     public List<ManifestTest> Tests { get; } = new List<ManifestTest>();
-    public ManifestExternal External { get; set; }
+    public List<ManifestExternal> Externals { get; } = new List<ManifestExternal>();
     public ManifestPlatform Platform { get; set; }
 
     /// <summary>
@@ -424,8 +438,14 @@ internal sealed class BflatManifest
         }
         if (root.TryGetProperty("tests", out JsonElement tests))
             r.ForEach(tests, "$.tests", (e, p) => m.Tests.Add(ReadTest(r, e, p)));
+        // One download, or a list of them, each for the targets its condition names.
         if (root.TryGetProperty("external", out JsonElement external))
-            m.External = ReadExternal(r, external, "$.external");
+        {
+            if (external.ValueKind == JsonValueKind.Array)
+                r.ForEach(external, "$.external", (e, p) => m.Externals.Add(ReadExternal(r, e, p)));
+            else
+                m.Externals.Add(ReadExternal(r, external, "$.external"));
+        }
         if (root.TryGetProperty("platform", out JsonElement platform))
             m.Platform = ReadPlatform(r, platform, "$.platform");
 
@@ -574,8 +594,8 @@ internal sealed class BflatManifest
         if (codegen.TryGetProperty("abi", out JsonElement abi))
         {
             string a = r.String(abi, "$.codegen.abi");
-            if (a != "lp64" && a != "lp64d")
-                throw r.Error("$.codegen.abi", $"'{a}' is not one of: lp64, lp64d");
+            if (a != "lp64" && a != "lp64d" && a != "ilp32")
+                throw r.Error("$.codegen.abi", $"'{a}' is not one of: lp64, lp64d, ilp32");
             m.Abi = a;
         }
         if (codegen.TryGetProperty("options", out JsonElement options))
@@ -606,8 +626,8 @@ internal sealed class BflatManifest
     {
         r.CheckKeys(e, path, "tool", "args", "when", "note");
         string tool = r.String(r.Required(e, "tool", path), path + ".tool");
-        if (tool != "patch_elf")
-            throw r.Error(path + ".tool", $"'{tool}' is not a tool built into bflat (patch_elf)");
+        if (Array.IndexOf(ManifestPostlinkStep.Tools, tool) < 0)
+            throw r.Error(path + ".tool", $"'{tool}' is not a tool built into bflat ({string.Join(", ", ManifestPostlinkStep.Tools)})");
         var step = new ManifestPostlinkStep
         {
             Tool = tool,
@@ -647,7 +667,10 @@ internal sealed class BflatManifest
 
     private static ManifestExternal ReadExternal(ManifestReader r, JsonElement e, string path)
     {
-        r.CheckKeys(e, path, "repo", "tag", "release", "build", "dir", "note");
+        r.CheckKeys(e, path, "repo", "tag", "release", "build", "dir", "when", "note");
+        ManifestCondition when = e.TryGetProperty("when", out JsonElement w) ? ManifestCondition.Read(r, w, path + ".when", false) : null;
+        if (when != null && when.Keys.Any(k => k != "arch" && k != "os"))
+            throw r.Error(path + ".when", "an external condition may test only 'arch' and 'os': the module build knows no guest");
         string repo = r.String(r.Required(e, "repo", path), path + ".repo");
         if (!repo.StartsWith("https://", StringComparison.Ordinal))
             throw r.Error(path + ".repo", "the repository URL must start with https://");
@@ -657,6 +680,7 @@ internal sealed class BflatManifest
             throw r.Error(path, "give exactly one of 'release' and 'build'");
         return new ManifestExternal
         {
+            When = when,
             Repo = repo,
             Tag = r.String(r.Required(e, "tag", path), path + ".tag"),
             Release = hasRelease ? r.String(release, path + ".release") : null,
@@ -667,7 +691,7 @@ internal sealed class BflatManifest
 
     private static ManifestPlatform ReadPlatform(ManifestReader r, JsonElement e, string path)
     {
-        r.CheckKeys(e, path, "aliases", "base", "requires", "flags", "linker_script", "entry", "note");
+        r.CheckKeys(e, path, "aliases", "base", "requires", "flags", "linker_script", "entry", "unwind", "note");
         string alias = null;
         if (e.TryGetProperty("aliases", out JsonElement aliases))
         {
@@ -687,6 +711,12 @@ internal sealed class BflatManifest
         for (int i = 0; i < requires.Length; i++)
             r.CheckName(requires[i], $"{path}.requires[{i}]");
         string[] flags = r.OptStrings(e, "flags", path);
+        bool unwind = true;
+        if (e.TryGetProperty("unwind", out JsonElement u))
+        {
+            r.ExpectKind(u, JsonValueKind.True, JsonValueKind.False, path + ".unwind");
+            unwind = u.GetBoolean();
+        }
         return new ManifestPlatform
         {
             LibcAlias = alias,
@@ -697,6 +727,7 @@ internal sealed class BflatManifest
             Flags = flags,
             LinkerScript = r.RelPath(r.Required(e, "linker_script", path), path + ".linker_script"),
             Entry = r.RelPath(r.Required(e, "entry", path), path + ".entry"),
+            Unwind = unwind,
         };
     }
 
@@ -961,7 +992,8 @@ internal sealed class ManifestLink
         Libc = platform.Platform.BaseLibc,
         Platform = platform.Name,
         Flags = new HashSet<string>(platform.Platform.Flags, StringComparer.Ordinal),
-        Eh = build.Eh,
+        // A platform without unwind tables builds as with --remove-eh.
+        Eh = platform.Platform.Unwind ? build.Eh : "failfast",
         Stdlib = build.Stdlib,
         Optimize = build.Optimize,
         Verbose = build.Verbose,
@@ -977,8 +1009,8 @@ internal sealed class ManifestLink
         ManifestTarget target, IEnumerable<BflatManifest> packages)
     {
         var link = new ManifestLink { Platform = platform, Target = target };
-        if (platform.Platform.BaseArch != "riscv64" || platform.Platform.BaseOs != "linux")
-            throw new ManifestException($"{platform.Path}: this bflat links platforms for linux/riscv64 only");
+        if (platform.Platform.BaseArch is not ("riscv64" or "riscv32") || platform.Platform.BaseOs != "linux")
+            throw new ManifestException($"{platform.Path}: this bflat links platforms for linux/riscv64 and linux/riscv32 only");
         link.Add(platform);
         foreach (string name in platform.Platform.Requires)
         {

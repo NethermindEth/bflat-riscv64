@@ -76,7 +76,19 @@
       }
     },
     "external": {
-      "$ref": "#/$defs/external"
+      "description": "One download, or a list of downloads, each with its own condition.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/external"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/external"
+          }
+        }
+      ]
     },
     "platform": {
       "$ref": "#/$defs/platform"
@@ -114,7 +126,8 @@
         "x64",
         "x86",
         "arm64",
-        "riscv64"
+        "riscv64",
+        "riscv32"
       ]
     },
     "os": {
@@ -578,7 +591,8 @@
         "abi": {
           "enum": [
             "lp64",
-            "lp64d"
+            "lp64d",
+            "ilp32"
           ]
         },
         "options": {
@@ -662,7 +676,8 @@
         "tool": {
           "description": "A tool built into bflat. Packages cannot add tools.",
           "enum": [
-            "patch_elf"
+            "patch_elf",
+            "flat_image"
           ]
         },
         "args": {
@@ -773,6 +788,10 @@
         "dir": {
           "$ref": "#/$defs/path"
         },
+        "when": {
+          "description": "The module build downloads it only for these targets. Like a source condition, it tests only arch and os.",
+          "$ref": "#/$defs/buildCondition"
+        },
         "note": {
           "$ref": "#/$defs/note"
         }
@@ -858,6 +877,10 @@
         },
         "entry": {
           "$ref": "#/$defs/path"
+        },
+        "unwind": {
+          "description": "false: the platform keeps no unwind tables, and every build is as with --remove-eh.",
+          "type": "boolean"
         },
         "note": {
           "$ref": "#/$defs/note"
