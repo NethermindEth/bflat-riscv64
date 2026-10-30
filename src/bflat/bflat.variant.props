@@ -17,7 +17,15 @@
          soft-float (lp64/rv64im) series meant for dotnet/runtime with the
          zkVM code-quality patches on top. The release must be signed
          (docs/signing.md). -->
-    <RuntimeReleaseTag>11.0.100-upstream-perf.r400</RuntimeReleaseTag>
+    <!-- -p:BflatTargetRiscV32=true builds the riscv32 target too (the
+         riscv32 JIT, runtime and musl that the runtime-riscv32 job of
+         dotnet-riscv makes), from the release that has it: until the riscv32
+         target is in the releases of dotnet-riscv main, the test release of
+         its feature/riscv32-clean branch. The rv32 modules must be built
+         (build.sh modules riscv32). -->
+    <BflatTargetRiscV32 Condition="'$(BflatTargetRiscV32)' == ''">false</BflatTargetRiscV32>
+    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == '' and '$(BflatTargetRiscV32)' == 'true'">11.0.100-upstream-perf.riscv32</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == ''">11.0.100-upstream-perf.r400</RuntimeReleaseTag>
 
     <!-- Whether the release has the linux-x64 target of bflat (the x64 JIT,
          runtime and glibc sysroot that the runtime-x64 job of dotnet-riscv

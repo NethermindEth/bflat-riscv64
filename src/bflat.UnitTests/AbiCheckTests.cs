@@ -44,6 +44,18 @@ public class AbiCheckTests
 
     private static byte[] RiscV(uint flags) => Elf(243, flags);
 
+    /// <summary>The 52-byte header of an ELF32 little-endian RISC-V relocatable object (riscv32).</summary>
+    private static byte[] RiscV32(uint flags)
+    {
+        var elf = new byte[52];
+        elf[0] = 0x7f; elf[1] = (byte)'E'; elf[2] = (byte)'L'; elf[3] = (byte)'F';
+        elf[4] = 1; elf[5] = 1; elf[6] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(0x10), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(0x12), 243);
+        BinaryPrimitives.WriteUInt32LittleEndian(elf.AsSpan(0x24), flags);
+        return elf;
+    }
+
     /// <summary>An ar archive with a GNU long-name table, as GNU ar writes it.</summary>
     private static byte[] Archive(params (string Name, byte[] Data)[] members)
     {
@@ -109,6 +121,35 @@ public class AbiCheckTests
             ("ok.o", RiscV(Lp64)), ("a_long_member_name.o", RiscV(Lp64d)), ("bitcode.o", Encoding.ASCII.GetBytes("BC\xc0\xde"))));
 
         Assert.Equal(2, AbiCheck.CheckDirectory(dir.Path));
+    }
+
+    [Fact]
+    public void AnIlp32LayoutPasses()
+    {
+        using var dir = new TempDir();
+        File.WriteAllBytes(Path.Combine(dir.Path, "crt1.o"), RiscV32(Lp64));
+        File.WriteAllBytes(Path.Combine(dir.Path, "libc.a"), Archive(("a.lo", RiscV32(Lp64)), ("b.lo", RiscV32(Lp64))));
+
+        Assert.Equal(0, AbiCheck.CheckDirectory(dir.Path));
+    }
+
+    [Fact]
+    public void AnIlp32dObjectFails()
+    {
+        using var dir = new TempDir();
+        File.WriteAllBytes(Path.Combine(dir.Path, "crt1.o"), RiscV32(Lp64d));
+
+        Assert.Equal(1, AbiCheck.CheckDirectory(dir.Path));
+    }
+
+    [Fact]
+    public void Lp64AndIlp32ObjectsInOneLayoutFail()
+    {
+        using var dir = new TempDir();
+        File.WriteAllBytes(Path.Combine(dir.Path, "crt1.o"), RiscV32(Lp64));
+        File.WriteAllBytes(Path.Combine(dir.Path, "libc.a"), Archive(("a.lo", RiscV(Lp64))));
+
+        Assert.Equal(1, AbiCheck.CheckDirectory(dir.Path));
     }
 
     [Fact]

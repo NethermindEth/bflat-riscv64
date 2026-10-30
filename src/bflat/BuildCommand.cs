@@ -70,7 +70,7 @@ internal partial class BuildCommand : CommandBase
 
     private static Option<string> TargetArchitectureOption = new Option<string>("--arch", "Target architecture")
     {
-        ArgumentHelpName = "x86|x64|arm64|riscv64"
+        ArgumentHelpName = "x86|x64|arm64|riscv64|riscv32"
     };
     private static Option<string> TargetOSOption = new Option<string>("--os", "Target operating system")
     {
@@ -169,6 +169,20 @@ internal partial class BuildCommand : CommandBase
     /// manifest ships in its --extlib package.
     /// </summary>
     private static readonly string[] StockLibcs = { "glibc", "musl", "bionic", "shcrt", "none" };
+
+    /// <summary>
+    /// RiscV32, resolved by name: only compiler packages built with the
+    /// riscv32 target have it (the dotnet-riscv riscv32 fixups), and bflat
+    /// still builds against those that do not.
+    /// </summary>
+    internal static readonly TargetArchitecture? RiscV32 =
+        Enum.TryParse("RiscV32", out TargetArchitecture riscV32) ? riscV32 : null;
+
+    internal static bool IsRiscV32(TargetArchitecture architecture) => architecture == RiscV32;
+
+    /// <summary>riscv64 or riscv32: the RISC-V targets, whose layouts are soft-float.</summary>
+    internal static bool IsRiscV(TargetArchitecture architecture) =>
+        architecture == TargetArchitecture.RiscV64 || IsRiscV32(architecture);
 
     /// <summary>
     /// Lists the wrapped symbols that name a managed method the scanner

@@ -236,12 +236,17 @@ internal partial class BuildCommand
                     ldArgs.Append("-latomic ");
                     ldArgs.Append("-leventpipe-disabled ");
                     ldArgs.Append("-laotminipal -lstandalonegc-disabled ");
-                    ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native -lSystem.Security.Cryptography.Native.OpenSsl ");
+                    ldArgs.Append("-lstdc++compat -lRuntime.WorkstationGC -lSystem.IO.Compression.Native ");
+                    // The riscv32 runtime is built without OpenSSL and ICU
+                    // (dotnet-riscv's 12_build_runtime_riscv32.sh), so its layout
+                    // has neither library; every other layout has both.
+                    if (!IsRiscV32(targetArchitecture))
+                        ldArgs.Append("-lSystem.Security.Cryptography.Native.OpenSsl ");
                     // The vectorized sort of the GC, which the x64 runtime
                     // calls (as Microsoft.NETCore.Native.Unix.targets links it).
                     if (targetArchitecture == TargetArchitecture.X64)
                         ldArgs.Append("-lRuntime.VxsortEnabled ");
-                    if (libc != "bionic")
+                    if (libc != "bionic" && !IsRiscV32(targetArchitecture))
                         ldArgs.Append("-lSystem.Globalization.Native ");
                 }
                 else if (stdlib == StandardLibType.Zero)
@@ -282,7 +287,12 @@ internal partial class BuildCommand
                  * does with a double. libgcc.a comes last because these are
                  * the leaves - nothing it pulls in refers back to libc. */
                 if (softFloat)
-                    ldArgs.Append($"\"{firstLib}/libgcc.a\" ");
+                {
+                    // There is no riscv32 GCC: the riscv32 layout has the
+                    // compiler-rt builtins (dotnet-riscv's build_builtins_rv32im.sh).
+                    string builtins = IsRiscV32(targetArchitecture) ? "libclang_rt.builtins-riscv32.a" : "libgcc.a";
+                    ldArgs.Append($"\"{firstLib}/{builtins}\" ");
+                }
             }
 
             if (libc == "bionic")
@@ -394,6 +404,18 @@ internal partial class BuildCommand
             {
                 foreach ((string tool, List<string> toolArgs) in platformLink.PostlinkSteps())
                 {
+                    if (tool == "flat_image")
+                    {
+                        int imageExitCode = WriteFlatImage(toolArgs, printCommands);
+                        if (imageExitCode != 0)
+                        {
+                            Console.Error.WriteLine($"error: {tool} {string.Join(" ", toolArgs)} failed for the {platform.Name} image");
+                            exitCode = imageExitCode;
+                            break;
+                        }
+                        continue;
+                    }
+
                     string patchedPath = outputFilePath + ".postlink";
                     string joinedArgs = string.Join(" ", toolArgs);
                     int patchExitCode = RunCommand(patchElfPath,
@@ -466,6 +488,52 @@ internal partial class BuildCommand
             }
 
             return exitCode;
+        }
+
+        /// <summary>
+        /// The flat_image post-link tool: writes <c>&lt;output&gt;&lt;suffix&gt;</c>, the raw
+        /// image of the output (llvm-objcopy -O binary), of the named sections
+        /// only when <c>--section</c> gives any, padded with zeros to a multiple
+        /// of four bytes, as a zkVM that loads it word by word reads it. The
+        /// arguments: <c>--suffix &lt;suffix&gt;</c> and <c>--section &lt;name&gt;</c>, which
+        /// can repeat.
+        /// </summary>
+        private int WriteFlatImage(List<string> toolArgs, bool printCommands)
+        {
+            string suffix = null;
+            var sections = new StringBuilder();
+            for (int i = 0; i < toolArgs.Count; i++)
+            {
+                if (toolArgs[i] == "--suffix" && i + 1 < toolArgs.Count)
+                    suffix = toolArgs[++i];
+                else if (toolArgs[i] == "--section" && i + 1 < toolArgs.Count)
+                    sections.Append($"-j {toolArgs[++i]} ");
+                else
+                {
+                    Console.Error.WriteLine($"error: flat_image: unknown argument '{toolArgs[i]}'");
+                    return 1;
+                }
+            }
+            if (string.IsNullOrEmpty(suffix) || suffix.Contains('/') || suffix.Contains('\\'))
+            {
+                Console.Error.WriteLine("error: flat_image needs --suffix <suffix>, a file name suffix");
+                return 1;
+            }
+
+            string objcopy = Environment.GetEnvironmentVariable("BFLAT_OBJCOPY")
+                ?? Path.Combine(homePath, "bin", "llvm-objcopy" + (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : ""));
+            string imagePath = outputFilePath + suffix;
+            int exitCode = RunCommand(objcopy, $"-O binary {sections}\"{outputFilePath}\" \"{imagePath}\"", printCommands);
+            if (exitCode != 0)
+                return exitCode;
+
+            long length = new FileInfo(imagePath).Length;
+            if (length % 4 != 0)
+            {
+                using FileStream image = new FileStream(imagePath, FileMode.Append);
+                image.Write(new byte[4 - length % 4]);
+            }
+            return 0;
         }
 
         private static int RunCommand(string command, string args, bool print)
