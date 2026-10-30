@@ -43,6 +43,7 @@ namespace System.CommandLine
                     "arm64" => TargetArchitecture.ARM64,
                     "loongarch64" => TargetArchitecture.LoongArch64,
                     "riscv64" => TargetArchitecture.RiscV64,
+                    "riscv32" when BuildCommand.RiscV32 != null => BuildCommand.RiscV32.Value,
                     _ => throw new CommandLineException($"Target architecture '{token}' is not supported")
                 };
             }
@@ -82,6 +83,12 @@ namespace System.CommandLine
                 instructionSetSupportBuilder.AddSupportedInstructionSet("d");
                 instructionSetSupportBuilder.AddSupportedInstructionSet("c");
                 instructionSetSupportBuilder.AddSupportedInstructionSet("a");
+            }
+            else if (BuildCommand.IsRiscV32(targetArchitecture))
+            {
+                // The rv32im baseline: the layout and the guests have no C, A,
+                // F or D, so none is added.
+                instructionSetSupportBuilder.AddSupportedInstructionSet("base");
             }
 
             // Whether to allow optimistically expanding the instruction sets beyond what was specified.

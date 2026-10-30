@@ -94,13 +94,15 @@ internal partial class BuildCommand
             // runtime, musl, libgcc) is built rv64im for the lp64 soft-float ABI,
             // so a riscv64 target has no F and D: without them ilc and the JIT
             // use the lp64 calling convention and soft-float lowering, and ilc
-            // writes the lp64 float-ABI marker that the layout has. A platform
+            // writes the lp64 float-ABI marker that the layout has. riscv32 is
+            // the same with rv32im and ilp32, which ilc models with the riscv64
+            // instruction sets. A platform
             // gives the rest of its instruction set (codegen.isa): a zkVM guest
             // also drops C and A, which stops compressed and atomic emission
             // through the same mechanism as the EnableRiscV64* options. Only the
             // extensions that this compiler package models can be named (.NET 10
             // knows no Zbs/Zicond), so each one is probed.
-            if (targetArchitecture == TargetArchitecture.RiscV64)
+            if (IsRiscV(targetArchitecture))
             {
                 string targetIsa = "-f,-d";
                 if (platformLink != null && Environment.GetEnvironmentVariable("BFLAT_NO_ZK_ISA_REDUCTION") != "1")
@@ -121,9 +123,12 @@ internal partial class BuildCommand
             // the compiler takes the lp64 calling convention, the JIT flag and
             // the ELF float-ABI marker from TargetAbi. A riscv64 target without F
             // or D is lp64; the compiler refuses lp64 with F or D.
-            softFloat = targetArchitecture == TargetArchitecture.RiscV64
-                && (!instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_F)
-                    || !instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_D));
+            // riscv32 has the ilp32 soft-float ABI only, which the compiler models
+            // with the TargetAbi of riscv64's lp64.
+            softFloat = IsRiscV32(targetArchitecture)
+                || (targetArchitecture == TargetArchitecture.RiscV64
+                    && (!instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_F)
+                        || !instructionSetSupport.IsInstructionSetSupported(Internal.JitInterface.InstructionSet.RiscV64_D)));
 
             var simdVectorLength = instructionSetSupport.GetVectorTSimdVector();
             var targetAbi = softFloat ? TargetAbi.NativeAotRiscV64SoftFloat : TargetAbi.NativeAot;
@@ -741,6 +746,7 @@ internal partial class BuildCommand
                     TargetArchitecture.X64 => "x64",
                     TargetArchitecture.X86 => "x86",
                     TargetArchitecture.RiscV64 => "riscv64",
+                    _ when IsRiscV32(targetArchitecture) => "riscv32",
                     _ => throw new Exception(targetArchitecture.ToString()),
                 };
                 currentLibPath = Path.Combine(currentLibPath, archPart);
@@ -912,7 +918,7 @@ internal partial class BuildCommand
             // aligned gets an inline alignment test with a wide fast path and a
             // byte-wise slow path. 0 unless the platform asks for 1. A JIT built without
             // the fixups ignores the unknown knobs.
-            if (targetArchitecture == TargetArchitecture.RiscV64)
+            if (IsRiscV(targetArchitecture))
             {
                 bool noUnaligned = result.GetValueForOption(NoUnalignedAccessOption)
                     || platformLink?.CodegenOption("JitNoUnalignedAccess") == "1";

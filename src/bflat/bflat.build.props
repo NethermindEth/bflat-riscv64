@@ -58,5 +58,14 @@
       <Lib>musl</Lib>
       <Arch>riscv64</Arch>
     </SupportedTarget>
+    <!-- The riscv32 (RV32IM ilp32) target of the zkVM platforms that are
+         riscv32, from the runtime-riscv32 job of dotnet-riscv: only a release
+         that has its assets (see BflatTargetRiscV32 in bflat.variant.props). -->
+    <SupportedTarget Condition="'$(BflatTargetRiscV32)' == 'true'" Include="linux-musl-riscv32">
+      <LibPath>linux\riscv32\musl</LibPath>
+      <Os>linux</Os>
+      <Lib>musl</Lib>
+      <Arch>riscv32</Arch>
+    </SupportedTarget>
   </ItemGroup>
 </Project>

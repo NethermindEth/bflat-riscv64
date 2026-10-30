@@ -19,9 +19,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-// The float-ABI check of the riscv64 layout. The layout (the dotnet-riscv
-// runtime, musl, libgcc, libatomic) is built rv64im for the lp64 soft-float
-// ABI, and bflat links it as it is: ld.lld refuses to mix objects with
+// The float-ABI check of the RISC-V layouts. The riscv64 layout (the
+// dotnet-riscv runtime, musl, libgcc, libatomic) is built rv64im for the
+// lp64 soft-float ABI, the riscv32 one rv32im for ilp32, and bflat links
+// them as they are: ld.lld refuses to mix objects with
 // different float ABIs. This check finds a wrong file when the layout is
 // made, not in the first guest build.
 //
@@ -31,11 +32,14 @@ using System.Text;
 internal static class AbiCheck
 {
     private const int ElfMachineOffset = 0x12;
-    private const int ElfFlagsOffset = 0x30;
+    // e_flags: after the 64-bit e_entry, e_phoff and e_shoff of ELF64, or
+    // their 32-bit forms in ELF32 (riscv32).
+    private const int Elf64FlagsOffset = 0x30;
+    private const int Elf32FlagsOffset = 0x24;
     private const ushort EmRiscV = 243;
     private const uint EfRiscVFloatAbi = 0x6;
 
-    private static readonly string[] AbiNames = { "lp64 (soft)", "lp64f (single)", "lp64d (double)", "lp64q (quad)" };
+    private static readonly string[] FloatAbis = { "soft", "single", "double", "quad" };
 
     /// <summary>Returns the number of files with a float ABI that is not soft, and prints each one.</summary>
     public static int CheckDirectory(string dir)
@@ -45,40 +49,48 @@ internal static class AbiCheck
 
         int objects = 0;
         var wrong = new List<string>();
+        var classes = new HashSet<string>(StringComparer.Ordinal);
         foreach (string path in Directory.EnumerateFiles(dir))
         {
             if (path.EndsWith(".o", StringComparison.Ordinal))
-                CheckObject(File.ReadAllBytes(path), Path.GetFileName(path), wrong, ref objects);
+                CheckObject(File.ReadAllBytes(path), Path.GetFileName(path), wrong, classes, ref objects);
             else if (path.EndsWith(".a", StringComparison.Ordinal))
-                CheckArchive(path, wrong, ref objects);
+                CheckArchive(path, wrong, classes, ref objects);
         }
+
+        // One layout directory is one target: lld does not link ELF32 with ELF64.
+        if (classes.Count > 1)
+            wrong.Add($"{dir}: has both lp64 and ilp32 objects");
 
         foreach (string w in wrong)
             Console.Error.WriteLine($"bflat-modules: {w}");
         if (wrong.Count == 0)
-            Console.WriteLine($"{dir}: {objects} RISC-V objects, all lp64 (soft-float)");
+            Console.WriteLine($"{dir}: {objects} RISC-V objects, all {string.Join("", classes)} (soft-float)");
         return wrong.Count;
     }
 
-    private static void CheckObject(ReadOnlySpan<byte> elf, string name, List<string> wrong, ref int objects)
+    private static void CheckObject(ReadOnlySpan<byte> elf, string name, List<string> wrong, HashSet<string> classes, ref int objects)
     {
-        // ELF64, little-endian, RISC-V.
-        if (elf.Length < ElfFlagsOffset + 4
+        // ELF64 (riscv64, lp64) or ELF32 (riscv32, ilp32), little-endian, RISC-V.
+        if (elf.Length < Elf64FlagsOffset + 4
             || elf[0] != 0x7f || elf[1] != (byte)'E' || elf[2] != (byte)'L' || elf[3] != (byte)'F'
-            || elf[4] != 2 || elf[5] != 1
+            || (elf[4] != 1 && elf[4] != 2) || elf[5] != 1
             || BitConverter.ToUInt16(elf.Slice(ElfMachineOffset, 2)) != EmRiscV)
             return;
 
         objects++;
-        uint abi = (BitConverter.ToUInt32(elf.Slice(ElfFlagsOffset, 4)) & EfRiscVFloatAbi) >> 1;
+        string abiName = elf[4] == 2 ? "lp64" : "ilp32";
+        classes.Add(abiName);
+        int flagsOffset = elf[4] == 2 ? Elf64FlagsOffset : Elf32FlagsOffset;
+        uint abi = (BitConverter.ToUInt32(elf.Slice(flagsOffset, 4)) & EfRiscVFloatAbi) >> 1;
         if (abi != 0)
-            wrong.Add($"{name}: the float ABI is {AbiNames[abi]}, not lp64 (soft)");
+            wrong.Add($"{name}: the float ABI is {abiName} {FloatAbis[abi]}, not {abiName} soft");
     }
 
     // The common ar format: "!<arch>\n", then for each member a 60-byte
     // header (the size is decimal text at bytes 48..57) and the data, padded
     // to an even offset. GNU long names are in the "//" member.
-    private static void CheckArchive(string path, List<string> wrong, ref int objects)
+    private static void CheckArchive(string path, List<string> wrong, HashSet<string> classes, ref int objects)
     {
         byte[] ar = File.ReadAllBytes(path);
         if (ar.Length < 8 || Encoding.ASCII.GetString(ar, 0, 8) != "!<arch>\n")
@@ -97,7 +109,7 @@ internal static class AbiCheck
             if (id == "//")
                 longNames = Encoding.ASCII.GetString(ar, data, size);
             else if (id != "/" && id != "/SYM64/")
-                CheckObject(ar.AsSpan(data, size), $"{Path.GetFileName(path)}({MemberName(id, longNames)})", wrong, ref objects);
+                CheckObject(ar.AsSpan(data, size), $"{Path.GetFileName(path)}({MemberName(id, longNames)})", wrong, classes, ref objects);
 
             pos = data + size + (size & 1);
         }

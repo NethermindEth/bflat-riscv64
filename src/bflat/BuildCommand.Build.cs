@@ -188,6 +188,8 @@ internal partial class BuildCommand
                     "x64" => TargetArchitecture.X64,
                     "arm64" => TargetArchitecture.ARM64,
                     "riscv64" => TargetArchitecture.RiscV64,
+                    "riscv32" when RiscV32 != null => RiscV32.Value,
+                    "riscv32" => throw new Exception("Target architecture 'riscv32' needs a compiler package with the riscv32 target"),
                     "x86" => TargetArchitecture.X86,
                     _ => throw new Exception($"Target architecture '{targetArchitectureStr}' is not supported"),
                 };
@@ -242,6 +244,7 @@ internal partial class BuildCommand
             TargetArchitecture.X86     => "x86",
             TargetArchitecture.ARM64   => "arm64",
             TargetArchitecture.RiscV64 => "riscv64",
+            _ when IsRiscV32(arch) => "riscv32",
             _ => throw new Exception($"Unsupported architecture: {arch}")
         };
 

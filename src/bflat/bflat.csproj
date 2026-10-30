@@ -47,6 +47,7 @@
          and x64 for the linux-x64 target. -->
     <HostCompilerArtifact Include="bflat-compiler-native-$(CompilerHost)" />
     <HostCompilerArtifact Include="bflat-compiler-native-x64-$(CompilerHost)" Condition="'$(BflatTargetLinuxX64)' == 'true'" />
+    <HostCompilerArtifact Include="bflat-compiler-native-riscv32-$(CompilerHost)" Condition="'$(BflatTargetRiscV32)' == 'true'" />
 
     <RuntimeArtifact Include="@(HostCompilerArtifact)" />
     <RuntimeArtifact Include="@(SupportedTarget->'bflat-libs-%(Identity)')" />
@@ -114,25 +115,36 @@
     <!-- The native modules: bflat-modules reads each module's
          bflat-manifest.json and copies it, with the files it names, to
          lib/modules/<name>/ (see docs/manifest.md). -->
-    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; pack &quot;$(MSBuildThisFileDirectory)modules&quot; &quot;$(OutputPath)lib/modules&quot;"
+    <PropertyGroup>
+      <_ModuleArches>riscv64</_ModuleArches>
+      <_ModuleArches Condition="'$(BflatTargetRiscV32)' == 'true'">riscv64,riscv32</_ModuleArches>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; pack &quot;$(MSBuildThisFileDirectory)modules&quot; &quot;$(OutputPath)lib/modules&quot; --arch $(_ModuleArches)"
           EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)bflat-manifest.schema.json"
           DestinationFolder="$(OutputPath)" />
+
+    <!-- The musl layouts of the platforms: riscv64, and riscv32 when it is
+         built. -->
+    <ItemGroup>
+      <_PlatformMuslDir Include="$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl'))" />
+      <_PlatformMuslDir Include="$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv32', 'musl'))"
+                        Condition="'$(BflatTargetRiscV32)' == 'true'" />
+    </ItemGroup>
 
     <!-- crt1 for the platforms: musl's crt1.o with _start/_start_c renamed,
          so that the platform entry point defines _start. -->
     <PropertyGroup>
       <_LlvmObjcopy>llvm-objcopy</_LlvmObjcopy>
-      <_MuslCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1.o'))</_MuslCrt1>
-      <_PlatformCrt1>$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl', 'crt1-platform.o'))</_PlatformCrt1>
     </PropertyGroup>
-    <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;$(_MuslCrt1)&quot; &quot;$(_PlatformCrt1)&quot;"
+    <Exec Command="&quot;$(_LlvmObjcopy)&quot; --redefine-sym _start_c=_star2_c --redefine-sym _start=_star2 &quot;%(_PlatformMuslDir.Identity)/crt1.o&quot; &quot;%(_PlatformMuslDir.Identity)/crt1-platform.o&quot;"
           ConsoleToMSBuild="true" />
 
-    <!-- The riscv64 files are lp64 (soft-float): bflat links them as they
-         are, and ld.lld refuses to mix float ABIs. A release with another
-         ABI fails here, not in the first guest build. -->
-    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; check-abi &quot;$([MSBuild]::NormalizePath($(OutputPath), 'lib', 'linux', 'riscv64', 'musl'))&quot;"
+    <!-- The riscv64 files are lp64 (soft-float), the riscv32 ones ilp32:
+         bflat links them as they are, and ld.lld refuses to mix float ABIs.
+         A release with another ABI fails here, not in the first guest
+         build. -->
+    <Exec Command="&quot;$(_DotnetHost)&quot; &quot;@(_BflatModulesTool)&quot; check-abi &quot;%(_PlatformMuslDir.Identity)&quot;"
           EnvironmentVariables="DOTNET_ROLL_FORWARD=LatestMajor" />
 
     <!-- patch-elf script -->
