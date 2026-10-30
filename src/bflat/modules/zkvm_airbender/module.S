@@ -32,6 +32,11 @@ argv_vec:
     .word app_str
     .word 0
 
+/* Where a jump to address 0 goes once the program runs; see _start. */
+    .balign 4
+zero_jump_target:
+    .word zero_jump_unset
+
 .section .text.init
 .global _start
     .cfi_sections .eh_frame
@@ -39,6 +44,12 @@ _start:
     .cfi_startproc
     .cfi_def_cfa sp, 0
     .cfi_undefined ra
+    /* Every register starts zeroed, so sp is zero only at reset. Running code
+     * reaches address 0 only through a jump to an empty code pointer, which
+     * goes on to airbender_set_zero_jump_target's target with every register
+     * as the jump left it: a dispatch table that starts zeroed, as bump
+     * allocated memory does, needs no fill and no test for an empty entry. */
+    bnez    sp, zero_jump
     .option push
     .option norelax
     la      gp, _global_pointer
@@ -91,3 +102,22 @@ _start:
 5:  j       5b               # unreachable: noos_start_main never returns
     .cfi_endproc
     .size   _start, .-_start
+
+zero_jump:
+    lui     t0, %hi(zero_jump_target)
+    lw      t0, %lo(zero_jump_target)(t0)
+    jr      t0
+
+/* A jump to address 0 before any target is set is a fault. */
+zero_jump_unset:
+    unimp
+
+/* void airbender_set_zero_jump_target(void *target) */
+.section .text
+.global airbender_set_zero_jump_target
+.type   airbender_set_zero_jump_target, @function
+airbender_set_zero_jump_target:
+    lui     t0, %hi(zero_jump_target)
+    sw      a0, %lo(zero_jump_target)(t0)
+    ret
+.size   airbender_set_zero_jump_target, .-airbender_set_zero_jump_target
