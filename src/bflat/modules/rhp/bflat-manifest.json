@@ -4,8 +4,14 @@
   "name": "rhp",
   "description": "Runtime helper replacements: P/Invoke frames, allocation fast paths, console, EH policy",
   "note": "What is NOT wrapped anymore, and why the originals work on .NET 10 and later with uGC alloc-context budgets: the allocation helpers (upstream riscv64 AllocFast.S and GcAllocInternal; only their bump fast paths are wrapped, to skip the TLS lookup), thread statics (a plain TLS field and managed jagged arrays), the Lock family including DeadlockAwareAcquire (a truthful IsHeldByCurrentThread breaks recursive cctor cycles), CheckCastAny, the cgroup initializers, GetDefaultLocaleName, and similar.",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 30}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 30, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 30, "when": {"arch": "riscv32"}}
+  ],
   "link": {
     "wrap": [
       {

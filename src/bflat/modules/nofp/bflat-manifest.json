@@ -4,8 +4,14 @@
   "name": "nofp",
   "description": "FP trap stubs and the libm wrap surface for FPU-less guests",
   "note": "Only the zkVM platforms link this module. Its object has only __wrap_* stubs, so a link without the wraps would not use it.",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "early", "order": 10}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "early", "order": 10, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "early", "order": 10, "when": {"arch": "riscv32"}}
+  ],
   "link": {
     "wrap": [
       {

@@ -3,7 +3,13 @@
   "schema": 2,
   "name": "gs_cookie",
   "description": "The constant stack-protector cookie",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 40}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 40, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 40, "when": {"arch": "riscv32"}}
+  ],
   "link": {"wrap": ["__security_cookie"]}
 }

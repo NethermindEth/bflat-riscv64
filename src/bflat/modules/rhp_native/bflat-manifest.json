@@ -4,11 +4,22 @@
   "name": "rhp_native",
   "description": "GC write barriers reduced to the bare store (uGC has no card table)",
   "note": "uGC has no card table and never collects, so every GC write barrier reduces to the bare store. These are the hottest helpers in the image (hundreds of call sites).",
-  "sources": [{"file": "module.S"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 50}],
+  "sources": [
+    {"file": "module.S", "when": {"arch": "riscv64"}},
+    {"file": "module.S", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 50, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 50, "when": {"arch": "riscv32"}}
+  ],
   "link": {
     "wrap": [
-      "RhpAssignRefRiscV64",
+      {"symbol": "RhpAssignRefRiscV64", "when": {"arch": "riscv64"}},
+      {
+        "symbol": "RhpAssignRefRiscV32",
+        "when": {"arch": "riscv32"},
+        "note": "The unchecked barrier carries the architecture in its name; module.S assembles the one of its target."
+      },
       "RhpCheckedAssignRef",
       "RhpByRefAssignRef",
       {

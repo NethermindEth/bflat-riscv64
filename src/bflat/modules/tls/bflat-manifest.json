@@ -3,7 +3,13 @@
   "schema": 2,
   "name": "tls",
   "description": "Minimal TLS bootstrap without musl's ELF machinery",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 80}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 80, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 80, "when": {"arch": "riscv32"}}
+  ],
   "link": {"wrap": ["__tls_get_addr", "__init_tls", "__init_tp", "__copy_tls"]}
 }

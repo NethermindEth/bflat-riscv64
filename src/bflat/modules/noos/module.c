@@ -326,7 +326,7 @@ __sched_cpucount(unsigned long size, const void *set)
  * because musl's are tuned and a byte loop would cost real cycles in a proof.
  * ======================================================================== */
 
-typedef unsigned long noos_size_t;
+typedef __SIZE_TYPE__ noos_size_t;  /* size_t, without the libc headers: 32 bits on rv32 */
 
 /*@ requires \valid_read(s + (0 .. )); assigns \nothing; */
 noos_size_t

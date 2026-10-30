@@ -3,7 +3,13 @@
   "schema": 2,
   "name": "rust_sys",
   "description": "The allocator hook of the zkVM Rust runtimes (sys_alloc_aligned) bridged onto the shared bump heap",
-  "sources": [{"file": "module.c"}],
-  "objects": [{"file": "module.o", "group": "normal", "order": 20}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "normal", "order": 20, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "normal", "order": 20, "when": {"arch": "riscv32"}}
+  ],
   "link": {"wrap": ["sys_alloc_aligned"]}
 }

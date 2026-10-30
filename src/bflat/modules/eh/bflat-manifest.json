@@ -3,14 +3,19 @@
   "schema": 2,
   "name": "eh",
   "description": "Synthetic program headers for libunwind",
-  "sources": [{"file": "module.c"}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
   "objects": [
     {
       "file": "module.o",
       "group": "whole-archive",
       "order": 70,
+      "when": {"arch": "riscv64"},
       "note": "Linked under --remove-eh too: see the note on the dl_iterate_phdr wrap."
-    }
+    },
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 70, "when": {"arch": "riscv32"}}
   ],
   "link": {
     "wrap": [

@@ -29,8 +29,26 @@ fi
 
 cd $TOP_DIR
 
+# build_modules [riscv64|riscv32]
+# riscv64 (the default) builds each module's module.o. riscv32 builds its
+# module.rv32.o (the sources of the manifests with "arch": "riscv32") for
+# rv32im/ilp32, against the rv32 musl sysroot that RV32_SYSROOT names: the
+# crossrootfs-musl-riscv32 asset of the dotnet-riscv release, which has the
+# libc++ and Linux headers too. There is no riscv32 GCC, so clang compiles and
+# assembles it, without LTO.
 function build_modules()
 {
+	local arch="${1:-riscv64}"
+	if [ "${arch}" == "riscv32" ] ; then
+		build_modules_for riscv32
+		return $?
+	fi
+	build_modules_for riscv64
+}
+
+function build_modules_for()
+{
+	local arch="$1"
 	local sysroot="/usr/riscv64-linux-gnu"
 	# -mabi=lp64 (soft-float ABI) must match zisk crt1.o / libc.a, which are
 	# soft-float. Without this clang defaults to lp64d when -march=rv64imad,
@@ -42,6 +60,18 @@ function build_modules()
 	# which puts lld into unified-LTO mode; modules must match or lld errors
 	# with "unified LTO compilation must use compatible bitcode modules".
 	local cflags_common="--target=riscv64-linux-gnu --sysroot=${sysroot} -march=rv64imad -mabi=lp64 -mcmodel=medany -flto=full -funified-lto -O3"
+	local cxxflags_common=""
+	if [ "${arch}" == "riscv32" ] ; then
+		[ -d "${RV32_SYSROOT}/usr/include" ] || fail "RV32_SYSROOT must name an rv32 musl sysroot (crossrootfs-musl-riscv32 of the dotnet-riscv release)"
+		[ -d "${RV32_SYSROOT}/usr/include/c++/v1" ] || fail "${RV32_SYSROOT} has no libc++ headers (usr/include/c++/v1)"
+		sysroot="${RV32_SYSROOT}"
+		# The guest image of a riscv32 zkVM is linked without LTO, and every
+		# function in its own section, so that --gc-sections keeps the image
+		# within the zkVM's ROM.
+		cflags_common="--target=riscv32-unknown-linux-musl --sysroot=${sysroot} -march=rv32im -mabi=ilp32 -mcmodel=medany -O2 -ffunction-sections -fdata-sections -fno-stack-protector"
+		# libc++'s headers, and no C++ runtime to link: no exceptions, no RTTI.
+		cxxflags_common="-nostdinc++ -isystem ${sysroot}/usr/include/c++/v1 -fno-exceptions -fno-rtti"
+	fi
 
 	# gcc-riscv64-linux-gnu only ships stubs-lp64d.h (hard-float glibc).
 	# With -mabi=lp64, glibc's gnu/stubs.h looks up gnu/stubs-lp64.h, which
@@ -49,7 +79,7 @@ function build_modules()
 	# an empty one if missing. Errors are ignored — read-only sysroot is fine
 	# as long as the file already exists.
 	local stubs_dir="${sysroot}/include/gnu"
-	if [ -d "${stubs_dir}" ] && [ ! -f "${stubs_dir}/stubs-lp64.h" ] ; then
+	if [ "${arch}" == "riscv64" ] && [ -d "${stubs_dir}" ] && [ ! -f "${stubs_dir}/stubs-lp64.h" ] ; then
 		touch "${stubs_dir}/stubs-lp64.h" 2>/dev/null || \
 			sudo touch "${stubs_dir}/stubs-lp64.h" 2>/dev/null || true
 	fi
@@ -87,7 +117,7 @@ function build_modules()
 	{
 		local src="$1" out="$2"
 		shift 2
-		clang++ ${cflags_common} "$@" -c "$src" -o "$out"
+		clang++ ${cflags_common} ${cxxflags_common} "$@" -c "$src" -o "$out"
 		on_fail $? "Failed to compile module ${mod_name} (C++)"
 	}
 
@@ -97,7 +127,13 @@ function build_modules()
 	{
 		local src="$1" out="$2"
 		shift 2
-		riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 "$@" "$src" -o "$out"
+		if [ "${arch}" == "riscv32" ] ; then
+			# BFLAT_RV32 selects the 32-bit forms of a source that has both.
+			clang --target=riscv32-unknown-elf -march=rv32im -mabi=ilp32 -c -x assembler \
+				-Wa,--defsym,BFLAT_RV32=1 "$@" "$src" -o "$out"
+		else
+			riscv64-linux-gnu-as --march=rv64ima --mabi=lp64 "$@" "$src" -o "$out"
+		fi
 		on_fail $? "Failed to compile module ${mod_name} (Assembly)"
 	}
 
@@ -190,7 +226,7 @@ function build_modules()
 	local plan="${TOP_DIR}/src/bflat-modules/obj/modules.plan.sh"
 	mkdir -p "$(dirname "${plan}")"
 	dotnet run --project "${TOP_DIR}/src/bflat-modules/bflat-modules.csproj" -c Release -- \
-		plan "${TOP_DIR}/src/bflat/modules" "${plan}"
+		plan "${TOP_DIR}/src/bflat/modules" "${plan}" --arch "${arch}"
 	on_fail $? "Failed to read the module manifests"
 	. "${plan}"
 }
@@ -204,6 +240,16 @@ case $flavor in
 		if [ "${what}" == "layouts" ] || [ "${what}" == "all" ] ; then
 			dotnet build src/bflat/bflat.csproj -t:BuildLayouts -c:Release
 			on_fail $? "Failed to build layouts (generic)"
+		fi
+		;;
+	riscv32)
+		# The rv32 modules beside the rv64 ones; bflat itself is built with the
+		# riscv64 flavor and -p:BflatTargetRiscV32=true.
+		if [ "${what}" == "modules" ] ; then
+			build_modules riscv32
+			on_fail $? "Failed to build rv32 modules"
+		else
+			fail "The riscv32 flavor builds only modules (build.sh modules riscv32); build bflat with: dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:BflatTargetRiscV32=true"
 		fi
 		;;
 	riscv64)

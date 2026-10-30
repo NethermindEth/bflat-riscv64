@@ -3,14 +3,18 @@
   "schema": 2,
   "name": "noos",
   "description": "Displaces the OS surface the runtime's Unix PAL reaches for",
-  "sources": [{"file": "module.c"}],
+  "sources": [
+    {"file": "module.c", "when": {"arch": "riscv64"}},
+    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
   "objects": [
     {
       "file": "module.o",
       "group": "pre-libc",
       "order": 20,
-      "when": {"flag": "noos"},
+      "when": {"flag": "noos", "arch": "riscv64"},
       "note": "The OS surface the runtime's Unix PAL reaches for. PalUnix.cpp.o is linked whole because RhFailFast pulls it, and libSystem.Native's pal_io comes with it, so 150 libc entry points go live and drag 96 musl members in: crash dumps, dlopen, CPU counting, directory walking. None can be serviced here. Same rule as nothread: this works by definition, so it must precede libc.a."
-    }
+    },
+    {"file": "module.rv32.o", "group": "pre-libc", "order": 20, "when": {"flag": "noos", "arch": "riscv32"}}
   ]
 }

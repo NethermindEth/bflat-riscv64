@@ -59,7 +59,20 @@ extern const char __eh_frame_hdr_end[];
 #define ZK_PF_X            1u
 #define ZK_PF_R            4u
 
-/* ELF64 program header, as the unwinder expects to read it. */
+/* The ELF program header of the target's class, as the unwinder expects to
+ * read it. ELF32 is not ELF64 narrowed: p_flags moves after p_memsz. */
+#if __riscv_xlen == 32
+typedef struct {
+    uint32_t p_type;
+    uint32_t p_offset;
+    uint32_t p_vaddr;
+    uint32_t p_paddr;
+    uint32_t p_filesz;
+    uint32_t p_memsz;
+    uint32_t p_flags;
+    uint32_t p_align;
+} zk_elf_phdr;
+#else
 typedef struct {
     uint32_t p_type;
     uint32_t p_flags;
@@ -69,15 +82,16 @@ typedef struct {
     uint64_t p_filesz;
     uint64_t p_memsz;
     uint64_t p_align;
-} zk_elf64_phdr;
+} zk_elf_phdr;
+#endif
 
 /* Layout-compatible with glibc/musl struct dl_phdr_info. libunwind reads
  * dlpi_addr, dlpi_name, dlpi_phdr and dlpi_phnum only; the trailing members
  * exist so the size handed to the callback is honest. */
 typedef struct {
-    uint64_t             dlpi_addr;
+    uintptr_t            dlpi_addr;
     const char          *dlpi_name;
-    const zk_elf64_phdr *dlpi_phdr;
+    const zk_elf_phdr   *dlpi_phdr;
     uint16_t             dlpi_phnum;
     unsigned long long   dlpi_adds;
     unsigned long long   dlpi_subs;
@@ -90,7 +104,7 @@ typedef int (*zk_phdr_cb)(zk_dl_phdr_info *info, size_t size, void *data);
 /* Filled per call rather than statically initialized: the bounds are
  * link-time addresses, not constant expressions. The guest is single
  * threaded, so one shared buffer is enough. */
-static zk_elf64_phdr zk_eh_phdrs[2];
+static zk_elf_phdr zk_eh_phdrs[2];
 
 /*@ // Describes the image as at most two program headers: the executable
     // range always, the unwind index only when the link kept it. Every
@@ -113,8 +127,8 @@ static zk_elf64_phdr zk_eh_phdrs[2];
     ensures hdr_size > 0 ==> phdrs[1].p_filesz == hdr_size;
 */
 static uint16_t
-zk_eh_fill_phdrs(zk_elf64_phdr *phdrs, uint64_t text_start, uint64_t text_size,
-                 uint64_t hdr_start, uint64_t hdr_size)
+zk_eh_fill_phdrs(zk_elf_phdr *phdrs, uintptr_t text_start, uintptr_t text_size,
+                 uintptr_t hdr_start, uintptr_t hdr_size)
 {
     phdrs[0].p_type = ZK_PT_LOAD;
     phdrs[0].p_flags = ZK_PF_R | ZK_PF_X;
@@ -148,8 +162,8 @@ zk_eh_fill_phdrs(zk_elf64_phdr *phdrs, uint64_t text_start, uint64_t text_size,
     assigns \nothing;
     ensures \result == (end > start ? end - start : 0);
 */
-static uint64_t
-zk_eh_extent(uint64_t start, uint64_t end)
+static uintptr_t
+zk_eh_extent(uintptr_t start, uintptr_t end)
 {
     if (end <= start)
         return 0;
@@ -171,10 +185,10 @@ zk_eh_extent(uint64_t start, uint64_t end)
 static void
 zk_eh_build_info(zk_dl_phdr_info *info)
 {
-    uint64_t text_start = (uint64_t)(uintptr_t)__image_text_start;
-    uint64_t text_end = (uint64_t)(uintptr_t)__image_text_end;
-    uint64_t hdr_start = (uint64_t)(uintptr_t)__eh_frame_hdr_start;
-    uint64_t hdr_end = (uint64_t)(uintptr_t)__eh_frame_hdr_end;
+    uintptr_t text_start = (uintptr_t)__image_text_start;
+    uintptr_t text_end = (uintptr_t)__image_text_end;
+    uintptr_t hdr_start = (uintptr_t)__eh_frame_hdr_start;
+    uintptr_t hdr_end = (uintptr_t)__eh_frame_hdr_end;
 
     info->dlpi_phnum = zk_eh_fill_phdrs(zk_eh_phdrs, text_start,
                                         zk_eh_extent(text_start, text_end),

@@ -3,8 +3,14 @@
   "schema": 2,
   "name": "ubootstrap",
   "description": "The .NET runtime bootstrap for an OS-less guest",
-  "sources": [{"file": "module.cpp"}],
-  "objects": [{"file": "module.o", "group": "whole-archive", "order": 10}],
+  "sources": [
+    {"file": "module.cpp", "when": {"arch": "riscv64"}},
+    {"file": "module.cpp", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+  ],
+  "objects": [
+    {"file": "module.o", "group": "whole-archive", "order": 10, "when": {"arch": "riscv64"}},
+    {"file": "module.rv32.o", "group": "whole-archive", "order": 10, "when": {"arch": "riscv32"}}
+  ],
   "ilc": {
     "direct_pinvoke": [
       {
