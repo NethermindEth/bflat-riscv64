@@ -203,6 +203,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write
+    outputs:
+      pr_image: ${{ steps.pr_image.outputs.image }}
     container:
       image: ubuntu:26.04
       options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
@@ -327,6 +330,27 @@ jobs:
           docker rm "$id" > /dev/null
           exit "$rc"
 
+      # bflat-ts on zk-testing pulls the image of the pull request from GHCR:
+      # Docker Hub takes images of master only. One tag for each pull request,
+      # and the jobs below take it by digest, so a new push does not change the
+      # image of a run that is in progress. A pull request from a fork gets no
+      # token to push with and no bflat-ts run.
+      - name: Push the image of the pull request to GHCR
+        id: pr_image
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_IMAGE: ghcr.io/nethermindeth/bflat-riscv64-11:pr-${{ github.event.number }}
+        run: |
+          set -e
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag $IMAGE:test "$PR_IMAGE"
+          docker push "$PR_IMAGE"
+          digest=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$PR_IMAGE" | grep '^ghcr.io/' | head -n 1)
+          digest=${digest#*@}
+          [ -n "$digest" ]
+          echo "image=$PR_IMAGE@$digest" >> "$GITHUB_OUTPUT"
+
       - name: Log in to Docker Hub
         if: inputs.publish
         uses: docker/login-action@v4
@@ -340,3 +364,39 @@ jobs:
         run: |
           docker push $IMAGE:latest
           docker push "$IMAGE:$GITHUB_SHA"
+
+  # bflat-ts on zk-testing with the image of the pull request. The run is a
+  # workflow of bflat-ts, started with BFLAT_TS_TOKEN (Actions: read and write
+  # on bflat-ts), so the secrets of zk-testing stay in bflat-ts. The simple
+  # test goes first: a broken image then fails in minutes and does not take the
+  # host for the two hours of the suite.
+  bflat_ts_simple:
+    needs: build_riscv64
+    if: needs.build_riscv64.outputs.pr_image != ''
+    runs-on: ubuntu-latest
+    name: bflat-ts (simple)
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run bflat-ts/simple
+        env:
+          GH_TOKEN: ${{ secrets.BFLAT_TS_TOKEN }}
+        run: .github/scripts/run-bflat-ts.sh "${{ needs.build_riscv64.outputs.pr_image }}" bflat-ts/simple
+
+  bflat_ts:
+    needs: [build_riscv64, bflat_ts_simple]
+    runs-on: ubuntu-latest
+    name: bflat-ts
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run the bflat-ts suite
+        env:
+          GH_TOKEN: ${{ secrets.BFLAT_TS_TOKEN }}
+        run: .github/scripts/run-bflat-ts.sh "${{ needs.build_riscv64.outputs.pr_image }}"
