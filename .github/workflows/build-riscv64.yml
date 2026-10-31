@@ -33,9 +33,11 @@ env:
   # (bflat.variant.props). The SDK is the one the image ships.
   SDK_VERSION: 11.0.100-preview.6.26359.118
   # The Airbender v3 simulator that runs the riscv32 guests: the cli of
-  # matter-labs/zksync-airbender on its dev branch, which has the 4 MiB ROM and
-  # proves only the unsigned RV32M instructions.
-  AIRBENDER_COMMIT: d2a36a7e083d82ee265f25d5381cc8318216f9ea
+  # matter-labs/zksync-airbender with the 4 MiB ROM, the unsigned RV32M machine
+  # and the Keccak-f delegation that libairbender calls (CSRs 0x7cc-0x7ce), on
+  # its branch mb/keccak-03-read-ts-packed-memory-borrows; dev has the older
+  # Keccak delegation only.
+  AIRBENDER_COMMIT: 7a147da32e0c74308891a3fbd03193e724115266
 
 jobs:
   acsl_check:
