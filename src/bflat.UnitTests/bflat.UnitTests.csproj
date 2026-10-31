@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Unit tests of the parts of bflat that need no compiler layout: the
-       manifest parser, the package signatures, the extlib resolution and
-       the float-ABI check of the layout. They compile the same source files
+       manifest parser, the package signatures, the extlib resolution,
+       the float-ABI check of the layout and the ISA check of a linked image. They compile the same source files
        as bflat and bflat-modules, so they run with only the SDK. The end to
        end tests that run bflat itself are in bflat.Tests. -->
   <PropertyGroup>
@@ -19,6 +19,7 @@
     <Compile Include="..\bflat\PackageSignature.cs" Link="Shared\PackageSignature.cs" />
     <Compile Include="..\bflat\ExtLibResolver.cs" Link="Shared\ExtLibResolver.cs" />
     <Compile Include="..\bflat-modules\AbiCheck.cs" Link="Shared\AbiCheck.cs" />
+    <Compile Include="..\bflat\IsaVerifier.cs" Link="Shared\IsaVerifier.cs" />
   </ItemGroup>
 
   <ItemGroup>
