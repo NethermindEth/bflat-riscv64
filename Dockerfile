@@ -8,6 +8,10 @@ ARG SDK_VERSION=11.0.100-preview.6.26359.118
 RUN apt-get update && apt-get install -y wget libicu-dev gcc-riscv64-linux-gnu llvm clang lld xxd file python3 python3-pip libarchive-tools
 
 ENV BFLAT_LD=/usr/bin/lld
+# The llvm-objcopy of the compiler package needs the ICU of the system it
+# was built on (libicuuc.so.74); the flat images of the riscv32 platforms
+# (flat_image) take the system's.
+ENV BFLAT_OBJCOPY=/usr/bin/llvm-objcopy
 
 ENV HOME=/root
 # Resolve, verify, download and unpack in one step so the resolved version does
