@@ -37,3 +37,14 @@ void* operator new[](size_t n)
         exit(255);
     return p;
 }
+
+#if defined(__riscv) && __riscv_xlen == 32
+/* The slot of a pure virtual function in a vtable (uGC's interfaces). The
+ * riscv64 layout gets it from its libsupc++; the riscv32 one has no C++
+ * runtime library. A call through it is a bug: fail loudly. */
+/*@ exits \exit_status == 255; */
+extern "C" void __cxa_pure_virtual(void)
+{
+    exit(255);
+}
+#endif
