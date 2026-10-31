@@ -4,7 +4,8 @@
 // IL-level --error-on-float (which reasons about compiled method bodies before
 // codegen), this decodes the ACTUAL instructions in the output ELF and flags
 // floating-point (F/D), compressed (C) or atomic (A) encodings - extensions a
-// bare zkVM target (rv64im, no C, soft-float) must not contain.
+// bare zkVM target (rv64im or rv32im, no C, soft-float) must not contain.
+// It reads ELF64 (riscv64) and ELF32 (riscv32) images.
 //
 // To stay precise it walks only real code: the function symbols (SttFunc) in
 // the executable sections, never the constant pools / method tables / RTTI that
@@ -37,7 +38,6 @@ internal static class IsaVerifier
     private const uint ShfExecinstr = 0x4;
     private const uint ShtSymtab = 2;
     private const uint SttFunc = 2;
-    private const int SymEntSize = 24;
 
     private readonly struct Section
     {
@@ -77,21 +77,31 @@ internal static class IsaVerifier
             return 1;
         }
 
-        if (elf.Length < 64 || elf[0] != 0x7F || elf[1] != (byte)'E' || elf[2] != (byte)'L' || elf[3] != (byte)'F')
+        if (elf.Length < 52 || elf[0] != 0x7F || elf[1] != (byte)'E' || elf[2] != (byte)'L' || elf[3] != (byte)'F')
         {
             Console.Error.WriteLine($"error: ISA verification: '{elfPath}' is not an ELF file");
             return 1;
         }
-        if (elf[4] != 2 /*ELFCLASS64*/ || elf[5] != 1 /*ELFDATA2LSB*/)
+        if ((elf[4] != 1 /*ELFCLASS32*/ && elf[4] != 2 /*ELFCLASS64*/) || elf[5] != 1 /*ELFDATA2LSB*/)
         {
-            Console.Error.WriteLine("error: ISA verification: only little-endian ELF64 is supported");
+            Console.Error.WriteLine("error: ISA verification: only little-endian ELF32 and ELF64 are supported");
+            return 1;
+        }
+        bool is64 = elf[4] == 2;
+        if (is64 && elf.Length < 64)
+        {
+            Console.Error.WriteLine($"error: ISA verification: '{elfPath}' is not an ELF file");
             return 1;
         }
 
-        ulong shoff = U64(elf, 40);
-        int shentsize = U16(elf, 58);
-        int shnum = U16(elf, 60);
-        if (shoff == 0 || shnum == 0 || shentsize < 64)
+        // The ELF header, the section headers and the symbols: the same fields at
+        // other offsets and widths in ELF32.
+        ulong shoff = is64 ? U64(elf, 40) : U32(elf, 32);
+        int shentsize = U16(elf, is64 ? 58 : 46);
+        int shnum = U16(elf, is64 ? 60 : 48);
+        int shdrSize = is64 ? 64 : 40;
+        int symEntSize = is64 ? 24 : 16;
+        if (shoff == 0 || shnum == 0 || shentsize < shdrSize)
         {
             Console.Error.WriteLine("error: ISA verification: no section headers to scan");
             return 1;
@@ -101,12 +111,14 @@ internal static class IsaVerifier
         for (int i = 0; i < shnum; i++)
         {
             int b = (int)shoff + i * shentsize;
-            if (b + 64 > elf.Length) { Console.Error.WriteLine("error: ISA verification: truncated section header"); return 1; }
-            sections[i] = new Section(
-                U32(elf, b + 0), U32(elf, b + 4), U64(elf, b + 8), U64(elf, b + 16),
-                U64(elf, b + 24), U64(elf, b + 32), U32(elf, b + 40), U64(elf, b + 56));
+            if (b + shdrSize > elf.Length) { Console.Error.WriteLine("error: ISA verification: truncated section header"); return 1; }
+            sections[i] = is64
+                ? new Section(U32(elf, b + 0), U32(elf, b + 4), U64(elf, b + 8), U64(elf, b + 16),
+                              U64(elf, b + 24), U64(elf, b + 32), U32(elf, b + 40), U64(elf, b + 56))
+                : new Section(U32(elf, b + 0), U32(elf, b + 4), U32(elf, b + 8), U32(elf, b + 12),
+                              U32(elf, b + 16), U32(elf, b + 20), U32(elf, b + 24), U32(elf, b + 36));
         }
-        int shstrndx = U16(elf, 62);
+        int shstrndx = U16(elf, is64 ? 62 : 50);
         ulong shstrOff = shstrndx < shnum ? sections[shstrndx].Offset : 0;
 
         // Collect the real code: SttFunc symbols that live in an executable
@@ -117,15 +129,15 @@ internal static class IsaVerifier
             if (s.Type != ShtSymtab || s.EntSize == 0)
                 continue;
             Section str = s.Link < (uint)shnum ? sections[s.Link] : default;
-            ulong count = s.Size / (ulong)SymEntSize;
+            ulong count = s.Size / (ulong)symEntSize;
             for (ulong k = 0; k < count; k++)
             {
-                int b = (int)(s.Offset + k * (ulong)SymEntSize);
-                if (b + SymEntSize > elf.Length) break;
-                byte info = elf[b + 4];
+                int b = (int)(s.Offset + k * (ulong)symEntSize);
+                if (b + symEntSize > elf.Length) break;
+                byte info = elf[b + (is64 ? 4 : 12)];
                 if ((info & 0xF) != SttFunc) continue;
-                ulong val = U64(elf, b + 8);
-                ulong size = U64(elf, b + 16);
+                ulong val = is64 ? U64(elf, b + 8) : U32(elf, b + 4);
+                ulong size = is64 ? U64(elf, b + 16) : U32(elf, b + 8);
                 if (val == 0) continue;
                 funcs.Add(new Func { Addr = val, Size = size, Name = ReadStr(elf, str.Offset, U32(elf, b + 0)) });
             }
@@ -151,7 +163,7 @@ internal static class IsaVerifier
         // Code extents from the unwind info. A method's FUNC symbol covers the
         // JIT data ILC appends after its instructions; the FDE ends where the
         // instructions do, so clip every symbol to the last FDE starting in it.
-        List<(ulong begin, ulong end)> fdes = ReadEhFrameRanges(elf, sections, shstrOff);
+        List<(ulong begin, ulong end)> fdes = ReadEhFrameRanges(elf, sections, shstrOff, is64 ? 8 : 4);
         int clipped = 0;
         if (fdes.Count > 0)
         {
@@ -272,7 +284,7 @@ internal static class IsaVerifier
     // pc_begin. Only what the parser needs of the CIE is decoded (the
     // augmentation, for the FDE pointer encoding); anything unexpected simply
     // ends the walk, leaving the ranges found so far.
-    private static List<(ulong begin, ulong end)> ReadEhFrameRanges(byte[] elf, Section[] sections, ulong shstrOff)
+    private static List<(ulong begin, ulong end)> ReadEhFrameRanges(byte[] elf, Section[] sections, ulong shstrOff, int addrSize)
     {
         var ranges = new List<(ulong, ulong)>();
         Section eh = default;
@@ -320,7 +332,7 @@ internal static class IsaVerifier
                             {
                                 case 'L': p++; break;
                                 case 'R': fdeEnc = elf[p++]; break;
-                                case 'P': { byte enc = elf[p++]; ReadEncoded(elf, ref p, enc, eh); break; }
+                                case 'P': { byte enc = elf[p++]; ReadEncoded(elf, ref p, enc, eh, addrSize); break; }
                                 case 'S': case 'B': break;
                                 default: i = aug.Length; break; // unknown: stop decoding this CIE
                             }
@@ -334,8 +346,8 @@ internal static class IsaVerifier
                     long ciePos = entry - id;
                     if (!cieEnc.TryGetValue(ciePos, out var cie)) { pos = next; continue; }
                     long p = entry + 4;
-                    ulong begin = ReadEncoded(elf, ref p, cie.fdeEnc, eh);
-                    ulong range = ReadEncoded(elf, ref p, (byte)(cie.fdeEnc & 0x0f), eh);
+                    ulong begin = ReadEncoded(elf, ref p, cie.fdeEnc, eh, addrSize);
+                    ulong range = ReadEncoded(elf, ref p, (byte)(cie.fdeEnc & 0x0f), eh, addrSize);
                     if (range != 0)
                         ranges.Add((begin, begin + range));
                 }
@@ -352,14 +364,15 @@ internal static class IsaVerifier
 
     // DWARF exception-header pointer: value formats in the low nibble,
     // pc-relative application in bit 4 (relative to the field's own address).
-    private static ulong ReadEncoded(byte[] elf, ref long p, byte enc, Section sec)
+    // An absptr is as wide as an address of the image.
+    private static ulong ReadEncoded(byte[] elf, ref long p, byte enc, Section sec, int addrSize)
     {
         if (enc == 0xff) return 0; // DW_EH_PE_omit
         ulong fieldAddr = sec.Addr + (ulong)(p - (long)sec.Offset);
         ulong v;
         switch (enc & 0x0f)
         {
-            case 0x00: v = U64(elf, (int)p); p += 8; break;                       // absptr
+            case 0x00: v = addrSize == 8 ? U64(elf, (int)p) : U32(elf, (int)p); p += addrSize; break; // absptr
             case 0x01: v = ReadUleb(elf, ref p); break;                          // uleb128
             case 0x02: v = U16(elf, (int)p); p += 2; break;                      // udata2
             case 0x03: v = U32(elf, (int)p); p += 4; break;                      // udata4

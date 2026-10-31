@@ -3,6 +3,7 @@
 # ELF and the flat images Airbender loads (<guest>.bin, <guest>.text).
 # BFLAT_AIRBENDER is a directory with the bflat-airbender package: its platform
 # and libairbender (build/build.sh airbender, or a release archive).
+# The ISA checks fail the build on an F, D, C or A instruction in the ELF32 image.
 # tests/run-airbender.sh runs them.
 set -euo pipefail
 
@@ -14,6 +15,7 @@ mkdir -p "$out"
 for guest in hello keccak fail; do
     bflat build --arch riscv32 --os linux --stdlib dotnet --libc airbender \
         --extlib "$package/libairbender.bflat.manifest" --no-pie --no-pthread \
+        --error-on-float-binary --error-on-compressed --error-on-atomic \
         -o "$out/$guest" "$test_dir/airbender-$guest.cs"
     for f in "$out/$guest" "$out/$guest.bin" "$out/$guest.text"; do
         [ -s "$f" ] || { echo "$guest: $f was not written" >&2; exit 1; }
