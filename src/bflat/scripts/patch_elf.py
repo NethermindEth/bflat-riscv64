@@ -78,6 +78,29 @@ def prepare_parser():
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "--unimp-system",
+        help="ELF32 only: rewrite each SYSTEM instruction with funct3 0 (ecall, ebreak, wfi, the "
+             "trap returns) of the code to UNIMP (csrrw x0, cycle, x0), the illegal instruction "
+             "that the Airbender transpiler accepts: it decodes the whole .text before the run "
+             "and rejects any other SYSTEM encoding. The JIT ends a call to a noreturn helper "
+             "with an ebreak, and musl's system calls are ecalls; the guest reaches neither. "
+             "A word is rewritten only where it is code: right after a call, or inside a sized "
+             "function",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--unimp-csr",
+        help="ELF32 only, with --unimp-system: also rewrite to UNIMP each access of this CSR (a "
+             "number, repeated), which the zkVM's decoder does not know; for example vlenb "
+             "(0xc22), which the runtime's libunwind reads for a vector register that a zkVM "
+             "guest never has. Every such word of the executable sections is rewritten, as the "
+             "decoder rejects the image with any of them",
+        action="append",
+        default=[],
+        type=lambda v: int(v, 0),
+    )
     return parser
 
 
@@ -85,11 +108,11 @@ def prepare_parser():
 # place, on the bytes of the file: --nop-fences and --unsigned-muldiv. lief
 # would rebuild the file, and the flat image of a riscv32 zkVM is the file's
 # load segments as linked.
-ELF32_PASSES = ("nop_fences", "unsigned_muldiv")
+ELF32_PASSES = ("nop_fences", "unsigned_muldiv", "unimp_system", "unimp_csr")
 
 
 def rewrite_elf32(args):
-    """--nop-fences and --unsigned-muldiv on an ELF32 RISC-V image, in place in a copy of it.
+    """--nop-fences, --unsigned-muldiv and --unimp-system on an ELF32 RISC-V image, in place in a copy of it.
 
     Only words inside a sized function are instructions: ILC parks data in .text too, and a
     data word that happens to look like one of these instructions must keep its value. The
@@ -187,13 +210,29 @@ def rewrite_elf32(args):
         tramp_start = tramp = tramp_end = 0
     text = [sh for sh in sections if sh[1] == 1 and sh[2] & 0x4]  # executable PROGBITS
     NOP = addi(ZERO, ZERO, 0)
-    fences = patched = skipped = 0
+    UNIMP = 0xC0001073  # csrrw x0, cycle, x0
+    fences = patched = skipped = unimps = 0
     for sh in text:
         for addr in range(sh[3], sh[3] + sh[5] - 3, 4):
             if tramp_start <= addr < tramp_end:
                 continue
             p = sh[4] + addr - sh[3]
             insn, = struct.unpack_from("<I", data, p)
+            csr_access = (insn & 0x7F) == 0x73 and ((insn >> 12) & 3) != 0
+            if args.unimp_system and (insn & 0x7F) == 0x73 and (((insn >> 12) & 7) == 0
+                                                                or (csr_access and (insn >> 20) in args.unimp_csr)):
+                prev = struct.unpack_from("<I", data, p - 4)[0] if addr > sh[3] else 0
+                after_call = (prev & 0x7F) in (0x67, 0x6F) and ((prev >> 7) & 31) == 1  # jalr/jal ra
+                # An access of a named CSR is rewritten wherever it is: the decoder rejects the
+                # image with it, so no image keeps it. The functions of the runtime's libunwind
+                # that read vlenb are local, and the link discards their symbols.
+                if csr_access or after_call or in_function(addr):
+                    struct.pack_into("<I", data, p, UNIMP)
+                    unimps += 1
+                else:
+                    print(f"patch_elf: --unimp-system: {insn:#010x} at {addr:#x} is not known to be code; left as it is")
+                    skipped += 1
+                continue
             f3, rd, a, b = (insn >> 12) & 7, (insn >> 7) & 31, (insn >> 15) & 31, (insn >> 20) & 31
             is_fence = args.nop_fences and (insn & 0x7F) == 0x0F and f3 in (0, 1)  # MISC-MEM: FENCE, FENCE.I
             is_signed = (args.unsigned_muldiv and (insn & 0x7F) == 0x33 and (insn >> 25) == 1
@@ -224,7 +263,8 @@ def rewrite_elf32(args):
             tramp += 4 * len(code)
             patched += 1
     open(args.output_file, "wb").write(data)
-    print(f"elf32 rewrites: {fences} fence(s) to NOP, {patched} signed mul/div moved out of line; "
+    print(f"elf32 rewrites: {fences} fence(s) to NOP, {patched} signed mul/div moved out of line, "
+          f"{unimps} system instruction(s) to UNIMP; "
           f"{skipped} matching word(s) outside any function left untouched")
 
 
@@ -613,15 +653,15 @@ with open(args.input_file, "rb") as f:
     ident = f.read(5)
 if ident[:4] == b"\x7fELF" and ident[4] == 1:
     unsupported = [name for name, value in vars(args).items()
-                   if value is True and name not in ELF32_PASSES]
+                   if (value is True or (isinstance(value, list) and value)) and name not in ELF32_PASSES]
     if unsupported:
-        sys.exit(f"patch_elf: an ELF32 image takes only --nop-fences and --unsigned-muldiv, not: "
+        sys.exit(f"patch_elf: an ELF32 image takes only --nop-fences, --unsigned-muldiv and --unimp-system, not: "
                  + ", ".join("--" + name.replace("_", "-") for name in unsupported))
     rewrite_elf32(args)
     print("ELF file postprocessed")
     sys.exit(0)
-if args.unsigned_muldiv:
-    sys.exit("patch_elf: --unsigned-muldiv is for an ELF32 image")
+if args.unsigned_muldiv or args.unimp_system or args.unimp_csr:
+    sys.exit("patch_elf: --unsigned-muldiv and --unimp-system are for an ELF32 image")
 
 elf = lief.parse(args.input_file)
 

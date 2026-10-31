@@ -414,7 +414,7 @@ step to bflat. The tools:
 
 | Tool | What it does |
 |------|--------------|
-| `patch_elf` | `scripts/patch_elf.py` rewrites the image in place. An ELF32 image (riscv32) takes only the passes that rewrite instruction words: `--nop-fences`, and `--unsigned-muldiv`, which moves each signed RV32M instruction of the native code into a trampoline built from unsigned ones (the linker script reserves `__signed_tramp_start` to `__signed_tramp_end`). |
+| `patch_elf` | `scripts/patch_elf.py` rewrites the image in place. An ELF32 image (riscv32) takes only the passes that rewrite instruction words: `--nop-fences`; `--unsigned-muldiv`, which moves each signed RV32M instruction of the native code into a trampoline built from unsigned ones (the linker script reserves `__signed_tramp_start` to `__signed_tramp_end`); and `--unimp-system`, which rewrites to UNIMP (`csrrw x0, cycle, x0`) each SYSTEM instruction with funct3 0 that is code (an `ebreak` after a call to a noreturn helper, an `ecall`), and each access of a CSR that `--unimp-csr <number>` names, for a zkVM whose decoder reads the whole `.text` and rejects them. |
 | `flat_image` | Writes `<output><suffix>`, the raw image of the output (`llvm-objcopy -O binary`), of the sections that `--section` names when it gives any, padded with zeros to a multiple of four bytes. Arguments: `--suffix <suffix>`, `--section <name>` (repeated). |
 
 ### `checks`: checks of the full image
