@@ -1,35 +1,31 @@
 # Shared library sample
 
-To build a shared library run following command:
+This sample is from upstream bflat. Only its linux-x64 form works in this
+fork: a zkVM guest is one static image and cannot load a library, and the
+Windows targets are not built.
+
+To build the shared library:
 
 ```console
-$ bflat build library.cs
+$ bflat build library.cs --arch x64 --os linux
 ```
 
-Bflat automatically detects you're trying to build a library because there's no Main. You can also specify `--target` to bflat.
+bflat makes a library because the source has no `Main`. You can also give
+`--target`. The result is `library.so`.
 
-This will produce a library.so file on Linux and library.dll on Windows.
-
-The library can be consumed from any other programming language. Since we're using C#, let's consume it from C#. Because at this point library.so/.dll is a native library like any other, we need to p/invoke into it.
+To build a program that loads the library with `dlopen` and `dlsym`, and
+calls it:
 
 ```console
-$ bflat build libraryconsumer.cs
+$ bflat build libraryconsumer.cs --arch x64 --os linux
+$ ./libraryconsumer
 ```
 
-This will build a libraryconsumer(.exe) binary that will load the library and invoke functions in it.
-
-Libraryconsumer is going to load the library through dlopen/dlsym (LoadLibrary/GetProcAddress on Windows). If you would like, you can also have it bind statically. Build the consumer program like this:
+To bind to the library statically, give `-i:library`:
 
 ```console
-$ bflat build libraryconsumer.cs -i:library
+$ bflat build libraryconsumer.cs --arch x64 --os linux -i:library
 ```
 
-This will build the program with a hard reference to the external symbol. You should see a failure during linking if you run the above command. To fix this failure, we need to pass information where to find the symbol to linker.
-
-If you're targeting Windows, run:
-
-```console
-$ bflat build libraryconsumer.cs -i:library --ldflags:library.lib
-```
-
-This will point the linker to the import library generated when building the library.
+The link then fails, because the linker does not know where the symbol is.
+Give the library to the linker with `--ldflags`.

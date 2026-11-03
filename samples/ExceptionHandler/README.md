@@ -1,21 +1,24 @@
 # ExceptionHandler sample
 
-Shows how a `--remove-eh` guest — one built without unwind tables, where a
-`throw` ends the run — can take over that throw with a **C# handler that
-receives the exception object**, prints it, and exits cleanly. Builds that
-keep the tables dispatch exceptions normally and need none of this.
+Shows how a guest without unwind tables can take over a `throw` with a **C#
+handler that gets the exception object**. The handler prints the exception
+and ends the guest cleanly. A guest without unwind tables is a `--remove-eh`
+build, or a build for a platform that keeps no unwind tables (Airbender). A
+build that keeps the tables dispatches exceptions normally and needs none of
+this.
 
 ## Background
 
-A managed `throw` is lowered by the JIT to `CORINFO_HELP_THROW`, which calls
-`RhpThrowEx`. Under `--remove-eh` bflat redirects that symbol with
-`--wrap=RhpThrowEx` to `__wrap_RhpThrowEx` (in `rhp/module.c`), which fail-fasts.
+The JIT lowers a managed `throw` to `CORINFO_HELP_THROW`, which calls
+`RhpThrowEx`. When the build has no unwind tables (the `eh: failfast`
+condition), the manifest of the `rhp` module adds `--wrap=RhpThrowEx`. The
+call then goes to `__wrap_RhpThrowEx` in `rhp/module.c`.
 
-This sample wires the wrapper to forward the exception object (passed in `a0`)
-to a **weak** symbol `ZkvmThrow`. A program that exports one — via
-`[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]` — takes over the throw and
-gets the live `Exception` reference. A program that does not export it links
-fine and keeps the plain fail-fast (the reference stays null).
+`__wrap_RhpThrowEx` gives the exception object (in `a0`) to a **weak** symbol
+`ZkvmThrow`. A program that exports one, with
+`[UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]`, takes over the throw and
+gets the live `Exception` reference. A program that does not export it still
+links, and the throw fails fast.
 
 ```csharp
 [UnmanagedCallersOnly(EntryPoint = "ZkvmThrow")]
@@ -28,33 +31,33 @@ static void ZkvmThrow(IntPtr exceptionObj)
 }
 ```
 
-## Two zkVM-specific rules
+## Two zkVM rules
 
-1. **Print with `sys_write`, not `Console.WriteLine`.** Under `--libc zisk` the
-   .NET console path (`SystemNative_Write` / `__stdio_write`) is wrapped to a
-   no-op, so `Console` output is invisible. `sys_write` (from `libziskos`, the
-   same call behind `Nethermind.Zkvm.Abstractions.IO.PrintLine`) reaches the
-   real zkVM stdout. It is only linked with the bindings library of the
-   package; with the platform files alone, a one-byte store to `UART_ADDR`
-   (`0xa0000200`) reaches the same place.
+1. **Print with `sys_write`, not `Console.WriteLine`.** The `zisk` platform
+   has the `no-console` flag, so the .NET console path
+   (`SystemNative_Write`, `__stdio_write`) does nothing. `sys_write` is in
+   the bindings library of bflat-libziskos (the same call as
+   `Nethermind.Zkvm.Abstractions.IO.PrintLine`), and writes to the real
+   output of ZisK. Only the full package links it: the platform files alone
+   do not have it.
 
-2. **Exit with the native `exit()`, not `Environment.Exit`.** The zkVM only
-   ends on a Zisk exit ecall (`a7 = 93`); `pal`'s `__wrap_exit` emits it.
-   `Environment.Exit` instead runs the managed runtime shutdown, which — while
-   an exception is in flight — re-enters the throw path and recurses through the
-   handler forever.
+2. **End with the native `exit()`, not `Environment.Exit`.** The `pal`
+   module sends `exit` to `zkvm_platform_exit` of the platform, which on ZisK
+   is the exit ecall (`a7 = 93`). `Environment.Exit` runs the managed runtime
+   shutdown. While an exception is in flight, the shutdown enters the throw
+   path again, and the handler recurses forever.
 
-The runtime side (forwarding in `__wrap_RhpThrowEx`, the `exit` override, and a
-no-op `RhpReversePInvoke` so the handler can be entered from the throw path) is
-provided by the `rhp` / `pal` modules and the bflat linker wiring.
+The `rhp` and `pal` modules give the runtime side: the forward in
+`__wrap_RhpThrowEx`, the `exit` wrap, and a no-op `RhpReversePInvoke`, so
+that the handler can start from the throw path.
 
 ## Build and run
 
 ```console
-$ bflat build exhandler.cs --os linux --libc zisk --stdlib dotnet \
+$ bflat build exhandler.cs --arch riscv64 --os linux --libc zisk --stdlib dotnet \
       --no-pthread --no-pie --no-stacktrace-data --remove-eh \
-      --extlib https://github.com/NethermindEth/bflat-libziskos:v1.0.0-preview.27
-$ ziskemu -e ./exhandler                  # or run inside Zisk
+      --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
+$ ziskemu -e ./exhandler
 ```
 
 ## Expected output
@@ -64,5 +67,5 @@ before throw
 [ZkvmThrow] System.InvalidOperationException: boom from managed code
 ```
 
-The emulator then completes cleanly (the handler's `NativeExit` issues the Zisk
-exit ecall).
+The emulator then ends cleanly: `NativeExit` in the handler gives the ZisK
+exit ecall.

@@ -1,27 +1,10 @@
-# Sokol graphics/audio samples
+# Sokol graphics and audio samples
 
-Bflat includes the [Sokol](https://github.com/floooh/sokol) crossplatform 3D and audio APIs.
+These samples are from upstream bflat. They use the
+[Sokol](https://github.com/floooh/sokol) 3D and audio APIs through the C#
+bindings at https://github.com/MichalStrehovsky/sokol-csharp.
 
-The C# bindings in use are these: https://github.com/MichalStrehovsky/sokol-csharp. The bindings are also available from NuGet so that they can also be used with official .NET tools outside bflat. The NuGet package is here: https://www.nuget.org/packages/sokol_csharp.unofficial/.
-
-To build the triangle sample with bflat:
-
-```console
-$ bflat build triangle.cs --target:winexe
-```
-
-You can also build it as:
-
-```console
-$ bflat build triangle.cs --target:winexe --no-reflection --no-stacktrace-data --no-globalization --no-exception-messages -Os --no-pie --separate-symbols
-```
-
-On Windows, this will generate a small, ~720 kB executable.
-
-To build the audio sample:
-
-```console
-$ bflat build saudio.cs --target:winexe
-```
-
-More samples are avilable at https://github.com/MichalStrehovsky/sokol-csharp. They're all C# translations of https://github.com/floooh/sokol-samples.
+**This fork does not build them.** Upstream bflat builds them as Windows
+programs (`--target:winexe`) with the Sokol libraries in its layout. This
+fork has no Windows target and no Sokol libraries, and a zkVM guest has no
+graphics or audio. The sources stay here only as a reference to upstream.

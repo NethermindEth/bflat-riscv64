@@ -1,8 +1,21 @@
 # ZeroLib minimal runtime library
 
-There are two guiding principles:
+ZeroLib is the minimal standard library of upstream bflat
+(`--stdlib zero`). It has no garbage collector, no exception handling and no
+useful collection types.
 
-1. Public API surface that doesn't exist in .NET cannot be added (i.e. source code compilable against zerolib needs to be compilable against .NET).
-2. APIs that do hidden allocations cannot be added. If an API returns a fresh object instance, it's all good. If an API allocates as part of it's operation and doesn't return that as result, it's not good. We don't have a GC. This is all memory leaks.
+Two rules apply to its code:
 
-To work in this codebase, simply add a file with a `Main` to this directory and `bflat build --stdlib:none`. You'll get a tight inner dev loop. But you can do things differently; more power to you.
+1. Do not add a public API that .NET does not have. Code that compiles
+   against zerolib must also compile against .NET.
+2. Do not add an API that allocates and does not return the allocation as
+   its result. There is no GC, so each such allocation is a leak.
+
+In this fork, `./build.sh layouts riscv64` compiles zerolib for linux
+riscv64 only (`lib/linux/riscv64/zerolib.dll` in the layout). The other
+zerolib builds of upstream (x64, arm64, Windows, UEFI) are off in
+`src/bflat/bflat.csproj`. The `bflat` that `./build.sh bflat riscv64` makes,
+and the Docker image, do not have zerolib. CI does not test it.
+
+To work on it, add a file with a `Main` to this directory and run
+`bflat build --stdlib none` here.
