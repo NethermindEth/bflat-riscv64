@@ -2,6 +2,8 @@
 layout: default
 title: Manifest format
 eyebrow: Specification
+prev: /targets/
+next: /signing/
 lead: >
   One JSON format describes all the parts that bflat links into a guest in
   addition to the stock NativeAOT runtime. The format covers the modules in
@@ -25,8 +27,8 @@ lead: >
 ## Status
 
 bflat reads schema 2 for the modules in this repository and for `--extlib`
-packages. bflat knows no zkVM: the four zkVM targets are platforms in their
-packages. bflat parses and validates all sections. A manifest that uses a
+packages. bflat knows no zkVM: the five zkVM targets are platforms in their
+packages ([Targets](targets.md)). bflat parses and validates all sections. A manifest that uses a
 section that bflat does not act on in that kind of build causes an error.
 bflat does not ignore the section.
 
@@ -61,7 +63,8 @@ bflat does not ignore the section.
    and external downloads. `BuildCommand.cs`, `bflat.csproj` and `build.sh`
    must not contain data about a specific module or target.
 2. **bflat does not know the name of a zkVM.** The bflat-* package of a
-   target (ZisK, SP1, OpenVM) contains the platform manifest of that target.
+   target (ZisK, SP1, OpenVM, Airbender) contains the platform manifest of that
+   target.
    bflat knows only the format, the generic modules and the stock NativeAOT
    targets.
 3. **One parser reads the format.** The parser is `src/bflat/BflatManifest.cs`.
@@ -179,9 +182,9 @@ The modules of bflat know these flags. The platforms set them:
 
 | Flag | Meaning | Reader | Platforms |
 |------|---------|--------|-----------|
-| `no-atomics` | The decoder does not have the A extension. | `nothread` | `sp1`, `openvm` |
-| `noos` | No OS call can be serviced. | `noos` | `sp1`, `openvm` |
-| `no-console` | No host console and no host stdio. | `rhp`, `pal` | `zisk`, `sp1`, `openvm` |
+| `no-atomics` | The decoder does not have the A extension. | `nothread` | `sp1`, `openvm`, `airbender` |
+| `noos` | No OS call can be serviced. | `noos` | `sp1`, `openvm`, `airbender` |
+| `no-console` | No host console and no host stdio. | `rhp`, `pal` | `zisk`, `sp1`, `openvm`, `airbender` |
 
 A condition on a `platform` name is permitted. But only the package that
 owns the platform must use it: the bindings of bflat-libziskos, for example,
@@ -266,7 +269,7 @@ manifests fill only the parts in square brackets:
 ```
 crt1 crti  <guest .o>  <bootstrapper>  <runtime libs>
   [pre-libc]              ← definitions that must replace libc.a members
-  libc.a  libgcc.a  crtn
+  libc.a  libgcc.a  crtn    ← riscv32: libclang_rt.builtins-riscv32.a for libgcc.a
   <--extra-ld>  <--extlib objects and wraps>
   [pre-entry]
   [linker_script]  [entry]
@@ -387,9 +390,10 @@ an error. If they give the same value, bflat writes the option one time. The
 `--codegenopt` option of the user comes last, so it replaces the value of
 all manifests.
 
-bflat writes two options for every riscv64 target: `JitNoUnalignedAccess`
+bflat writes two options for every RISC-V target (riscv64 and riscv32): `JitNoUnalignedAccess`
 and `JitRiscV64StrictAlign`, both `0` by default. A platform that gives them
-replaces the default (SP1 sets both to `1`). `--no-unaligned-access` sets
+replaces the default (SP1 sets both to `1`; Airbender sets
+`JitNoUnalignedAccess=1` and `JitRiscV64StrictAlign=0`). `--no-unaligned-access` sets
 `JitNoUnalignedAccess=1` for any target.
 
 ### `postlink`: changes to the linked image
@@ -414,7 +418,7 @@ step to bflat. The tools:
 
 | Tool | What it does |
 |------|--------------|
-| `patch_elf` | `scripts/patch_elf.py` rewrites the image in place. An ELF32 image (riscv32) takes only the passes that rewrite instruction words: `--nop-fences`; `--unsigned-muldiv`, which moves each signed RV32M instruction of the native code into a trampoline built from unsigned ones (the linker script reserves `__signed_tramp_start` to `__signed_tramp_end`); and `--unimp-system`, which rewrites to UNIMP (`csrrw x0, cycle, x0`) each SYSTEM instruction with funct3 0 that is code (an `ebreak` after a call to a noreturn helper, an `ecall`), and each access of a CSR that `--unimp-csr <number>` names, for a zkVM whose decoder reads the whole `.text` and rejects them. |
+| `patch_elf` | `scripts/patch_elf.py` rewrites the image in place. The passes for an ELF64 image (riscv64): `--fix-init-array`, `--fix-tdata`, `--trim-bss` and `--remove-eh` (ZisK), `--nop-fences` and `--nop-zero-words` (SP1), `--print-fn-boundaries` (a report), `--split-code-data`. An ELF32 image (riscv32) takes only the passes that rewrite instruction words, on the bytes of the file: `--nop-fences`; `--unsigned-muldiv`, which moves each signed RV32M instruction of the native code into a trampoline built from unsigned ones (the linker script reserves `__signed_tramp_start` to `__signed_tramp_end`); and `--unimp-system`, which rewrites to UNIMP (`csrrw x0, cycle, x0`) each SYSTEM instruction with funct3 0 that is code (an `ebreak` after a call to a noreturn helper, an `ecall`), and each access of a CSR that `--unimp-csr <number>` names, for a zkVM whose decoder reads the whole `.text` and rejects them. [Stage 3](architecture.md#stage-3--post-link-steps) describes each pass. |
 | `flat_image` | Writes `<output><suffix>`, the raw image of the output (`llvm-objcopy -O binary`), of the sections that `--section` names when it gives any, padded with zeros to a multiple of four bytes. Arguments: `--suffix <suffix>`, `--section <name>` (repeated). |
 
 ### `checks`: checks of the full image
@@ -425,8 +429,8 @@ step to bflat. The tools:
 
 These keys turn on `--error-on-float-binary`, `--error-on-compressed` and
 `--error-on-atomic` for each guest of this platform. `"il_float": true` turns
-on `--error-on-float`, which checks the IL. The platforms of today do not use
-these keys, so the checks stay opt-in, as before.
+on `--error-on-float`, which checks the IL. Airbender sets `float`,
+`compressed` and `atomic`. On the other platforms the checks stay opt-in.
 
 `il_float_allow` lists methods, as `Namespace.Type.Method`, whose floating
 point `--error-on-float` reports as a warning and not as an error: the IL has
@@ -506,9 +510,10 @@ A manifest with a `platform` object is a target that the user can select
 | `zisk_sim` | `zisk_sim` | bflat-libziskos | `zisk_sim.bflat.manifest`, `zisk_sim.ld`, and `zisk_entry.o` of `zisk` |
 | `sp1` | `sp1` | bflat-sp1 | `sp1.bflat.manifest`, `sp1_entry.o`, `sp1.ld` |
 | `openvm` | `openvm` | bflat-openvm | `openvm.bflat.manifest`, `openvm_entry.o`, `openvm.ld` |
+| `airbender` | `airbender` | bflat-airbender | `airbender.bflat.manifest`, `airbender_entry.o`, `airbender.ld` |
 
 `platform/build.sh` of each package builds these files. It needs only the
-RISC-V binutils. The bindings library of the package (for example
+RISC-V binutils (for Airbender, clang). The bindings library of the package (for example
 `libsp1.a`) has its own manifest, which applies with
 `"when": { "platform": "sp1" }`.
 
@@ -575,8 +580,9 @@ Each `--extlib` package must give at least one manifest to the build, as
 before schema 2.
 
 For a platform build, bflat links musl's `crt1.o` with `_start` renamed
-(`lib/linux/riscv64/musl/crt1-platform.o`), so that the entry of the
-platform defines `_start`.
+(`crt1-platform.o` in the musl directory of the layout:
+`lib/linux/riscv64/musl`, or `lib/linux/riscv32/musl` for a riscv32
+platform), so that the entry of the platform defines `_start`.
 
 ### Platform interface
 
@@ -591,13 +597,14 @@ defines:
 | `void zkvm_platform_write(int fd, const char *buf, int len)` | no | console output (`Console`, the trap messages of `noos`, `sys_write`) | the output is lost |
 | `long zkvm_platform_syscall(long n, long a1, …, long a6)` | no | a raw `syscall` that `pal` does not answer itself | `syscall` returns `-1` |
 
-The entry object also defines `_start`. The four platforms of today:
+The entry object also defines `_start`. The five platforms of today:
 
 | Platform | `zkvm_platform_exit` | `zkvm_platform_write` | `zkvm_platform_syscall` |
 |----------|----------------------|-----------------------|-------------------------|
 | `zisk`, `zisk_sim` | `ecall` with `a7 = 93` | — | musl's `syscall` (ZisK emulates Linux syscalls) |
 | `sp1` | `zkvm_halt` of the bindings library; without it, the commits and `HALT` | the `WRITE` syscall | — |
 | `openvm` | `TERMINATE` | `PrintStr` | — |
+| `airbender` | code 0: the output words in `x10`–`x25`; other codes: a write of the cycle CSR, which cannot be proven | the quasi-UART of CSR `0x7c0` | — |
 
 `pal` also exports functions that a platform can bind its runtime to. Today
 there is one: `void *zkvm_alloc_or_abort(uint32_t bytes, uint32_t align)`,
@@ -710,7 +717,8 @@ same error as a schema 1 manifest without a matching build.
 | guest_subst (was zisk_subst) | — | — | — | `ilc.substitutions`, `ilc.features` (invariant globalization, moved from ubootstrap, and invariant timezones) | Nothing in it is for one VM. Only the single-hart substitutions stay; see [Substitutions](#substitutions). |
 
 The four zkvm_* modules are gone: they are the platforms in bflat-libziskos,
-bflat-sp1 and bflat-openvm. Their unit tests went with them
+bflat-sp1 and bflat-openvm. bflat-airbender came later, as a platform from
+the start. Their unit tests went with them
 (`tests/platform/` of each package).
 
 ## What left BuildCommand.cs and the modules

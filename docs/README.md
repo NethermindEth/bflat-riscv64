@@ -26,7 +26,9 @@ docs/
 ├── index.html           Marketing landing page (uses landing layout)
 ├── runtime.md           dotnet-riscv: an official .NET build for the target, and the patches we aim to upstream
 ├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
-├── modules.md           Each link-time module explained
+├── modules.md           Each module explained
+├── targets.md           The zkVM platforms and the other targets, one by one
+├── manifest.md          The manifest format of the modules, platforms and packages
 ├── build.md             Building the driver (.NET version, variant) and using it
 ├── signing.md           The signatures of the downloaded packages and of the dotnet-riscv release
 └── verification.md      Contracts, tests, fuzzing, proofs and the CI gates

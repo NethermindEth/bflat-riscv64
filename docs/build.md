@@ -3,145 +3,184 @@ layout: default
 title: Build & use
 eyebrow: Hands-on
 lead: >
-  Building bflat itself, building your own programs against it, and
-  pulling in external NuGet packages such as <code>libziskos</code>.
-prev: /modules/
+  How to get bflat, how to build a guest for each zkVM, and how to pull in
+  the bflat-* packages that define the zkVM platforms.
+prev: /signing/
 next: /verification/
 ---
 
-## Build bflat from source
+## Get bflat
 
-The full path is documented in [`BUILDING.md`](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md);
-the short version:
+The easy way is the image. It has bflat, the .NET 11 SDK, lld and
+llvm-objcopy:
+
+| Image | Targets |
+|-------|---------|
+| `nethermindeth/bflat-riscv64-11` | riscv64 zkVM platforms, linux-x64 |
+| `nethermindeth/bflat-riscv64-11-riscv32` | the same, plus the riscv32 platforms (Airbender) |
 
 ```console
-$ ./build.sh modules riscv64    # build all link-time modules
-$ ./build.sh bflat   riscv64    # build the compiler driver
-$ ./build.sh layouts riscv64    # produce the redistributable layouts
+$ docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w \
+    nethermindeth/bflat-riscv64-11 bflat --info
 ```
 
-`build.sh` wraps `dotnet build` and the cross-compilation of every C /
-C++ / asm module under `src/bflat/modules/`. You need:
+`bflat --info` shows the bundled runtime release and the SHA-256 of each
+signing key that the binary trusts.
 
-- A .NET 11 SDK — see [.NET version and runtime](#net-version-and-runtime)
-  for which one.
-- `clang` and `clang++` — they compile the C and C++ modules
-  (cross-targeted with `--target=riscv64-linux-gnu`, so no separate cross
-  compiler is needed for those).
-- The `riscv64-linux-gnu` binutils (`as`, `objcopy`, `objdump`) for the
-  assembly modules and the layout steps, plus the `gcc`/`g++` cross
-  packages — which supply the sysroot clang compiles against, and are the
-  compilers used for the module unit tests.
-- Python 3 with `lief` and `pyelftools` for the postprocessor.
+To build bflat from source, build the modules first, then bflat:
 
-A Dockerfile (`Dockerfile.build`) bundles all of this; run
-`./build_docker_image.sh` once to build it, then `./docker_shell.sh` to
-get a shell with the toolchain in place.
+```console
+$ ./build.sh modules riscv64    # every link-time module, and the uGC release
+$ ./build.sh bflat   riscv64    # the compiler driver
+$ ./build.sh layouts riscv64    # the bflat-compiled layouts, in layouts/
+```
+
+For the riscv32 target, also build the rv32 modules against the rv32 musl
+sysroot, and build bflat with `-p:BflatTargetRiscV32=true`.
+[`BUILDING.md`](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md)
+has the prerequisites, the riscv32 steps and the Docker scripts:
+`docker_shell.sh` opens a shell with the build toolchain
+(`Dockerfile.build`), and `build_docker_image.sh` builds the runtime image
+(`Dockerfile`) and runs bflat in it.
 
 ## .NET version and runtime
 
-bflat builds against **.NET 11** and bundles the performance-oriented
-runtime of dotnet-riscv (an `*-upstream-perf` release), paired with the
-<a href="architecture.md#zkvm-ryujit-codegen-knobs">RyuJIT knobs</a>. The
-release tag is in
-[`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props),
-which is the source of truth as release tags move; the download cache is
-keyed by that tag.
+bflat builds for **.NET 11** only. It bundles the `upstream-perf` runtime of
+dotnet-riscv, which pairs with the
+<a href="architecture.md#zkvm-ryujit-codegen-knobs">RyuJIT knobs</a> of the
+platforms. The release tag is in
+[`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props).
+The riscv32 build takes a later release that has the riscv32 target. See
+[Runtime](runtime.md).
 
-One Docker image is published: `nethermindeth/bflat-riscv64-11`.
+bflat needs a .NET 11 runtime to run. The image runs `bflat --info` as its
+last build step, so an image that cannot start bflat does not build.
 
-**About the SDK.** bflat needs a .NET 11 SDK to build and a .NET 11
-runtime to run. The published image installs a .NET 11 SDK and runs
-`bflat --info` on the finished image, so a mismatch fails the image build
-instead of the first use.
+## Signatures of the downloads
 
-## Verifying a build
+The bflat build checks the signature of the dotnet-riscv release, and
+`build.sh modules` checks the uGC release, with the public keys in
+`BFLAT_SIGNING_PUBLIC_KEY`. bflat writes these keys into its binary and
+checks each `--extlib` `.nupkg` with them. Without the variable, nothing is
+checked and the build says so. `-p:AllowUnsignedRuntime=true` and
+`ALLOW_UNSIGNED_EXTERNAL=true` accept a release that has no signature. See
+[Package signatures](signing.md).
 
-The module test, fuzzing and proof suites are described on the
-[Verification](verification.md) page.
+## Build a guest
 
-The build checks the signature of the dotnet-riscv release that it
-downloads, with the public keys in `BFLAT_SIGNING_PUBLIC_KEY`, and writes
-these keys into the bflat binary. Without the variable, nothing is checked
-and the build says so. Set `-p:AllowUnsignedRuntime=true` to use a release
-that has no signature. See [Package signatures](signing.md).
-
-## Build a C# program for Zisk
-
-bflat knows no zkVM by itself. Each zkVM target is a **platform** that its
-bflat-* package defines: the entry point, the memory map, the instruction
-set, the RyuJIT options and the post-link steps (refer to the
+bflat knows no zkVM by itself. Each zkVM target is a **platform** that a
+bflat-* package defines: the entry point, the memory map, the ISA, the ABI,
+the RyuJIT options and the post-link steps (see the
 [manifest format](manifest.md#platform)). `--libc` selects the platform by
-its alias, and `--extlib` must give the package:
+its name, and `--extlib` gives the package. [Targets](targets.md) has the
+details of each platform.
 
 ```console
-$ bflat build hello.cs --os linux --libc zisk \
-    --extlib path/to/libziskos.bflat.manifest
+$ bflat build app.cs --arch riscv64 --os linux --libc zisk --no-pie --no-pthread \
+    --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
 ```
 
-The package is
-[`bflat-libziskos`](https://github.com/NethermindEth/bflat-libziskos) (NuGet:
-`Nethermind.ZiskOS.Runtime`). A manifest path makes bflat read every
-`*.bflat.manifest` in its directory: there the platform (`zisk.bflat.manifest`)
-and the bindings (`libziskos.bflat.manifest`) come together. A guest that does
-not use the accelerators can be built with the platform files alone
-(`platform/build.sh` of the package).
+Give `--arch` each time: without it, bflat builds for the host
+architecture. Give `--no-pie` too: position-independent code does not agree
+with the fixed memory map. Every guest in this repository, in bflat-ts and in
+Nethermind passes both.
 
-Optional but useful flags:
+| Platform | `--arch` | `--libc` | Package | Post-link steps |
+|----------|----------|----------|---------|-----------------|
+| ZisK | `riscv64` | `zisk` | [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos) | `patch_elf`: init array, TLS template, `.bss`; the unwind tables under `--remove-eh` |
+| ZisK under QEMU | `riscv64` | `zisk_sim` | bflat-libziskos | none |
+| SP1 | `riscv64` | `sp1` | [bflat-sp1](https://github.com/NethermindEth/bflat-sp1) | `patch_elf`: FENCE and zero words to NOP |
+| OpenVM | `riscv64` | `openvm` | [bflat-openvm](https://github.com/NethermindEth/bflat-openvm) | none |
+| Airbender | `riscv32` | `airbender` | [bflat-airbender](https://github.com/NethermindEth/bflat-airbender) | `patch_elf`: FENCE, signed M, SYSTEM; `flat_image`: `<out>.bin`, `<out>.text` |
 
-| Flag | What it does |
-|------|--------------|
-| `--arch riscv64` | Set explicitly; otherwise inferred from `--libc` |
-| `--no-stacktrace-data` | Drop textual stack-trace tables. Saves significant binary size. |
-| `--remove-eh` | Strip the DWARF unwind tables: ~100 KiB smaller, but a `throw` exits the guest instead of running `catch`/`finally`. |
-| `--no-globalization` | Forced on for every zkVM target; listed for clarity. |
-| `-Os` / `-Ot` | Optimise for size or speed. zkVMs reward size — every prover-step counts. |
-| `--mstat` | Emit MSTAT and DGML files for `dotnet-stat` size analysis. |
-| `--symchart` | After linking, run `readelf` and produce an HTML symbol-size chart. |
-| `--error-on-float` | Fail the build if any emitted method's IL contains a floating-point conversion. Known-dead sites are listed and reported as warnings. |
-| `--error-on-float-binary` | Fail if the *linked binary* contains any F/D instruction. Catches what the IL scan cannot see — comparisons, and native objects. |
-| `--error-on-compressed` | Fail if the linked binary contains a compressed (C) instruction. |
-| `--error-on-atomic` | Fail if the linked binary contains an atomic (A) instruction: `lr`/`sc`, `amo*`. |
-| `--allow-unsigned` | Accept an `--extlib` package that has no signature, with a warning. A bad signature is still an error. |
-| `--substitution <file>` | Apply an extra ILLink substitutions file on top of the built-in zkVM set. |
-| `-x` | Print the ILC and linker commands as they run. |
+The post-link steps change the ELF **in place**: the file that `-o` names is
+the file that the zkVM runs. The `flat_image` steps of Airbender write two
+more files next to it.
 
-The post-link steps of a platform (its `postlink` section) rewrite the ELF
-**in place**: what `-o` names is what the zkVM runs, and there is no second
-file to choose between. ZisK's step fixes the init array and TLS template and
-trims `.bss`; SP1's rewrites the encodings its transpiler rejects (FENCE and
-alignment padding). The `zisk_sim` and `openvm` platforms have none.
+A manifest path makes bflat read every `*.bflat.manifest` in its directory.
+The package of bflat-libziskos has the `zisk` and `zisk_sim` platforms and
+the bindings (`libziskos.bflat.manifest`). A guest that does not use the
+accelerators can use the platform files alone: `platform/build.sh <dir>` of
+each package writes them.
 
-## Run a built binary
+### Airbender
+
+The Airbender release has no `.nupkg`. Download its assets into one
+directory, or build them with `build/build.sh airbender` of bflat-airbender,
+and give the local manifest. Use the riscv32 image:
 
 ```console
-# Native RISC-V64 host
-$ ./hello
-
-# x86 host with QEMU user-mode
-$ qemu-riscv64 ./hello
-
-# Inside Zisk's emulator, passed with -e
-# (--rom takes an already-converted ROM, not an ELF)
-$ ziskemu -e ./hello
+$ bflat build app.cs --arch riscv32 --os linux --libc airbender --no-pie --no-pthread \
+    --extlib <dir>/libairbender.bflat.manifest -o app
+$ ls app app.bin app.text
 ```
 
-## Linking external libraries via NuGet
+The platform keeps no unwind tables, so a `throw` goes to the `ZkvmThrow`
+handler of the guest, or ends the run (see
+[Exit and exceptions](architecture.md#exit-and-exceptions)).
 
-bflat understands `--extlib` arguments that point at NuGet packages.
-Three forms are accepted:
+## Options
+
+The options that matter for a guest:
+
+| Option | What it does |
+|--------|--------------|
+| `--arch riscv64` / `riscv32` | The target architecture. The default is the host architecture. `riscv32` needs a layout with the riscv32 target |
+| `--os linux` | The target OS. Each zkVM platform has the base `linux` + `musl` |
+| `--libc <platform>` | The platform alias that an `--extlib` package defines |
+| `--extlib <package>` | A package: `https://github.com/<owner>/<repo>:<tag>`, a path or URL to a `.nupkg`, or a path or URL to a `.bflat.manifest` |
+| `--allow-unsigned` | Accept an `--extlib` package that has no signature, with a warning. A bad signature is always an error |
+| `--no-pie` | Do not make a position-independent executable. Necessary for the fixed memory maps |
+| `--no-pthread` | Remove the pthread dependency |
+| `--stdlib dotnet` / `zero` / `none` | The C# standard library. The default is `dotnet` |
+| `-O`, `-Os`, `-Ot`, `-O0` | Optimize; for size; for speed; no optimization. The RyuJIT tuning knobs of a platform apply only to optimized builds |
+| `--no-stacktrace-data` | Remove the textual stack-trace tables. This saves much image size |
+| `--no-exception-messages` | Remove the exception messages |
+| `--no-reflection` | Disable reflection |
+| `--remove-eh` | Remove the DWARF unwind tables: about 100 KiB smaller, but a `throw` ends the guest, and no `catch` or `finally` runs |
+| `--no-unaligned-access` | Expand each unaligned access into a byte-wise sequence. The sp1 platform always builds like this |
+| `-m <extensions>` | The instruction-set extensions of the target. A platform sets its own ISA in `codegen.isa` |
+| `--codegenopt Name=Value` | Give one more RyuJIT option. The values are hexadecimal |
+| `--feature Name=Value` | Set a feature switch |
+| `--substitution <file>` | Apply one more ILLink substitutions file after the substitutions of `guest_subst` |
+| `--lto` | Link with LTO (`--lto=full --lto-O3`). Only native libraries built with `-flto` take part |
+| `--wrap-check` | Fail the build if a `--wrap=` target is not a real symbol |
+| `--error-on-float` | Fail if the IL of an emitted method has a floating-point conversion. The known dead sites give only a warning |
+| `--error-on-float-binary` | Fail if the linked image has an F or D instruction |
+| `--error-on-compressed` | Fail if the linked image has a compressed (C) instruction |
+| `--error-on-atomic` | Fail if the linked image has an atomic (A) instruction: `lr`, `sc`, `amo*` |
+| `--mstat` | Write MSTAT and DGML files for size analysis |
+| `--symchart` | After the link, run `readelf` and write an HTML chart of the symbol sizes |
+| `--map <file>` | Write an object map file |
+| `--keep-object` | Keep the object file that ILC writes |
+| `-x` | Show the ILC and linker commands |
+| `--verbose` | Show more output. On zisk, this also shows the function boundaries that `patch_elf` finds |
+
+`bflat build --help` shows all the options.
+
+## Run a guest
 
 ```console
-$ bflat build app.cs --os linux --libc zisk \
-    --extlib repo:version          # GitHub release with a single .nupkg attachment
-    --extlib path/to/package.nupkg # local nupkg
-    --extlib path/to/package.bflat.manifest   # local manifest, sources resolved relatively
+# zisk_sim: RISC-V64 Linux, or QEMU user mode on another host
+$ qemu-riscv64 ./app
+
+# zisk: the ZisK emulator (-e takes the ELF; --rom takes a converted ROM)
+$ ziskemu -e ./app
+
+# airbender: the cli of matter-labs/zksync-airbender loads the two flat images
+#   (tests/run-airbender.sh shows the input format and how to read the result)
+$ cli run --bin ./app.bin --text ./app.text --input-file input.hex --cycles 2000000000
 ```
 
-A package contains one or more `*.bflat.manifest` files in the
-[manifest format](manifest.md). A manifest path stands for its whole
-directory: bflat reads every `*.bflat.manifest` there. The bindings manifest
-of bflat-libziskos, for example:
+SP1 and OpenVM run the guest through their own host tools. The
+[bflat-ts](https://github.com/NethermindEth/bflat-ts) suite has a runner for
+each zkVM.
+
+## Linking external libraries
+
+A package has one or more `*.bflat.manifest` files in the
+[manifest format](manifest.md). The bindings manifest of bflat-libziskos,
+for example:
 
 ```json
 {
@@ -154,76 +193,48 @@ of bflat-libziskos, for example:
 }
 ```
 
-A manifest applies when its `when` holds: here only on the `zisk` platform.
-Its static libraries are added to the link line, its `ilc.references` are
-referenced and AOT-compiled along with the user code. Paths are relative to
-the manifest. bflat also reads the format of before (no `schema` key; one
-`builds[]` entry per arch/os/libc), which cannot define a platform.
+A manifest applies when its `when` holds: here, only on the `zisk`
+platform. Its static libraries go into the link line, and its
+`ilc.references` are compiled with the user code. Paths are relative to the
+manifest. bflat also reads the format of before (no `schema` key, one
+`builds[]` entry for each arch, os and libc), but that format cannot define a
+platform.
 
-A `.nupkg` must be signed with a key that bflat trusts, and a
-`.bflat.manifest` from a URL is treated as unsigned. A local
-`.bflat.manifest` is not checked. `--allow-unsigned` accepts an unsigned
-package with a warning; a bad signature is always an error. See
-[Package signatures](signing.md).
-
-## Targeting the simulator
-
-```console
-$ bflat build app.cs --os linux --libc zisk_sim \
-    --extlib path/to/zisk_sim.bflat.manifest
-```
-
-The `zisk_sim` platform is in bflat-libziskos too. Same runtime, allocator
-and TLS shim as the Zisk target, but without the post-link step, without
-libziskos and with a slightly looser linker script — the build to reach for
-when debugging under GDB.
-
-## Targeting SP1 and OpenVM
-
-```console
-$ bflat build app.cs --os linux --libc sp1 --extlib path/to/libsp1.bflat.manifest
-$ bflat build app.cs --os linux --libc openvm --extlib path/to/libopenvm.bflat.manifest
-```
-
-The platforms are in
-[`bflat-sp1`](https://github.com/NethermindEth/bflat-sp1) and
-[`bflat-openvm`](https://github.com/NethermindEth/bflat-openvm). Same modules,
-allocator and substitutions again; what changes is the entry point, the
-memory map and the halt protocol, all in `platform/` of each package. SP1
-asserts naturally aligned memory accesses, so its platform always builds
-with the byte-wise expansion `--no-unaligned-access` asks for by hand;
-OpenVM executes misaligned accesses natively and gets wide ones.
+A `.nupkg` must have a valid signature from a key that bflat trusts. bflat
+treats a `.bflat.manifest` from a URL as unsigned, and does not check a local
+`.bflat.manifest`. See [Package signatures](signing.md).
 
 ## Building a linux-x64 program
 
-bflat keeps the stock NativeAOT targets. With a release that has the
-linux-x64 target (`BflatTargetLinuxX64` in `bflat.variant.props`, see
-[the runtime](runtime.md#the-linux-x64-target)), it builds an ordinary
-x64 Linux program, with the full runtime and no zkVM module:
+bflat keeps the ordinary linux-x64 target of NativeAOT. It builds an x64
+Linux program with the full runtime and no zkVM module:
 
 ```console
 $ bflat build app.cs --arch x64 --os linux
 $ ./app
 ```
 
-The program is dynamically linked against glibc, like a program that
-`dotnet publish -p:PublishAot=true` makes. CI builds and runs one in the
-image of each leg that has the target.
+The program is linked dynamically against glibc, like a program from
+`dotnet publish -p:PublishAot=true`. CI builds and runs one in each image.
+See [Targets](targets.md#linux-x64).
 
-## Known limitations
+## Known limitations of a zkVM guest
 
-- **Multi-threading.** There is exactly one thread of execution. Locks
-  are no-ops, `pthread_create` returns success without doing anything.
-  Code that relies on parallel progress will deadlock or misbehave.
-- **Filesystem and console.** `open`, `__stdio_write`, and `__stdio_read`
-  all return failure. Programs must do their I/O through whatever the
-  zkVM provides (in Zisk's case, the precompile API).
+- **One thread.** There is one hart. `pthread_create` returns success and
+  does nothing, and the locks do nothing. Code that needs a second thread to
+  make progress stops or behaves incorrectly.
+- **No file system.** `open` returns an error. A guest reads its input and
+  writes its output through the API of the zkVM (for example the bindings of
+  bflat-libziskos).
+- **The console.** zisk, sp1, openvm and airbender have the `no-console`
+  flag: `Console` writes go nowhere. Use the print function of the platform.
+  zisk_sim keeps the stdio of the host.
 - **Time and randomness are deterministic.** `clock_gettime` returns `-1`,
-  and the RNG entry points are answered by a fixed-sequence PRNG (see the
-  [rng_stupid module](modules.md#rng-stupid)) — the same build produces the
-  same bytes on every run, which is what a reproducible proof requires.
-- **Exceptions cover explicit `throw` only.** `try`/`catch`/`finally`,
-  filters and rethrow work; an uncaught exception ends in `FailFast`. A
-  hardware fault — a null dereference, say — kills the guest with `SIGSEGV`
-  instead of surfacing as an exception: nothing installs a signal handler
-  and the emulator raises no trap.
+  and the `rng_stupid` [module](modules.md)
+  gives a fixed sequence. The same build gives the same bytes in each run.
+  A proof needs this.
+- **Exceptions cover an explicit `throw` only.** `try`/`catch`/`finally`,
+  filters and rethrow work. An exception that no code catches ends in
+  `FailFast`. A hardware fault, for example a null dereference, does not
+  become an exception: no signal handler is installed, and the zkVM raises no
+  trap.

@@ -6,6 +6,8 @@ lead: >
   bflat downloads code that goes into each guest: the dotnet-riscv runtime
   when bflat is built, and the bflat-* packages when a guest is built. A
   signature tells bflat that this code comes from our CI.
+prev: /manifest/
+next: /build/
 ---
 
 # Package signatures
@@ -15,8 +17,8 @@ lead: >
 | Download | When bflat downloads it | Where the signature is | What checks it |
 |----------|-------------------------|------------------------|----------------|
 | The dotnet-riscv release (runtime zips, `bflat.compiler` nupkg) | When bflat is built | Two assets of the release | `bflat.csproj`, with `bflat-modules verify-release` |
-| The release archive of a module (`external` with `release`: uGC for `ugc-zero`) | When the modules are built (`build.sh modules`) | Two assets of the release | `build.sh`, with `bflat-modules verify-release` |
-| An `--extlib` `.nupkg` (bflat-libziskos, bflat-sp1, bflat-openvm) | When a guest is built | Two entries in the package | `bflat build` |
+| The release archive of a module (`external` with `release`: the uGC releases of `ugc-zero`, v1.0.13 for riscv64 and v1.0.15 for riscv32) | When the modules are built (`build.sh modules`) | Two assets of the release | `build.sh`, with `bflat-modules verify-release` |
+| An `--extlib` `.nupkg` (bflat-libziskos, bflat-sp1, bflat-openvm, bflat-airbender) | When a guest is built | Two entries in the package | `bflat build` |
 
 A local `.bflat.manifest` is not checked: it is a build of the developer
 (for example `platform/build.sh` output, or `BFLAT_PLATFORMS` in the
@@ -30,7 +32,7 @@ There is one key pair for all the repositories.
 
 | Key | Where it is | Who uses it |
 |-----|-------------|-------------|
-| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The sign job (`sign.yml`) of the release workflows of bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC |
+| Private key | The GitHub Actions **secret** `BFLAT_SIGNING_KEY` (PEM) | The sign job (`sign.yml`) of the release workflows of bflat-libziskos, bflat-sp1, bflat-openvm, bflat-airbender, dotnet-riscv and uGC |
 | Public key | The GitHub Actions **variable** `BFLAT_SIGNING_PUBLIC_KEY` (base64 DER) | The bflat build and `build.sh modules`. bflat writes it into its binary. The publish jobs of the release workflows check the signature with it before they publish. |
 
 `BFLAT_SIGNING_PUBLIC_KEY` can have more than one key, separated by commas.
@@ -84,7 +86,9 @@ it.
 A bad signature is always an error: no option accepts it.
 
 The bflat build checks again when a download changes. It writes the stamp
-`obj/bflat-signature-<tag>.verified` after a good check.
+`bflat-signature-<tag>.verified` into the download cache after a good check.
+The cache is `DownloadCachePath`; by default it is the `obj/` directory of
+the project.
 
 bflat extracts a `.nupkg` into a directory with the hash of the package in
 its name. Thus a cached extraction is used only for the same package bytes
@@ -95,7 +99,7 @@ that bflat checked.
 The private key is only in the job of the reusable workflow
 `.github/workflows/sign.yml` of this repository. That job runs no build:
 code that a release job builds or downloads never runs where the key is.
-A release job has three jobs:
+A release workflow has three jobs:
 
 1. The build job makes the packages and writes the lists of their SHA-256
    hashes into an artifact. It needs no key.
@@ -120,7 +124,8 @@ A release job has three jobs:
    by the SHA of a commit of `master`, not by the branch: the job gets the
    private key, so a change to `sign.yml` must not reach the releases before
    the callers take it. After a change to `sign.yml`, update the SHA in
-   bflat-libziskos, bflat-sp1, bflat-openvm, dotnet-riscv and uGC.
+   bflat-libziskos, bflat-sp1, bflat-openvm, bflat-airbender, dotnet-riscv
+   and uGC.
 
    ```yaml
    sign:
