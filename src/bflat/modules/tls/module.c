@@ -18,6 +18,13 @@
 #define TLS_CNT         (1)
 #define TLS_ALIGN       (4)
 
+/*
+ * The RISC-V psABI biases a DTPREL offset by -0x800 (musl's DTP_OFFSET), so
+ * the offset of a __tls_get_addr argument is that of the variable less
+ * 0x800. The module is built for RISC-V only.
+ */
+#define DTP_OFFSET      ((size_t)0x800)
+
 static uint8_t  tls_storage_static[HEAP_SIZE]
     __attribute__((aligned(64)));
 
@@ -143,7 +150,8 @@ __wrap___init_tls(size_t *aux)
     assigns tls_initialized, tp, tls_base,
             tls_storage_static[0 .. (100 * 1024) - 1];
     ensures tls_initialized == 1;
-    ensures \result == (v == \null ? (void *)tls_base : (void *)(tls_base + v[1]));
+    ensures \result == (v == \null ? (void *)tls_base :
+                                    (void *)(tls_base + (size_t)(v[1] + DTP_OFFSET)));
 */
 static __attribute__((noinline, cold))
 void *
@@ -152,12 +160,13 @@ tls_get_addr_first(size_t *v)
     ensure_tls_initialized();
 
     if (v != NULL)
-        return (void*)(tls_base + v[1]);
+        return (void*)(tls_base + (size_t)(v[1] + DTP_OFFSET));
     return tls_base;
 }
 
 /*@ // v = {module id, offset}; with one module and one thread the module
-    // id is irrelevant and the answer is always tls_base + offset. A null
+    // id is irrelevant and the answer is always tls_base + offset, the
+    // offset being biased by -DTP_OFFSET. A null
     // v yields the TLS base itself (non-standard convenience used by the
     // runtime's early probes).
     requires v == \null || \valid_read(v + (0 .. 1));
@@ -166,7 +175,7 @@ tls_get_addr_first(size_t *v)
 
     behavior indexed:
       assumes v != \null;
-      ensures \result == (void *)(tls_base + v[1]);
+      ensures \result == (void *)(tls_base + (size_t)(v[1] + DTP_OFFSET));
 
     behavior base:
       assumes v == \null;
@@ -183,6 +192,6 @@ __wrap___tls_get_addr(size_t *v)
         return tls_get_addr_first(v);
 
     if (v != NULL)
-        return (void*)(base + v[1]);
+        return (void*)(base + (size_t)(v[1] + DTP_OFFSET));
     return base;
 }
