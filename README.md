@@ -3,196 +3,170 @@
 [![Build RISC-V64](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml/badge.svg)](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
 [![ZK Tests](https://zk-testing.nethermind.dev/api/v2/projects/1/badge)](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1)
 
-Nethermind's Bflat turns C# into fully static RISC-V64 binaries that run
+Nethermind's Bflat compiles C# into fully static RISC-V binaries that run
 inside zkVMs. It is a fork of [bflat](https://github.com/bflattened/bflat) by
-[MichalStrehovsky](https://github.com/MichalStrehovsky) that produces binaries
-with no dependency on a host operating system, and it builds
-[StatelessExecutor](https://github.com/NethermindEth/nethermind) for RISC-V64.
-The same binaries run under user-mode QEMU and on RISC-V64 Linux, which is
-what makes them debuggable.
+[MichalStrehovsky](https://github.com/MichalStrehovsky). A guest needs no
+operating system, no dynamic libraries and no file system. Bflat builds the
+stateless executor of [Nethermind](https://github.com/NethermindEth/nethermind)
+for each zkVM below.
 
-Bflat is a **compiler driver**, not a compiler: it contains no code generator
-of its own. It drives Microsoft's toolchain end to end and adapts the result
-for a target that toolchain does not know about:
+Bflat is a **compiler driver**. It has no code generator of its own. It
+drives the stock .NET toolchain and adapts the result for a target that the
+toolchain does not know:
 
 | Stage | Who does the work | What Bflat adds |
 |-------|-------------------|-----------------|
-| C# → IL | Roslyn (`Microsoft.CodeAnalysis.CSharp`) | in-process invocation, no project system |
-| IL → native | Microsoft's ILCompiler (NativeAOT) | zkVM substitutions, target/ABI selection |
-| link | lld | module injection, `--wrap` redirection, linker scripts |
-| post-link | — | ELF postprocessing for the zkVM loader |
+| C# → IL | Roslyn | in-process compile, no project system |
+| IL → native | the .NET ILCompiler (NativeAOT) and RyuJIT | substitutions, feature switches, the ISA and the RyuJIT options of the platform |
+| link | lld | the link-time modules, `--wrap` redirection, the linker script of the platform |
+| post-link | `patch_elf.py`, `flat_image` | the changes to the image that the zkVM loader needs |
 
-## Design principle: stock .NET, no patches
+The documentation site is in [`docs/`](docs/README.md):
+[Targets](docs/targets.md) ·
+[Architecture](docs/architecture.md) ·
+[Modules](docs/modules.md) ·
+[Manifest format](docs/manifest.md) ·
+[Runtime](docs/runtime.md) ·
+[Package signatures](docs/signing.md) ·
+[Build & use](docs/build.md) ·
+[Verification](docs/verification.md).
 
-Every adaptation a zkVM target needs is applied *around* the runtime rather
-than inside it, so the toolchain tracks upstream .NET instead of forking it.
-An adaptation belongs to the earliest layer that can express it:
+## Targets
 
-1. **ILC stage — substitutions.** Managed method bodies are replaced
-   through an ILLink substitutions file
-   (`modules/guest_subst/substitutions.xml`). This is how CoreLib paths
-   leave out the work that has no meaning on one hart. Soft-float arithmetic
-   and the exact libm operations run as they are.
-2. **Link stage — modules and `--wrap`.** Native objects are injected into
-   the link and existing symbols are redirected to them (see
-   [Modules](#modules)). Nothing in the runtime source changes; the linker
-   resolves a call somewhere else.
-3. **Post-link — ELF postprocessing.** Section attributes are fixed up for
-   the Zisk loader.
+Bflat itself knows no zkVM. Each zkVM target is a **platform** that a bflat-*
+package defines: the entry point, the memory map, the ISA, the ABI, the
+RyuJIT options and the post-link steps (see the
+[manifest format](docs/manifest.md#platform)). `--libc` selects the platform
+by its name, and `--extlib` gives the package.
 
-What remains inside .NET is a per-version *fixup* set organised in profiles:
-`minimal` carries riscv64 code-generation correctness fixes and nothing else
-— four per .NET line, each meant for upstream — while an optional `perf`
-profile adds code-quality work on top.
+| Platform | `--arch` / `--libc` | Package | ISA of the guest | Runs on |
+|----------|---------------------|---------|------------------|---------|
+| [zisk](docs/targets.md#zisk) | `riscv64` / `zisk` | [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos) (`Nethermind.ZiskOS.Runtime`) | rv64im, plus Zba, Zbb and Zbs | [ZisK](https://github.com/0xPolygonHermez/zisk) (`ziskemu`, the prover) |
+| [zisk_sim](docs/targets.md#zisk_sim) | `riscv64` / `zisk_sim` | bflat-libziskos | rv64im | `qemu-riscv64`, RISC-V64 Linux |
+| [sp1](docs/targets.md#sp1) | `riscv64` / `sp1` | [bflat-sp1](https://github.com/NethermindEth/bflat-sp1) (`Nethermind.Sp1.Runtime`) | rv64im, aligned accesses only | [SP1](https://github.com/succinctlabs/sp1) v6 |
+| [openvm](docs/targets.md#openvm) | `riscv64` / `openvm` | [bflat-openvm](https://github.com/NethermindEth/bflat-openvm) (`Nethermind.OpenVM.Runtime`) | rv64im | [OpenVM](https://github.com/openvm-org/openvm), RV64 line |
+| [airbender](docs/targets.md#airbender) | `riscv32` / `airbender` | [bflat-airbender](https://github.com/NethermindEth/bflat-airbender) | rv32im, ilp32 | [ZKsync Airbender](https://github.com/matter-labs/zksync-airbender) v3 |
 
-## Supported zkVMs
+No guest has compressed (C), atomic (A) or floating-point (F, D)
+instructions. Floating point is soft-float. Zba, Zbb and Zbs are on for zisk
+only, because the ZisK transpiler decodes them.
 
-Four targets, selected by `--libc`. bflat itself knows none of them: each
-one is a **platform** that its bflat-* package defines (entry point, memory
-map, instruction set, RyuJIT options, post-link steps; see the
-[manifest format](docs/manifest.md#platform)), so `--extlib` must give the
-package. All of them are riscv64 (`--os linux --arch riscv64`) and require
-the same modules from bflat, on soft-float musl; they differ in the entry
-point, the memory map and the halt protocol.
+Bflat also keeps one ordinary target: [linux-x64](docs/targets.md#linux-x64)
+(`--arch x64 --os linux`), a dynamically linked glibc program with the full
+runtime and no zkVM module.
 
-- **[zisk](https://github.com/0xPolygonHermez/zisk)** — runs natively inside
-  Zisk. `--libc zisk`, platform in
-  [bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos).
-- **zisk_sim** — runs under user-mode QEMU or native RISC-V64 Linux. Carries
-  almost every module and adaptation Zisk needs, except support for
-  **precompiles**. `--libc zisk_sim`, platform in bflat-libziskos.
-- **[sp1](https://github.com/succinctlabs/sp1)** — SP1 v6's
-  `riscv64im-succinct-zkvm-elf`. `--libc sp1`, platform in
-  [bflat-sp1](https://github.com/NethermindEth/bflat-sp1).
-- **[openvm](https://github.com/openvm-org/openvm)** — OpenVM's RV64 line
-  (branch `develop-v2.1.0-rv64`; `main` is still RV32 and rejects a 64-bit
-  ELF). `--libc openvm`, platform in
-  [bflat-openvm](https://github.com/NethermindEth/bflat-openvm).
+Nethermind's stateless guest runs the mainnet blocks of its
+`stateless-tests` suite on ZisK, SP1 and OpenVM with the same output.
 
-All four targets run end to end: Nethermind's stateless guest executes the
-nine mainnet blocks of its `stateless-tests` suite on Zisk, SP1 and OpenVM
-alike, with matching output. The `platform/` directory of each package has
-the target's memory map, entry sequence and exit protocol.
+## Quick start
 
-Bflat itself builds against .NET 11; see [BUILDING.md](BUILDING.md).
+Use the published image. It has bflat, the .NET 11 SDK and lld:
 
-## Design choices
-
-### Target ISA
-
-zkVMs offer a limited subset of instructions and generally cannot run Linux.
-The target excludes compressed instructions and floating point — the
-limitation that drives everything below.
-
-### Toolchain and ABI
-
-A GCC-based Linux riscv64 cross toolchain is used. Compiled and linked code
-targets `rv64ima` with the soft-float `lp64` ABI: modules are built
-`-mabi=lp64`. Guest floating point is soft-float: `libgcc.a` gives the
-arithmetic and the `rv64im` musl gives the exact libm operations, and the
-`nofp` module traps the transcendental functions.
-The runtime, musl, `libgcc.a` and `libatomic.a` in the layout are built
-`rv64im` with `-mabi=lp64`, so Bflat links them as they are. The layout
-build checks that each riscv64 object has the soft-float ABI.
-
-### Runtime
-
-Bflat uses a [custom runtime build](https://github.com/NethermindEth/dotnet-riscv)
-based on musl, produced from the upstream .NET VMR with the fixup set
-described above. It is published as a release and downloaded automatically
-by the Bflat build.
-
-### Operating system
-
-Linux is the target: its library ecosystem is too large to treat as alien.
-The standard Linux toolchain is used with [musl](https://git.musl-libc.org/cgit/musl)
-instead of glibc, and a significant number of libraries are phased out
-through entry-point wrappers. The musl side comes from an Alpine cross
-rootfs built by upstream .NET's own `eng/common/cross/build-rootfs.sh`;
-musl itself is rebuilt from the same aport for `rv64im`, overwriting the
-stock `libc.a` and `crt` objects.
-
-### Modules
-
-A module is a native object injected into the guest link, with existing
-symbols redirected to it via `--wrap`. Its `bflat-manifest.json`
-([format](docs/manifest.md)) declares its sources, objects and wraps. The
-platform of a target lists the modules it requires.
-
-| Module | Description |
-|--------|-------------|
-| eh | Synthetic ELF program headers, so the runtime's unwinder can find its tables in an image with no loader |
-| gs_cookie | Pins the stack-cookie symbol to a constant (a zkVM has no entropy and no page protection) |
-| nofp | Traps soft-float builtins and the libm surface, so stray floating point fails loudly instead of returning garbage |
-| noos | Defines the OS surface the runtime's Unix PAL reaches for, ahead of musl (platforms without an OS) |
-| nothread | Explicit single-hart replacements for musl's locking and thread primitives (platforms with the `no-atomics` flag) |
-| pal | Replaces operating-system calls with deterministic stubs; hosts the bump allocator and a small `vfprintf` |
-| rhp | Link-time replacements for internal .NET runtime functions (write barriers, fail-fast, FP-carrying collection helpers) |
-| rhp_native | Assembly replacements for riscv64 runtime helpers (GC reference-assignment barriers) |
-| rng_stupid | Deterministic pseudo-random generator — a zkVM guest must be reproducible |
-| rust_sys | Trivial Rust compatibility layer |
-| stdcppshim | Replacements for C++ allocators |
-| tls | Simple TLS implementation that does not rely on the ELF format |
-| ubootstrap | Bootstrap re-implementation for riscv64 |
-| ugc-zero | Wrapper module for garbage collection |
-| guest_subst | ILC-stage substitutions and invariant feature switches (no native object) |
-
-Every function in the C modules carries a Frama-C (ACSL) contract, and the
-C, C++ and assembly modules are unit-tested on the real ISA under qemu. The
-allocator is fuzzed and its bounds properties machine-checked with CBMC;
-`ugc-zero` is prebuilt and tested in its own repository. See
-[BUILDING.md](BUILDING.md).
-
-### Postprocessing
-
-Zisk linking includes additional postprocessing: section attributes are
-fixed up for the Zisk loader and regions the prover would otherwise account
-for are trimmed.
-
-### External libraries
-
-Bflat can link against NuGet packages, for example
-[bflat-libziskos](https://github.com/NethermindEth/bflat-libziskos). This is
-how existing .NET projects integrate with Bflat.
-
-Packages are named on the command line with
-`--extlib <path>:<version>`, where `<path>` is a link to a GitHub release (in
-which case Bflat looks for the `nupkg` among the attachments), a link to the
-nupkg itself, or a local path to it.
-
-Every such package must carry a `*.bflat.manifest` file in its zip root:
-
-```json
-{
-  "name": "libziskos",
-  "package_version": "1.0.0",
-  "builds": [
-    {
-      "arch": "riscv64",
-      "os": "linux",
-      "libc": "zisk",
-      "static_lib": "runtimes/linux-riscv64/native/libziskos.a",
-      "dotnet_lib": "lib/net10.0/Nethermind.ZiskBindings.dll",
-      "dotnet_assemblyname": "Nethermind.ZiskBindings"
-    }
-  ]
-}
+```console
+$ docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w nethermindeth/bflat-riscv64-11 \
+    bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie --no-pthread \
+    --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
+$ qemu-riscv64 ./hello
 ```
 
-Matching is driven by the `builds` array: `arch`, `os` and `libc` must match
-the target platform. On a match, `static_lib` is linked into the binary and
-`dotnet_lib` is compiled into it. Both paths are relative to the manifest.
+`--extlib <repo>:<tag>` downloads the `.nupkg` of that GitHub release. The
+package of bflat-libziskos has the `zisk` and `zisk_sim` platforms. Change
+`--libc zisk_sim` to `--libc zisk` to build for ZisK, and run the result with
+`ziskemu -e ./hello`. The image for the riscv32 target is
+`nethermindeth/bflat-riscv64-11-riscv32`.
 
-## Building
+To build bflat from source, build the modules first, then bflat:
 
-See [BUILDING.md](BUILDING.md) for the build, the .NET version and the
-runtime, and the test, fuzzing and verification workflows.
+```console
+$ ./build.sh modules riscv64
+$ ./build.sh bflat riscv64
+```
+
+[BUILDING.md](BUILDING.md) has the prerequisites, the riscv32 target, the
+Docker scripts and the checks.
+
+## Design principle: stock .NET, no patches inside bflat
+
+Bflat applies each adaptation *around* the runtime, not inside it. Thus a new
+.NET version is a rebuild, not a merge. An adaptation goes into the earliest
+layer that can express it:
+
+1. **ILC stage: substitutions and feature switches.** The `guest_subst`
+   module gives ILC an ILLink substitutions file and the invariant feature
+   switches. They remove CoreLib work that has no meaning on one hart.
+2. **RyuJIT options.** The platform disables the ISA extensions that the zkVM
+   does not decode, and gives the code-quality options (see
+   [Architecture](docs/architecture.md#zkvm-ryujit-codegen-knobs)).
+3. **Link stage: modules and `--wrap`.** Native objects go into the link, and
+   `--wrap` sends existing symbols to them. The runtime source does not
+   change. The linker resolves a call to a different function.
+4. **Post-link.** `patch_elf.py` and `flat_image` change the linked image for
+   the loader of the zkVM.
+
+The runtime is an official build of the .NET VMR from
+[dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv), with a set of
+riscv64 fixes that we send upstream (see [Runtime](docs/runtime.md)). The
+release that bflat bundles is in `src/bflat/bflat.variant.props`. Bflat
+checks its signature (see [Package signatures](docs/signing.md)).
+
+## Modules
+
+A module is a native object that bflat adds to the guest link. `--wrap`
+sends existing symbols to it. Its `bflat-manifest.json`
+([format](docs/manifest.md)) declares its sources, objects, wraps and the
+conditions for each. A platform lists the modules it requires. A module
+applies only when its conditions hold: for example, `noos` and `nothread`
+apply only on platforms with the `noos` and `no-atomics` flags (sp1, openvm,
+airbender).
+
+| Module | What it does |
+|--------|--------------|
+| eh | Gives synthetic ELF program headers, so the unwinder of the runtime finds its tables in an image that has no loader |
+| gs_cookie | Sets the stack-protector cookie to a constant. A zkVM has no entropy |
+| guest_subst | The ILC-stage substitutions and the invariant feature switches. It has no native object |
+| nofp | Traps the transcendental libm functions (`sin`, `exp`, `log`, …), so a guest that calls one fails loudly. The exact operations (`sqrt`, `floor`, `fma`, …) run |
+| noos | Defines the OS surface that the Unix PAL of the runtime calls, before musl (platforms with the `noos` flag) |
+| nothread | Single-hart replacements for the locks and thread primitives of musl (platforms with the `no-atomics` flag) |
+| pal | Deterministic stubs for operating-system calls, the bump allocator, a small `vfprintf`, and the exit through the platform |
+| rhp | Link-time replacements for runtime helpers: P/Invoke frames, the allocation fast paths, fail-fast, the throw path under `--remove-eh`, the console on platforms without one |
+| rhp_native | Assembly GC write barriers. uGC never collects, so each barrier is a plain store |
+| rng_stupid | A deterministic pseudo-random generator. A proof must be reproducible |
+| rust_sys | Connects the allocator hook of the zkVM Rust runtimes (`sys_alloc_aligned`) to the bump heap |
+| stdcppshim | The C++ runtime parts that the NativeAOT runtime needs |
+| tls | A small TLS start-up that does not use the ELF machinery of musl |
+| ubootstrap | The .NET runtime bootstrap for a guest without an OS |
+| ugc-zero | [uGC](https://github.com/NethermindEth/uGC), a GC that never collects, in place of the built-in GC |
+
+Each module builds for riscv64 (`module.o`) and for riscv32
+(`module.rv32.o`). Each function in the C modules has a Frama-C (ACSL)
+contract. The C, C++ and assembly modules have unit tests that run on the
+real ISA under qemu. The allocator is fuzzed, and CBMC proves its bounds.
+See [Modules](docs/modules.md) and [Verification](docs/verification.md).
+
+## External libraries
+
+`--extlib` adds a package to the build. It accepts:
+
+- `https://github.com/<owner>/<repo>:<tag>`: a GitHub release with one
+  `.nupkg`;
+- a path or URL to a `.nupkg`;
+- a path or URL to a `.bflat.manifest`. Bflat then reads each
+  `*.bflat.manifest` in that directory.
+
+A package has one or more `*.bflat.manifest` files in the
+[schema 2 format](docs/manifest.md). A manifest can define a platform, or
+add libraries, wraps and ILC references when its `when` conditions hold. A
+`.nupkg` must have a valid signature from a key that bflat trusts
+(see [Package signatures](docs/signing.md)).
 
 ## License
 
-Nethermind Bflat follows the original GNU Affero GPL v3 license used by the
-original bflat.
+Nethermind Bflat uses the GNU Affero GPL v3 license of the original bflat.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or a pull request on GitHub.
+Contributions are welcome. Open an issue or a pull request on GitHub. Each
+pull request from this repository also runs the
+[bflat-ts](https://github.com/NethermindEth/bflat-ts) suite on zk-testing
+with the image of the pull request (see
+[Verification](docs/verification.md)).
