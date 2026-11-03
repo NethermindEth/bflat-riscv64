@@ -14,6 +14,9 @@
 
 #define PTHREAD_SIZE 200 /* must match tls/module.c */
 #define TDATA_LEN 16     /* must match --defsym in run_tests.sh */
+/* The offset of a variable as the linker writes it for __tls_get_addr: less
+ * the RISC-V DTP_OFFSET of 0x800. */
+#define DTPREL(off) ((size_t)(off) - 0x800)
 
 /* Initial thread-local data image (real image: loaded .tdata). */
 uint8_t __tdata_load[TDATA_LEN] = { 0xC0, 0xFF, 0xEE, 3, 4, 5, 6, 7,
@@ -43,9 +46,9 @@ int main(void)
         EXPECT_EXIT(0, {
             size_t v[2];
             v[0] = 77;
-            v[1] = 5;
+            v[1] = DTPREL(5);
             uint8_t *first = __wrap___tls_get_addr(indexed ? v : NULL);
-            uint8_t *base = indexed ? first - v[1] : first;
+            uint8_t *base = indexed ? first - 5 : first;
             CHECK(base != NULL);
             CHECK(memcmp(base, __tdata_load, TDATA_LEN) == 0);
             for (int i = 0; i < 32; i++)
@@ -85,8 +88,8 @@ int main(void)
 
     /* v = {module id, offset}: module id ignored, offset honored */
     {
-        size_t v0[2] = { 1, 0 };
-        size_t v5[2] = { 77, 5 };
+        size_t v0[2] = { 1, DTPREL(0) };
+        size_t v5[2] = { 77, DTPREL(5) };
         CHECK(__wrap___tls_get_addr(v0) == (void *)base);
         CHECK(__wrap___tls_get_addr(v5) == (void *)(base + 5));
         CHECK(*(uint8_t *)__wrap___tls_get_addr(v5) == __tdata_load[5]);
