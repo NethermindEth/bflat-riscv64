@@ -38,9 +38,9 @@ $ ./build.sh layouts riscv64    # the bflat-compiled layouts, in layouts/
 For the riscv32 target, also build the rv32 modules against the rv32 musl
 sysroot, and build bflat with `-p:BflatTargetRiscV32=true`.
 [`BUILDING.md`](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md)
-has the prerequisites, the riscv32 steps and the Docker scripts:
+has the prerequisites, the riscv32 steps and the Docker scripts.
 `docker_shell.sh` opens a shell with the build toolchain
-(`Dockerfile.build`), and `build_docker_image.sh` builds the runtime image
+(`Dockerfile.build`). `build_docker_image.sh` builds the runtime image
 (`Dockerfile`) and runs bflat in it.
 
 ## .NET version and runtime
@@ -58,9 +58,9 @@ last build step, so an image that cannot start bflat does not build.
 
 ## Signatures of the downloads
 
-The bflat build checks the signature of the dotnet-riscv release, and
-`build.sh modules` checks the uGC release, with the public keys in
-`BFLAT_SIGNING_PUBLIC_KEY`. bflat writes these keys into its binary and
+The bflat build checks the signature of the dotnet-riscv release with the
+public keys in `BFLAT_SIGNING_PUBLIC_KEY`. `build.sh modules` checks the uGC
+release with the same keys. bflat writes these keys into its binary and
 checks each `--extlib` `.nupkg` with them. Without the variable, nothing is
 checked and the build says so. `-p:AllowUnsignedRuntime=true` and
 `ALLOW_UNSIGNED_EXTERNAL=true` accept a release that has no signature. See
@@ -69,10 +69,10 @@ checked and the build says so. `-p:AllowUnsignedRuntime=true` and
 ## Build a guest
 
 bflat knows no zkVM by itself. Each zkVM target is a **platform** that a
-bflat-* package defines: the entry point, the memory map, the ISA, the ABI,
-the RyuJIT options and the post-link steps (see the
+bflat-* package defines. The platform gives the entry point, the memory map,
+the ISA, the ABI, the RyuJIT options and the post-link steps (see the
 [manifest format](manifest.md#platform)). `--libc` selects the platform by
-its name, and `--extlib` gives the package. [Targets](targets.md) has the
+its alias, and `--extlib` gives the package. [Targets](targets.md) has the
 details of each platform.
 
 ```console
@@ -196,13 +196,13 @@ for example:
 A manifest applies when its `when` holds: here, only on the `zisk`
 platform. Its static libraries go into the link line, and its
 `ilc.references` are compiled with the user code. Paths are relative to the
-manifest. bflat also reads the format of before (no `schema` key, one
-`builds[]` entry for each arch, os and libc), but that format cannot define a
+manifest. bflat also reads the schema 1 format (no `schema` key, one
+`builds[]` entry for each arch, os and libc). That format cannot define a
 platform.
 
 A `.nupkg` must have a valid signature from a key that bflat trusts. bflat
-treats a `.bflat.manifest` from a URL as unsigned, and does not check a local
-`.bflat.manifest`. See [Package signatures](signing.md).
+treats a `.bflat.manifest` from a URL as unsigned. bflat does not check a
+local `.bflat.manifest`. See [Package signatures](signing.md).
 
 ## Building a linux-x64 program
 

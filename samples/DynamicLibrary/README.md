@@ -1,8 +1,8 @@
 # Shared library sample
 
 This sample is from upstream bflat. Only its linux-x64 form works in this
-fork: a zkVM guest is one static image and cannot load a library, and the
-Windows targets are not built.
+fork. A zkVM guest is one static image and cannot load a library. This fork
+does not build the Windows targets.
 
 To build the shared library:
 

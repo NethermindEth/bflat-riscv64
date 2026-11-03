@@ -1,7 +1,7 @@
 # bflat-riscv64 documentation site
 
-Jekyll site styled after [nethermind.io](https://www.nethermind.io). Lives
-under `docs/` so it can be served from GitHub Pages or run locally.
+A Jekyll site in the style of [nethermind.io](https://www.nethermind.io).
+It is in `docs/`, so GitHub Pages can serve it, and you can run it locally.
 
 ## Local preview
 
@@ -22,7 +22,7 @@ docs/
 │   ├── default.html     Doc-page shell with sidebar
 │   └── landing.html     Full-width landing layout (no sidebar)
 ├── _includes/           header, sidebar, footer + reusable SVG diagrams
-├── assets/css/style.scss  Theme — dark navy + Nethermind orange
+├── assets/css/style.scss  Theme: dark navy and Nethermind orange
 ├── index.html           Marketing landing page (uses landing layout)
 ├── runtime.md           dotnet-riscv: an official .NET build for the target, and the patches we aim to upstream
 ├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
@@ -36,11 +36,12 @@ docs/
 
 ## Editing
 
-Each page begins with front matter that drives the layout, eyebrow
-text, and previous/next page links. Sidebar navigation is generated
+Each page starts with front matter. It sets the layout, the eyebrow
+text and the previous and next page links. The sidebar navigation comes
 from the `nav` list in `_config.yml`.
 
-Pages cross-link as `page.md`; `jekyll-relative-links` rewrites those to
-their permalinks. It is enabled by default on GitHub Pages and listed in
-the `Gemfile` / `_config.yml` so a local build resolves them the same way —
-without it, local previews produce links that 404 while production works.
+Pages link to each other as `page.md`. `jekyll-relative-links` changes
+these links to the permalinks. GitHub Pages enables it by default. The
+`Gemfile` and `_config.yml` list it too, so a local build resolves the
+links in the same way. Without it, the links of a local preview give 404,
+and the links of the published site work.

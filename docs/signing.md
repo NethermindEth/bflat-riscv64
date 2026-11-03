@@ -20,9 +20,9 @@ next: /build/
 | The release archive of a module (`external` with `release`: the uGC releases of `ugc-zero`, v1.0.13 for riscv64 and v1.0.15 for riscv32) | When the modules are built (`build.sh modules`) | Two assets of the release | `build.sh`, with `bflat-modules verify-release` |
 | An `--extlib` `.nupkg` (bflat-libziskos, bflat-sp1, bflat-openvm, bflat-airbender) | When a guest is built | Two entries in the package | `bflat build` |
 
-A local `.bflat.manifest` is not checked: it is a build of the developer
-(for example `platform/build.sh` output, or `BFLAT_PLATFORMS` in the
-tests). A `.bflat.manifest` from a URL cannot have a signature, so bflat
+bflat does not check a local `.bflat.manifest`. It is a build of the
+developer, for example the output of `platform/build.sh`, or
+`BFLAT_PLATFORMS` in the tests. A `.bflat.manifest` from a URL cannot have a signature, so bflat
 treats it as unsigned. A module `external` that names no `release` is a
 git clone of a tag, and has no signature.
 
@@ -62,8 +62,11 @@ A signed set of files has two more files:
   SHA-256, in DER. This is the output of `openssl dgst -sha256 -sign`.
 
 In a `.nupkg`, both files are entries at the root of the archive. The list
-names every other entry of the archive. bflat refuses a package that has an
-entry that is not in the list, or that does not have an entry of the list.
+names each other entry of the archive. bflat refuses a package in two
+cases:
+
+- the package has an entry that is not in the list;
+- an entry of the list is not in the package.
 The one exception is `.signature.p7s`: NuGet.org adds it after the push.
 
 In a dotnet-riscv release, both files are assets of the release. The list
@@ -97,8 +100,9 @@ that bflat checked.
 ## The release jobs
 
 The private key is only in the job of the reusable workflow
-`.github/workflows/sign.yml` of this repository. That job runs no build:
-code that a release job builds or downloads never runs where the key is.
+`.github/workflows/sign.yml` of this repository. That job runs no build.
+Thus code that a release job builds or downloads never runs in the job
+that has the key.
 A release workflow has three jobs:
 
 1. The build job makes the packages and writes the lists of their SHA-256
@@ -111,8 +115,8 @@ A release workflow has three jobs:
 
    `list-nupkg` writes `<package>.nupkg.bflat-signature.sha256` for each
    package. `list-files` writes `bflat-signature.sha256` for the assets of a
-   release. When the assets of one release come from more than one job (as
-   in dotnet-riscv), each job uploads the list of its assets, and a small
+   release. The assets of one release can come from more than one job, as
+   in dotnet-riscv. Then each job uploads the list of its assets. A small
    job joins them into one list with
    `sign_package.py merge <out-dir> <list>...`.
 
@@ -121,11 +125,10 @@ A release workflow has three jobs:
    `openssl dgst -sha256 -sign`, and writes each list and its `.sig` into the
    artifact `bflat-signatures`. It signs only a file of `<sha256>  <name>`
    lines, and it shows each list in the log. The callers give the workflow
-   by the SHA of a commit of `master`, not by the branch: the job gets the
-   private key, so a change to `sign.yml` must not reach the releases before
-   the callers take it. After a change to `sign.yml`, update the SHA in
-   bflat-libziskos, bflat-sp1, bflat-openvm, bflat-airbender, dotnet-riscv
-   and uGC.
+   by the SHA of a commit of `master`. The job gets the private key, so a
+   change to `sign.yml` must not reach the releases before the callers take
+   it. After a change to `sign.yml`, update the SHA in bflat-libziskos,
+   bflat-sp1, bflat-openvm, bflat-airbender, dotnet-riscv and uGC.
 
    ```yaml
    sign:
@@ -139,10 +142,10 @@ A release workflow has three jobs:
    ```
 
 3. The publish job adds the signatures and publishes. For a package,
-   `embed` makes sure that the package agrees with its list and adds the list
-   and the signature as two entries. For a release, `check-files` makes sure
-   that the assets agree with the list, and the two files are two more
-   assets. With the public keys in `BFLAT_SIGNING_PUBLIC_KEY`, both also check
+   `embed` makes sure that the package agrees with its list. Then it adds
+   the list and the signature as two entries. For a release, `check-files`
+   makes sure that the assets agree with the list. The two files become two
+   more assets. With the public keys in `BFLAT_SIGNING_PUBLIC_KEY`, both also check
    the signature, as bflat does.
 
    ```console
@@ -151,8 +154,8 @@ A release workflow has three jobs:
    ```
 
 The package repositories sign before `dotnet nuget push` and the GitHub
-release. The sign job runs only when the release job publishes, so a build
-that publishes nothing needs no secret.
+release. The sign job runs only when the release workflow publishes. Thus a
+build that publishes nothing needs no secret.
 
 To sign on one machine with the private key in `BFLAT_SIGNING_KEY`,
 `sign_package.py nupkg <package>...` and

@@ -1,7 +1,7 @@
 ---
 layout: landing
 title: bflat-riscv64 — NativeAOT C# for RISC-V zkVMs
-description: A fork of bflat that compiles C# straight to fully static RISC-V binaries running inside zkVMs — ZisK, SP1, OpenVM and Airbender. Used in production by Nethermind's StatelessExecutor.
+description: A fork of bflat that compiles C# to fully static RISC-V binaries for the ZisK, SP1, OpenVM and Airbender zkVMs. Nethermind builds its StatelessExecutor with it.
 ---
 
 <!-- ============================================================= HERO -->
@@ -10,10 +10,10 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     <p class="eyebrow">Nethermind · zkVM tooling</p>
     <h1>Native&nbsp;C# for <span class="accent">RISC-V zkVMs.</span></h1>
     <p class="lead">
-      bflat-riscv64 compiles C# straight to fully static RISC-V ELF
-      binaries — runnable inside a zkVM prover (ZisK, SP1, OpenVM or
-      Airbender), under <code>qemu-riscv64</code>, or on real RISC-V64
-      Linux. One source, every target.
+      bflat-riscv64 compiles C# to fully static RISC-V ELF binaries. A
+      binary runs in a zkVM prover (ZisK, SP1, OpenVM or Airbender), under
+      <code>qemu-riscv64</code>, or on RISC-V64 Linux. The same source
+      builds for each target.
     </p>
     <div class="actions">
       <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Get building →</a>
@@ -37,13 +37,12 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="container">
     <p class="eyebrow">How it executes</p>
     <h2 class="native-pitch-h">
-      What <span class="accent-token">NativeAOT</span> emits is what the prover proves.
+      The prover proves the code that <span class="accent-token">NativeAOT</span> emits.
     </h2>
     <p class="native-pitch-lead">
-      A native RISC-V binary with full AOT optimization applied to
-      your C# end-to-end. No IL interpreter, no JIT, no managed runtime
-      in the loop — the prover walks the same instructions a C or Rust
-      toolchain would have produced.
+      NativeAOT compiles all of your C# to RISC-V instructions, with full
+      optimization. The guest has no IL interpreter and no JIT. The prover
+      executes native instructions, as it does for a C or Rust guest.
     </p>
   </div>
 </div>
@@ -72,11 +71,11 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
 <div class="run-it">
   <div class="container">
     <p class="eyebrow">Run it now</p>
-    <h2>No install. One command. Current directory mounted.</h2>
+    <h2>Build in the published image.</h2>
     <p class="lead">
-      Drop a <code>.cs</code> file next to your shell and let the official
-      container do the rest — driver, runtime, link-time modules,
-      and postprocessor are all already inside the image.
+      Put a <code>.cs</code> file in the current directory and run the
+      command. The image has the driver, the runtime, the link-time modules
+      and the post-link tools.
     </p>
 
     <div class="run-toggle" role="tablist" aria-label="Build target">
@@ -97,13 +96,13 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         <span class="label">your shell — bash</span>
       </div>
-<pre class="run-pane is-active" data-pane="zisk"><code><span class="comment-token"># Build for the ZisK zkVM — fully postprocessed, ready to prove</span>
+<pre class="run-pane is-active" data-pane="zisk"><code><span class="comment-token"># Build for the ZisK zkVM. The post-link steps run, and the ELF is ready to prove.</span>
 <span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
     nethermindeth/bflat-riscv64-11 \
     bflat build hello.cs --arch riscv64 --os linux --libc zisk --no-pie \
         --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
 </code></pre>
-<pre class="run-pane" data-pane="qemu"><code><span class="comment-token"># Build for the simulator — same source, runs under QEMU or native RISC-V64 Linux</span>
+<pre class="run-pane" data-pane="qemu"><code><span class="comment-token"># Build for the simulator. The ELF runs under QEMU or on RISC-V64 Linux.</span>
 <span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
     nethermindeth/bflat-riscv64-11 \
     bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie \
@@ -114,16 +113,16 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     <p class="codeshot-meta run-pane is-active" data-pane="zisk">
       The image is published on
       <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64-11" rel="noopener">Docker Hub</a>.
-      Output ELF lands in the directory you mounted — already postprocessed
-      and ready to feed straight into the ZisK prover. The package that
-      defines the platform comes from its GitHub release, signed.
+      The ELF goes into the directory that you mounted. The post-link
+      steps are done, so the ZisK prover can take it. bflat downloads the
+      platform package from its GitHub release and checks its signature.
     </p>
     <p class="codeshot-meta run-pane" data-pane="qemu">
       The image is published on
       <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64-11" rel="noopener">Docker Hub</a>.
-      Output ELF lands in the directory you mounted — runs under
-      <code>qemu-riscv64</code> or natively on RISC-V64 Linux, useful for
-      debugging before proving.
+      The ELF goes into the directory that you mounted. It runs under
+      <code>qemu-riscv64</code> or on RISC-V64 Linux. Use it to debug a
+      guest before you prove it.
     </p>
   </div>
 </div>
@@ -133,14 +132,14 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="section-head">
     <p class="eyebrow">What it is</p>
     <div>
-      <h2>A thin compiler driver around .NET NativeAOT, with the missing pieces a zkVM needs.</h2>
+      <h2>A compiler driver for .NET NativeAOT, with the parts that a zkVM needs.</h2>
       <p>
         The original <a href="https://github.com/bflattened/bflat">bflat</a>
-        compiles C# to native code via NativeAOT but produces dynamically
-        linked binaries. None of those dependencies are acceptable inside a
-        zkVM. Our fork adds zkVM platforms that packages define, fifteen
-        modules, ILC-stage substitutions and post-link tools — all without
-        touching upstream sources.
+        compiles C# to native code with NativeAOT, and its binaries are
+        dynamically linked. A zkVM cannot load those dependencies. This fork
+        adds zkVM platforms that packages define, fifteen modules, ILC-stage
+        substitutions and post-link tools. It does not change the upstream
+        sources.
       </p>
     </div>
   </div>
@@ -153,17 +152,17 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
       <h3>Five zkVM platforms</h3>
       <p><code>zisk</code>, <code>sp1</code> and <code>openvm</code> on
       riscv64, <code>airbender</code> on riscv32, and <code>zisk_sim</code>
-      for a ZisK-shaped binary that runs in QEMU or on real hardware. Each
-      platform is defined by its bflat-* package, not by bflat.</p>
+      for a ZisK-shaped binary that runs in QEMU or on real hardware. Its
+      bflat-* package defines each platform. bflat itself defines none.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">
         <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
       </div>
       <h3>Fifteen modules</h3>
-      <p>Small C / C++ / asm objects plug into the linker via
-      <code>--wrap=</code> overrides, and one module gives ILC its
-      substitutions. No upstream code is patched in place.</p>
+      <p>Small C, C++ and assembly objects go into the link, and
+      <code>--wrap=</code> sends calls to them. One module gives ILC its
+      substitutions. No upstream code is patched.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">
@@ -188,17 +187,18 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
         <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16zM3.3 7L12 12l8.7-5M12 22V12"/></svg>
       </div>
       <h3>NuGet integration</h3>
-      <p><code>--extlib</code> understands manifest-tagged NuGet packages,
-      including precompiled native libraries like <code>libziskos</code>.</p>
+      <p><code>--extlib</code> reads NuGet packages that have a bflat
+      manifest, for example the precompiled native library
+      <code>libziskos</code>.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">
         <svg viewBox="0 0 24 24"><path d="M22 12A10 10 0 1 1 12 2M22 4 12 14.01l-3-3"/></svg>
       </div>
-      <h3>Production-validated</h3>
-      <p>Drives Nethermind's <a href="https://github.com/NethermindEth/nethermind">StatelessExecutor</a>
-      — a real Ethereum state-transition function — under continuous
-      proof-time regression.</p>
+      <h3>Used in production</h3>
+      <p>bflat builds Nethermind's <a href="https://github.com/NethermindEth/nethermind">StatelessExecutor</a>,
+      an Ethereum state-transition function. zk-testing tracks its proof
+      time on each change.</p>
     </div>
   </div>
 </section>
@@ -208,36 +208,35 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="section-head">
     <p class="eyebrow">Foundation</p>
     <div>
-      <h2>A sibling project builds the base — bflat sits on top.</h2>
+      <h2>A sibling project builds the runtime that bflat uses.</h2>
       <p>
-        Before a single line of C# is compiled, the runtime and its
-        cross rootfs are built so that every byte of the underlying
-        environment respects the zkVM constraints — no compressed
-        instructions, no FP, one ABI across the stack. They ship as
-        release artifacts, downloaded and unpacked at bflat build time.
+        dotnet-riscv builds the runtime and its cross rootfs for the zkVM
+        constraints: no compressed instructions, no FP, and one ABI for all
+        objects. It publishes them as release assets. The bflat build
+        downloads and unpacks them.
       </p>
     </div>
   </div>
 
   <div class="cards">
     <a class="card" href="{{ '/runtime/' | relative_url }}">
-      <h3>.NET — dotnet-riscv</h3>
-      <p>Pulls the upstream .NET VMR at a release branch, builds it for
-      the target ISA with its riscv64 patches, and packages CoreLib, the
-      runtime libraries and ILCompiler as a signed, downloadable release.
+      <h3>.NET: dotnet-riscv</h3>
+      <p>Takes the upstream .NET VMR at a release branch and builds it for
+      the target ISA with its riscv64 patches. It publishes CoreLib, the
+      runtime libraries and ILCompiler as a signed release.
       bflat uses the .NET 11 build, for riscv64, riscv32 and linux-x64.</p>
     </a>
   </div>
 
   <div class="divergence">
     <div class="divergence-head">
-      <h2>An <em>official .NET build</em>, not a fork.</h2>
+      <h2>An <em>official .NET build</em>.</h2>
       <p>
         The runtime is upstream .NET: the <code>dotnet/dotnet</code> VMR at a
-        release branch, built with upstream's own build system. Everything a
-        zkVM needs is applied around it — at ILC time, at link time, and
-        after the link. What is left is a riscv64 patch series staged for
-        upstream, and code-quality work for the zkVM guests on top of it.
+        release branch, built with upstream's own build system. bflat
+        applies the zkVM changes outside the runtime: at ILC time, at link
+        time and after the link. The runtime carries a riscv64 patch series
+        for upstream, and code-quality patches for the zkVM guests on top.
       </p>
     </div>
 
@@ -273,11 +272,10 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     <div>
       <h2>From <code>.cs</code> source to a zkVM-ready ELF in four stages.</h2>
       <p>
-        On top of that foundation, bflat itself orchestrates four stages
-        — all driven by the <code>BuildCommand</code> files in
-        <code>src/bflat/</code>. The C#-to-object compile uses
-        Microsoft's stock NativeAOT; everything Nethermind contributes
-        in this repo happens at link time and after.
+        bflat runs four stages. The <code>BuildCommand</code> files in
+        <code>src/bflat/</code> drive them. The compile from C# to an object
+        uses Microsoft's stock NativeAOT. The changes of this repository
+        apply at link time and after.
       </p>
     </div>
   </div>
@@ -291,28 +289,28 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">01</div>
       <div>
         <h3 style="margin: 0 0 4px;">Microsoft's NativeAOT (ILC) emits an object</h3>
-        <p style="margin: 0; color: var(--text-muted);">Stock, unmodified ILC compiles C# to a single RISC-V ELF relocatable containing managed code, type-system metadata, and module init tables. Using upstream Microsoft tooling keeps the C#-to-native step safe and universal — we inherit the same testing and portability the rest of .NET enjoys.</p>
+        <p style="margin: 0; color: var(--text-muted);">Stock ILC compiles C# to one RISC-V ELF relocatable. It contains the managed code, the type-system metadata and the module init tables. The upstream compiler has the same tests as the rest of .NET.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">02</div>
       <div>
         <h3 style="margin: 0 0 4px;">ld.lld links the binary statically</h3>
-        <p style="margin: 0; color: var(--text-muted);">Module objects are pulled in with <code>--whole-archive</code>; <code>--wrap=symbol</code> redirects every musl, compiler-RT, and runtime call we need to override into our own implementations.</p>
+        <p style="margin: 0; color: var(--text-muted);"><code>--whole-archive</code> pulls in the module objects. <code>--wrap=symbol</code> sends each musl, compiler-rt and runtime call that a module replaces to the module.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">03</div>
       <div>
         <h3 style="margin: 0 0 4px;">Post-link steps rewrite the image</h3>
-        <p style="margin: 0; color: var(--text-muted);">Each platform lists its own steps. <code>zisk</code> fixes <code>.init_array</code> and <code>.tdata</code> for its loader and trims <code>.bss</code>; <code>sp1</code> turns FENCE and zero padding into NOPs; <code>airbender</code> rewrites what its RV32 machine cannot run and writes flat <code>.bin</code>/<code>.text</code> images. <code>zisk_sim</code> and <code>openvm</code> have none.</p>
+        <p style="margin: 0; color: var(--text-muted);">Each platform lists its own steps. <code>zisk</code> fixes <code>.init_array</code> and <code>.tdata</code> for its loader and trims <code>.bss</code>. <code>sp1</code> changes FENCE and zero padding into NOPs. <code>airbender</code> rewrites the instructions that its RV32 machine cannot run, and writes flat <code>.bin</code>/<code>.text</code> images. <code>zisk_sim</code> and <code>openvm</code> have none.</p>
       </div>
     </li>
     <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
       <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">04</div>
       <div>
-        <h3 style="margin: 0 0 4px;">Run anywhere — prove on a zkVM</h3>
-        <p style="margin: 0; color: var(--text-muted);">The output is a single ELF. It runs inside a zkVM prover — ZisK, SP1, OpenVM or Airbender — and the <code>zisk_sim</code> build runs under <code>qemu-riscv64</code> or natively on RISC-V64 Linux. The same source builds for all of them.</p>
+        <h3 style="margin: 0 0 4px;">Run and prove on a zkVM</h3>
+        <p style="margin: 0; color: var(--text-muted);">The output is one ELF. It runs in a zkVM prover (ZisK, SP1, OpenVM or Airbender). The <code>zisk_sim</code> build runs under <code>qemu-riscv64</code> or on RISC-V64 Linux. The same source builds for all of them.</p>
       </div>
     </li>
   </ol>
@@ -323,18 +321,16 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="section-head">
     <p class="eyebrow">Architecture</p>
     <div>
-      <h2>A small surface that touches what it doesn't own.</h2>
+      <h2>What this repository contains.</h2>
       <p>
-        Everything Nethermind contributes to <em>this</em> repo lives in
-        one place: the compiler driver, the modules and the post-link
-        tools. The zkVM platforms live in their bflat-* packages. The .NET runtime is built
-        separately by
-        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a>,
-        against an Alpine cross rootfs produced by upstream's own tooling
-        (with musl rebuilt for the base ISA), and ships as release
-        artifacts consumed at build time.
-        No compressed, atomic or FP instructions are emitted anywhere in the
-        stack, and the code bflat compiles and links uses the soft-float
+        This repository has the compiler driver, the modules and the
+        post-link tools. The zkVM platforms are in their bflat-* packages.
+        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a> builds
+        the .NET runtime against an Alpine cross rootfs from upstream's own
+        tooling, with musl rebuilt for the base ISA. The bflat build
+        downloads its release assets.
+        No part of the stack emits compressed, atomic or FP instructions.
+        The code that bflat compiles and links uses the soft-float
         <code>lp64</code> ABI (<code>ilp32</code> on riscv32).
       </p>
     </div>
@@ -347,11 +343,11 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="module-grid">
     <a class="mod" href="{{ '/modules/#ubootstrap' | relative_url }}">
       <div class="mod-name">ubootstrap</div>
-      <p class="mod-desc">Runtime entry point. Calls <code>RhInitialize</code>, registers the managed-code range, runs module initialisers, jumps to <code>__managed__Main</code>.</p>
+      <p class="mod-desc">Runtime entry point. It calls <code>RhInitialize</code>, registers the managed-code range, runs the module initialisers and jumps to <code>__managed__Main</code>.</p>
     </a>
     <a class="mod" href="{{ '/modules/#pal' | relative_url }}">
       <div class="mod-name">pal</div>
-      <p class="mod-desc">Deterministic OS surface: <code>getenv</code>, <code>sched_*</code>, <code>mmap</code>, the clock, malloc and friends on a bump allocator, and an FP-free <code>vfprintf</code>.</p>
+      <p class="mod-desc">Deterministic OS calls: <code>getenv</code>, <code>sched_*</code>, <code>mmap</code> and the clock. The <code>malloc</code> family on a bump allocator, and a <code>vfprintf</code> with no FP.</p>
     </a>
     <a class="mod" href="{{ '/modules/#rhp' | relative_url }}">
       <div class="mod-name">rhp</div>
@@ -359,11 +355,11 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     </a>
     <a class="mod" href="{{ '/modules/#rhp-native' | relative_url }}">
       <div class="mod-name">rhp_native</div>
-      <p class="mod-desc">Hand-written RISC-V asm: the GC write barriers reduced to the bare store (uGC has no card table), for rv64 and rv32.</p>
+      <p class="mod-desc">Hand-written RISC-V assembly for rv64 and rv32. Each GC write barrier is a plain store, because uGC has no card table.</p>
     </a>
     <a class="mod" href="{{ '/modules/#tls' | relative_url }}">
       <div class="mod-name">tls</div>
-      <p class="mod-desc">Minimal thread-local storage without musl's ELF machinery: copies <code>.tdata</code> into a static block and serves <code>__tls_get_addr</code>.</p>
+      <p class="mod-desc">Minimal thread-local storage without the ELF code of musl. It copies <code>.tdata</code> into a static block and answers <code>__tls_get_addr</code>.</p>
     </a>
     <a class="mod" href="{{ '/modules/#eh' | relative_url }}">
       <div class="mod-name">eh</div>
@@ -371,11 +367,11 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     </a>
     <a class="mod" href="{{ '/modules/#nofp' | relative_url }}">
       <div class="mod-name">nofp</div>
-      <p class="mod-desc">Traps the soft-float builtins and libm functions that must not run, so stray floating point fails loudly. The exact libm operations run.</p>
+      <p class="mod-desc">Traps the soft-float builtins and libm functions that must not run. A guest that calls one stops with an error. The exact libm operations run.</p>
     </a>
     <a class="mod" href="{{ '/modules/#noos' | relative_url }}">
       <div class="mod-name">noos</div>
-      <p class="mod-desc">The OS surface the runtime's Unix PAL reaches for, defined ahead of musl, on platforms with no OS: SP1, OpenVM, Airbender.</p>
+      <p class="mod-desc">Defines the OS calls of the Unix PAL of the runtime, before musl. It links on the platforms with no OS: SP1, OpenVM and Airbender.</p>
     </a>
     <a class="mod" href="{{ '/modules/#nothread' | relative_url }}">
       <div class="mod-name">nothread</div>
@@ -383,23 +379,23 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     </a>
     <a class="mod" href="{{ '/modules/#rng-stupid' | relative_url }}">
       <div class="mod-name">rng_stupid</div>
-      <p class="mod-desc">Deterministic PRNG behind <code>RandomNumberGenerator</code> and the runtime's random entry points: a proof must be reproducible.</p>
+      <p class="mod-desc">A deterministic PRNG for <code>RandomNumberGenerator</code> and the random entry points of the runtime. A proof must be reproducible.</p>
     </a>
     <a class="mod" href="{{ '/modules/#gs-cookie' | relative_url }}">
       <div class="mod-name">gs_cookie</div>
-      <p class="mod-desc">Stack cookie pinned to a constant <code>0</code>. No entropy and no page protection in a zkVM, so the cookie is neutralised by design.</p>
+      <p class="mod-desc">Sets the stack cookie to the constant <code>0</code>. A zkVM has no entropy and no page protection.</p>
     </a>
     <a class="mod" href="{{ '/modules/#stdcppshim' | relative_url }}">
       <div class="mod-name">stdcppshim</div>
-      <p class="mod-desc">The C++ runtime pieces the NativeAOT runtime needs: <code>operator new</code>/<code>delete</code> on <code>malloc</code>.</p>
+      <p class="mod-desc">The C++ runtime parts that the NativeAOT runtime needs: <code>operator new</code> and <code>delete</code> on <code>malloc</code>.</p>
     </a>
     <a class="mod" href="{{ '/modules/#rust-sys' | relative_url }}">
       <div class="mod-name">rust_sys</div>
-      <p class="mod-desc">The allocator hook of the zkVM Rust runtimes (<code>sys_alloc_aligned</code>) bridged onto the shared bump heap.</p>
+      <p class="mod-desc">Connects the allocator hook of the zkVM Rust runtimes (<code>sys_alloc_aligned</code>) to the shared bump heap.</p>
     </a>
     <a class="mod" href="{{ '/modules/#ugc-zero' | relative_url }}">
       <div class="mod-name">ugc-zero</div>
-      <p class="mod-desc">uGC, a GC that never collects, in place of the built-in one. Each proof is short-lived with a known working set.</p>
+      <p class="mod-desc">uGC, a GC that never collects, in place of the built-in GC. A proof run is short, and its working set is known.</p>
     </a>
     <a class="mod" href="{{ '/modules/#guest-subst' | relative_url }}">
       <div class="mod-name">guest_subst</div>
@@ -407,7 +403,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     </a>
     <a class="mod" href="{{ '/targets/' | relative_url }}">
       <div class="mod-name">zkVM platforms</div>
-      <p class="mod-desc"><code>_start</code> in asm, the linker script and the exit protocol, in each zkVM's bflat-* package.</p>
+      <p class="mod-desc">The assembly <code>_start</code>, the linker script and the exit protocol. They are in the bflat-* package of each zkVM.</p>
     </a>
   </div>
 </section>
@@ -417,17 +413,18 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="section-head">
     <p class="eyebrow">Verification</p>
     <div>
-      <h2>Checks that fail early, not in the prover.</h2>
+      <h2>Checks that fail before the prover runs.</h2>
       <p>
-        CI runs on every push and pull request in this repository:
-        contracts on the native modules, C# analyzers and unit tests on the
-        driver, module unit tests on the real ISA under qemu, fuzzing, a
-        CBMC proof of the allocator, and a build that produces the Docker
+        CI runs on each push and pull request in this repository. It checks
+        the contracts on the native modules and runs the C# analyzers and
+        unit tests on the driver. It runs the module unit tests on the real
+        ISA under qemu, fuzzing and a CBMC proof of the allocator. Then it
+        builds the Docker
         images for riscv64 and riscv32 and links a guest for each zkVM
         target. The riscv32 guests run on the Airbender simulator. A pull
         request also runs the bflat-ts suite with its own image on the
-        <a href="https://zk-testing.nethermind.dev">zk-testing</a> host,
-        Nethermind's StatelessExecutor included.
+        <a href="https://zk-testing.nethermind.dev">zk-testing</a> host.
+        The suite includes Nethermind's StatelessExecutor.
       </p>
     </div>
   </div>
@@ -439,15 +436,15 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
   <div class="verify-ribbon">
     <div class="item">
       <h4>Repository CI</h4>
-      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> runs the contract gate, analyzers, unit tests, fuzzing and the CBMC proof, then rebuilds every module and the driver from source, in two legs: riscv64, and riscv32 with the Airbender run.</p>
+      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> runs the contract gate, the analyzers, the unit tests, fuzzing and the CBMC proof. Then it builds each module and the driver from source, in two legs: riscv64, and riscv32 with the Airbender run.</p>
     </div>
     <div class="item">
       <h4>bflat-ts on each pull request</h4>
-      <p>The image of the pull request goes to GHCR; the <code>simple</code> test of bflat-ts runs with it first, then the full suite, on every zkVM.</p>
+      <p>CI pushes the image of the pull request to GHCR. The <code>simple</code> test of bflat-ts runs with it first. Then the full suite runs on each zkVM.</p>
     </div>
     <div class="item">
       <h4>End-to-end proofs</h4>
-      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard shows the results of bflat-ts, the Nethermind StatelessExecutor included, with proof timings, and a public badge.</p>
+      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard shows the bflat-ts results with proof timings, and a public badge. The results include the Nethermind StatelessExecutor.</p>
     </div>
   </div>
 
@@ -463,7 +460,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
     <p class="eyebrow">Quick start</p>
     <div>
       <h2>One command, source to ELF.</h2>
-      <p>Assuming you have a built bflat in your <code>$PATH</code>:</p>
+      <p>With a built bflat in your <code>$PATH</code>:</p>
     </div>
   </div>
 
@@ -476,7 +473,7 @@ description: A fork of bflat that compiles C# straight to fully static RISC-V bi
 $ bflat build hello.cs --arch riscv64 --os linux --libc zisk --no-pie \
       --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
 
-<span style="color:#6b738c"># Same source, simulator-friendly target</span>
+<span style="color:#6b738c"># The same source, for the simulator target</span>
 $ bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie \
       --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
 $ qemu-riscv64 ./hello
@@ -493,8 +490,8 @@ $ ls hello hello.bin hello.text
   <div class="cta">
     <h2>Build something for a zkVM.</h2>
     <p>
-      The runtime is downloaded automatically. The samples build in seconds.
-      The pipeline is the same one Nethermind uses in production.
+      bflat downloads the runtime. The samples build in seconds.
+      Nethermind uses the same pipeline in production.
     </p>
     <div class="actions">
       <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Read the build guide →</a>

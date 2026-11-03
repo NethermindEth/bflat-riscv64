@@ -34,10 +34,10 @@ The documentation site is in [`docs/`](docs/README.md):
 ## Targets
 
 Bflat itself knows no zkVM. Each zkVM target is a **platform** that a bflat-*
-package defines: the entry point, the memory map, the ISA, the ABI, the
-RyuJIT options and the post-link steps (see the
+package defines. The platform gives the entry point, the memory map, the ISA,
+the ABI, the RyuJIT options and the post-link steps (see the
 [manifest format](docs/manifest.md#platform)). `--libc` selects the platform
-by its name, and `--extlib` gives the package.
+by its alias, and `--extlib` gives the package.
 
 | Platform | `--arch` / `--libc` | Package | ISA of the guest | Runs on |
 |----------|---------------------|---------|------------------|---------|
@@ -87,8 +87,8 @@ Docker scripts and the checks.
 
 ## Design principle: stock .NET, no patches inside bflat
 
-Bflat applies each adaptation *around* the runtime, not inside it. Thus a new
-.NET version is a rebuild, not a merge. An adaptation goes into the earliest
+Bflat applies each adaptation *around* the runtime and keeps the runtime
+source as it is. Thus a new .NET version needs a rebuild and no merge. An adaptation goes into the earliest
 layer that can express it:
 
 1. **ILC stage: substitutions and feature switches.** The `guest_subst`
@@ -115,7 +115,7 @@ A module is a native object that bflat adds to the guest link. `--wrap`
 sends existing symbols to it. Its `bflat-manifest.json`
 ([format](docs/manifest.md)) declares its sources, objects, wraps and the
 conditions for each. A platform lists the modules it requires. A module
-applies only when its conditions hold: for example, `noos` and `nothread`
+applies only when its conditions hold. For example, `noos` and `nothread`
 apply only on platforms with the `noos` and `no-atomics` flags (sp1, openvm,
 airbender).
 

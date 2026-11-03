@@ -3,11 +3,11 @@ layout: default
 title: Verification
 eyebrow: How we know it works
 lead: >
-  A zkVM guest fails late and quietly: a stray floating-point instruction
-  or a silently dropped substitution shows up as a rejected opcode in the
-  prover, far from the change that caused it. So the checks are layered to
-  fail as early as possible — from contracts on individual C functions up
-  to an end-to-end proof.
+  A zkVM guest often fails late. A floating-point instruction or a dropped
+  substitution becomes a rejected opcode in the prover, far from the change
+  that caused it. Thus the checks run in layers, from contracts on single C
+  functions to a full run of the bflat-ts suite, and each layer stops the
+  fault as early as it can.
 prev: /build/
 ---
 
@@ -17,12 +17,15 @@ prev: /build/
 
 ## The layers
 
-**CI** is a job in this repository's
-[`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml),
-which runs on every push to `master` and on every pull request (see
-[CI](#ci) below). **Build** means it happens while building bflat or a
-guest. **bflat-ts** is the test suite on the zk-testing host: CI starts it
-for a pull request, and it also runs on each change of bflat-ts itself.
+The "Runs in" column has these values:
+
+- **CI**: a job in
+  [`build-riscv64.yml`](https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml)
+  of this repository. It runs on each push to `master` and on each pull
+  request (see [CI](#ci) below).
+- **Build**: the build of bflat or of a guest does the check.
+- **bflat-ts**: the test suite on the zk-testing host. CI starts it for a
+  pull request. It also runs on each change of bflat-ts itself.
 
 | Layer | Runs in | What it proves | What it catches |
 |-------|---------|----------------|-----------------|
@@ -39,19 +42,19 @@ for a pull request, and it also runs on each change of bflat-ts itself.
 | **Airbender run** | CI | The riscv32 guests run on the Airbender v3 simulator: the console, the input and output words, an accelerator, and a failing run (`tests/run-airbender.sh`) | A riscv32 guest that does not load, run or end as expected |
 | **bflat-ts** | CI (pull request), bflat-ts | The image of the change builds and runs the bflat-ts tests on each zkVM, Nethermind's guest included | Wrong output, load failures and regressions in a real workload |
 | **Package signatures** | Build, guest build | The dotnet-riscv release, the module release archives and each `--extlib` `.nupkg` come from our CI ([details](signing.md)) | A changed or replaced download |
-| **Inlined-wrap check** | Build (optimized) | Every `--wrap` target that is a managed method the scanner reached is still emitted, so calls to it remain for the linker to divert | A wrapped method inlined into all its callers, which silently bypasses the wrapper |
+| **Inlined-wrap check** | Build (optimized) | Every `--wrap` target that is a managed method the scanner reached is still emitted, so calls to it remain for the linker to divert | A wrapped method inlined into all its callers, which bypasses the wrapper with no error |
 | **`--wrap-check`** | Build, opt-in | Every `--wrap=` that the link gets names a symbol that exists | A wrap left behind after a rename, which links but diverts nothing |
 | **`--error-on-float`** | Build, opt-in | No emitted method's *IL* contains a floating-point conversion | FP reaching the image through a `conv.r8` |
 | **ISA verification** | Build, opt-in or by the platform | The *linked binary* carries no F/D, compressed or atomic instruction | Everything the IL scan cannot see, including native objects |
 
-The FP and ISA gates are flags you pass. A platform can also turn the ISA
-gates on for every build of it (its `checks` section): the Airbender
-platform does.
+The FP and ISA gates are flags that you pass. A platform can also turn on
+the ISA gates for each of its builds, in its `checks` section. The
+Airbender platform does this.
 
 ## CI
 
-`build-riscv64.yml` has these jobs. All of them fail the workflow when they
-fail, except where the table says otherwise.
+`build-riscv64.yml` has these jobs. When a job fails, the workflow fails,
+unless the table gives a different rule.
 
 | Job | What it does |
 |-----|--------------|
@@ -83,27 +86,29 @@ images to Docker Hub (`publish`).
 For a pull request from a branch of this repository:
 
 1. The `default` leg pushes its image to
-   `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>`, and gives the jobs
-   below the image by digest. A new push to the pull request thus does not
-   change the image of a run in progress.
-2. **bflat-ts (simple)** starts the workflow `compiler-tests.yml` of
+   `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>`. It gives the image
+   to the jobs below by digest. Thus a new push to the pull request does
+   not change the image of a run in progress.
+2. The job "bflat-ts (simple)" starts the workflow `compiler-tests.yml` of
    bflat-ts with that image, the `simple` test and `require_pass`
-   (`.github/scripts/run-bflat-ts.sh`), and waits for it. The run of
-   bflat-ts is linked in the summary of the job.
-3. When `simple` passes, **bflat-ts** starts the full suite the same way.
+   (`.github/scripts/run-bflat-ts.sh`). Then it waits for the run. The
+   summary of the job has a link to the run of bflat-ts.
+3. When `simple` passes, the job "bflat-ts" starts the full suite in the
+   same way.
 
-The runs belong to bflat-ts: it holds the secrets of zk-testing, and this
-repository starts its workflow with the token `BFLAT_TS_TOKEN` (Actions:
-read and write on bflat-ts). zk-testing runs one bflat-ts run at a time, so
-a run can wait in its queue. A full run takes about two hours, and the
-`simple` test goes first so that a broken image fails in minutes. A pull
-request from a fork gets no token: it pushes no image and runs no bflat-ts.
+The runs belong to bflat-ts, because bflat-ts has the secrets of
+zk-testing. This repository starts the workflow of bflat-ts with the token
+`BFLAT_TS_TOKEN` (Actions: read and write on bflat-ts). zk-testing does one
+bflat-ts run at a time, so a run can wait in the queue. A full run takes
+about two hours. The `simple` test goes first, so a broken image fails in
+minutes. A pull request from a fork gets no token. It pushes no image and
+runs no bflat-ts.
 
 ## Contracts on the native modules
 
-Every function in the C modules under `src/bflat/modules/` carries a
-[Frama-C](https://frama-c.com/) (ACSL) contract stating what it may touch
-and what it guarantees:
+Each function in the C modules under `src/bflat/modules/` has a
+[Frama-C](https://frama-c.com/) (ACSL) contract. The contract gives what the
+function can change and what it guarantees:
 
 ```console
 $ python3 src/bflat/scripts/check_acsl.py
@@ -114,25 +119,25 @@ rhp                    16         16  ok
 ...
 ```
 
-Annotations inside macro bodies — nofp generates its trap stubs from a
-macro — are only visible to Frama-C when the preprocessor keeps comments
-through expansion, so the checker passes `-cpp-extra-args=-CC`. C++ modules
-carry ACSL++ annotations as documentation (plain Frama-C does not parse
-C++), and assembly modules are out of scope.
+nofp makes its trap stubs from a macro. Frama-C sees the annotations in a
+macro body only when the preprocessor keeps the comments in the expansion.
+Thus the checker passes `-cpp-extra-args=-CC`. The C++ modules have ACSL++
+annotations as documentation, because plain Frama-C does not parse C++. The
+checker does not examine the assembly modules.
 
 ## Unit tests on the real ISA
 
-The suites in `src/bflat/modules/tests/` are cross-compiled for riscv64 and
-executed under qemu-user, so module code runs on the guest ISA rather than
-a host approximation. That is what makes some of them possible at all:
+The suites in `src/bflat/modules/tests/` are cross-compiled for riscv64.
+They run under qemu-user, so the module code runs on the guest ISA. This
+makes some tests possible:
 
-- **The terminators are tested for real.** The tests define the platform
-  function `zkvm_platform_exit` as the exit of a forked child, so
-  `__wrap_exit(42)` genuinely terminates that child with status 42.
-- **Assembly modules are covered.** A small shim marshals the `t3/t4/t5`
-  register convention that the C ABI cannot express, so the GC write
-  barriers are tested directly — including their `t3` contract (the
-  single-assign helpers keep `t3`, as .NET 11 wants).
+- **The exit functions.** The tests define the platform function
+  `zkvm_platform_exit` as the exit of a forked child. Thus
+  `__wrap_exit(42)` stops that child with status 42.
+- **The assembly modules.** A small shim sets up the `t3/t4/t5` register
+  convention, which the C ABI cannot express. Thus the tests call the GC
+  write barriers directly and check their `t3` contract: the single-assign
+  helpers keep `t3`, as .NET 11 requires.
 
 ```console
 $ ./src/bflat/modules/tests/run_tests.sh
@@ -142,97 +147,100 @@ rhp_native          26 passed, 0 failed
 module unit tests: all suites passed
 ```
 
-nofp's stub list is generated from the module source at test-build time, so
-a stub added to the module cannot silently miss coverage.
+The test build makes the list of nofp stubs from the module source. Thus
+each new stub in the module gets a test.
 
 ## Fuzzing and machine-checked proofs
 
-Two components take untrusted input and deserve more than examples: pal's
-hand-written `vfprintf` and the bump allocator. Both have libFuzzer targets
-built for the host with ASan and UBSan, and the allocator target drives
-random malloc/realloc/calloc/aligned_alloc/mark/reset sequences with
-unconstrained 64-bit sizes, asserting the invariants after every step.
+Two components take untrusted input: the hand-written `vfprintf` of pal
+and the bump allocator. Both have libFuzzer targets, built for the host
+with ASan and UBSan. The allocator target runs random sequences of
+malloc, realloc, calloc, aligned_alloc, mark and reset, with any 64-bit
+size. It checks the invariants after each step.
 
-Two properties are proved rather than sampled:
+Two properties have a proof for all inputs:
 
 - **The allocator's bounds**, with [CBMC](https://www.cbmc.diffblue.com/),
   for all sizes and reachable states. The harness includes the real
-  `pal/module.c` with its heap-window symbols re-pointed at a local array.
-  The proof is mutation-tested: weakening the bounds check makes CBMC report
-  the wild write, so a passing run is not vacuous.
-- **The `eh` module**, with Frama-C. WP discharges every contract of the
-  code that builds the synthetic program headers, runtime-error guards
-  included; Eva then runs the module end to end — dispatcher and all — in
-  both shapes an image can have, unwind tables kept and stripped, and must
-  report zero alarms. The split exists because WP cannot reason about a call
-  through a caller-supplied function pointer, which is all the dispatcher
-  does once the headers are built; Eva resolves that pointer against the
-  driver's callback.
+  `pal/module.c`, with its heap-window symbols pointed at a local array.
+  A mutation test checks the proof: with a weaker bounds check, CBMC
+  reports the wild write. Thus a pass is not vacuous.
+- **The `eh` module**, with Frama-C. WP proves each contract of the code
+  that builds the synthetic program headers, with the runtime-error
+  guards. Then Eva runs all of the module, with the dispatcher, in the two
+  shapes of an image: with unwind tables and without them. Eva must report
+  zero alarms. WP cannot reason about a call through a function pointer
+  from the caller, and the dispatcher only makes that call after it builds
+  the headers. Eva resolves the pointer against the callback of the
+  driver.
 
 ## Keeping the substitutions honest
 
 The [ILC-stage substitutions](architecture.md#stage-15--ilc-stage-substitutions)
-are the layer most exposed to runtime drift, and the failure is silent by
-nature: if a substituted CoreLib method is renamed or re-signatured, the
-entry stops matching and the original body stays in the image.
+change most when the runtime changes, and the failure gives no error.
+When a substituted CoreLib method gets a new name or signature, the entry
+stops matching. Then the original body stays in the image.
 
 **ILLink substitution entries only warn.** A `<method signature=…>` that
-matches nothing produces `IL2009: Could not find method …` and the build
-continues, with the original left in place. The signature is
-rendered by ILC and that rendering differs between .NET majors — .NET 11
-spells a method's own generic parameters by name
-(``ValueListBuilder`1<TChar>&``), earlier ILCs leave them empty — so an
-entry written for one major is inert on the other. Read the build output for
-IL2009.
+matches nothing gives `IL2009: Could not find method …`. The build
+continues, and the original stays in the image. ILC writes the signature,
+and the text is different between .NET majors. .NET 11 writes the generic
+parameters of a method by name (``ValueListBuilder`1<TChar>&``). Earlier
+ILCs leave them empty. Thus an entry for one major has no effect on the
+other. Read the build output for IL2009.
 
 ## Floating-point gates
 
-There are two gates because one is not enough:
+There are two gates. Each one finds what the other cannot see:
 
-- **`--error-on-float`** scans every *emitted* method's IL for floating-point
-  conversions. Methods that carry a conversion inside a block the target
-  provably never runs are listed explicitly and reported as warnings.
+- **`--error-on-float`** scans the IL of each *emitted* method for
+  floating-point conversions. A list names the methods with a conversion
+  in a block that the target never runs. These give a warning.
 - **`--error-on-float-binary`, `--error-on-compressed`, `--error-on-atomic`**
   decode the *linked binary* and fail on any F/D, compressed or atomic
   instruction, naming the offending symbol.
 
-The binary gates are the load-bearing ones. The IL scan cannot see a
-comparison — `ceq` over two `float64`s carries no `conv.r8`, so
-`Double.CompareTo`/`Equals` lowers to `feq.d`/`flt.d` with a clean IL report
-— and it cannot see native code at all, since the runtime's own objects, the
-GC and llvm-libunwind among them, are compiled outside ILC.
+The binary gates find more. The IL scan cannot see a comparison: `ceq` on
+two `float64` values has no `conv.r8`. Thus `Double.CompareTo`/`Equals`
+lowers to `feq.d`/`flt.d`, and the IL report is clean. The IL scan also
+cannot see native code. The objects of the runtime, the GC and
+llvm-libunwind among them, compile outside ILC.
 
 ## Analyzers on the driver
 
-The C# driver builds with every .NET analyzer enabled (`AnalysisMode=All`)
-with `-warnaserror`. `.editorconfig` decides
-which rules are errors, which stay warnings and which are off, each
-exemption with a reason next to it. The rules kept as errors are defect
-classes — dead conditions, leaked disposables, inexact reads, ignored
-results — rather than formatting preferences on code inherited from
-upstream.
+The C# driver builds with all .NET analyzers on (`AnalysisMode=All`) and
+with `-warnaserror`. `.editorconfig` sets which rules are errors, which are
+warnings and which are off. Each exemption has its reason next to it. The
+rules that stay errors find defects: dead conditions, leaked disposables,
+inexact reads and ignored results. Formatting rules for the code from
+upstream do not stay errors.
 
 ## Guests that run
 
-CI executes guests in two places. The Airbender job runs the riscv32 test
-guests on the Airbender v3 simulator. bflat-ts runs everything else on the
-zk-testing host: its tests build with the image of bflat and run on each
-zkVM (ZisK, SP1, OpenVM and the simulator target), and they include the guest of
-Nethermind's
-[StatelessExecutor](https://github.com/NethermindEth/nethermind) — an
-Ethereum state-transition function in production C#. Results land on the
-[zk-testing dashboard](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1),
-which tracks:
+CI runs guests in two places:
+
+- The Airbender job runs the riscv32 test guests on the Airbender v3
+  simulator.
+- bflat-ts runs all other guests on the zk-testing host. Its tests build
+  with the image of bflat and run on each zkVM (ZisK, SP1, OpenVM and the
+  simulator target). They include the guest of Nethermind's
+  [StatelessExecutor](https://github.com/NethermindEth/nethermind), an
+  Ethereum state-transition function in production C#.
+
+The results go to the
+[zk-testing dashboard](https://zk-testing.nethermind.dev/v2/dashboard?search=&project=1).
+It shows:
 
 <dl class="kv">
-  <dt>Pass or fail</dt><dd>Whether each test built, ran and produced the
-    output that it expects, or failed to load, crashed, or produced other
-    output.</dd>
+  <dt>Pass or fail</dt><dd>Whether each test built, ran and gave the
+    expected output. Otherwise: it did not load, it crashed, or it gave
+    other output.</dd>
   <dt>Proof timing</dt><dd>How long a prover takes on the workload. A
-    sudden regression usually means a runtime shim started doing more work
-    — for example the allocator hitting a path that allocates far more.</dd>
-  <dt>Binary size</dt><dd>The size of the postprocessed ELF, which tracks
-    the cost in prover steps and leads the timing metric.</dd>
+    sudden increase usually means that a runtime shim does more work. For
+    example, the allocator takes a path that allocates much more.</dd>
+  <dt>Binary size</dt><dd>The size of the ELF after the post-link steps.
+    It follows the cost in prover steps, and it changes before the
+    timing does.</dd>
 </dl>
 
 ## Running the checks locally
@@ -251,8 +259,8 @@ $ qemu-riscv64 ./hello
 Hello world!
 ```
 
-If `--libc zisk_sim` works and the equivalent `--libc zisk` build fails
-inside Zisk, the difference is almost always the post-link step of the
-`zisk` platform. The next step is `--print-fn-boundaries` of
-`patch_elf.py`: the `zisk` platform passes it when the build is verbose
-(`--verbose`), and it prints the start and end of each function.
+Sometimes `--libc zisk_sim` works, and the same build with `--libc zisk`
+fails in Zisk. Then the cause is almost always the post-link step of the
+`zisk` platform. Next, use the `--print-fn-boundaries` option of
+`patch_elf.py`. The `zisk` platform passes it in a verbose build
+(`--verbose`). It prints the start and end of each function.
