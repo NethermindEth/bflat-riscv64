@@ -36,8 +36,9 @@ env:
   # matter-labs/zksync-airbender with the 4 MiB ROM, the unsigned RV32M machine
   # and the Keccak-f delegation that libairbender calls (CSRs 0x7cc-0x7ce), on
   # its branch mb/keccak-03-read-ts-packed-memory-borrows; dev has the older
-  # Keccak delegation only.
-  AIRBENDER_COMMIT: 7a147da32e0c74308891a3fbd03193e724115266
+  # Keccak delegation only. The image is that cli, built by bflat-airbender
+  # (runner/), tagged by the commit.
+  AIRBENDER_RUNNER: nethermindeth/airbender-runner:7a147da32e0c74308891a3fbd03193e724115266@sha256:024fe8c5bd052865e02da23d3a24bc17955c4543e64d15aef1f94cfc2a08eb62
 
 jobs:
   acsl_check:
@@ -470,27 +471,18 @@ jobs:
           name: airbender-guests
           path: airbender-guests
 
-      - name: Cache the Airbender cli
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: airbender/target/release/cli
-          key: airbender-cli-${{ env.AIRBENDER_COMMIT }}
-
-      # The repository pins its nightly toolchain (rust-toolchain.toml), which
-      # rustup installs by itself. It has no Cargo.lock, so the cache is keyed
-      # by the commit.
-      - name: Build the Airbender cli
-        if: steps.cache.outputs.cache-hit != 'true'
+      # The cli reads the guests and writes its input files under the
+      # workspace and /tmp, which it sees at the same paths.
+      - name: Take the Airbender cli
         run: |
           set -e
-          git init -q airbender
-          git -C airbender fetch -q --depth 1 https://github.com/matter-labs/zksync-airbender "$AIRBENDER_COMMIT"
-          git -C airbender checkout -q FETCH_HEAD
-          cd airbender && cargo build --release -p cli
+          docker pull -q "$AIRBENDER_RUNNER"
+          printf '#!/bin/sh\nexec docker run --rm -v "%s:%s" -v /tmp:/tmp "%s" "$@"\n' \
+            "$PWD" "$PWD" "$AIRBENDER_RUNNER" > "$RUNNER_TEMP/airbender-cli"
+          chmod +x "$RUNNER_TEMP/airbender-cli"
 
       - name: Run the Airbender guests
-        run: AIRBENDER_CLI="$PWD/airbender/target/release/cli" GUESTS="$PWD/airbender-guests" tests/run-airbender.sh
+        run: AIRBENDER_CLI="$RUNNER_TEMP/airbender-cli" GUESTS="$PWD/airbender-guests" tests/run-airbender.sh
 
   # bflat-ts on zk-testing with the image of the pull request. The run is a
   # workflow of bflat-ts, started with BFLAT_TS_TOKEN (Actions: read and write
