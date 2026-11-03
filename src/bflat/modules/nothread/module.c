@@ -35,8 +35,8 @@
  * pointless (__membarrier_init, __do_cleanup_push): they are not called, they
  * are there so pthread_create.lo is never pulled in for them.
  *
- * Linked for the platforms with the no-atomics flag (sp1 and openvm). The
- * other platforms keep musl's primitives, which work on one hart too.
+ * Linked for the platforms with the no-atomics flag (sp1, openvm and
+ * airbender). The other platforms keep musl's primitives, which work on one hart too.
  */
 extern void exit(int status) __attribute__((noreturn));
 
