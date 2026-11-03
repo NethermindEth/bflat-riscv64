@@ -10,11 +10,12 @@ prev: /modules/
 next: /manifest/
 ---
 
-bflat knows no zkVM. Each zkVM target is a **platform**: a manifest in its
-bflat-* package that gives the entry point, the memory map, the instruction
-set, the RyuJIT options, the post-link steps and the modules that the guest
-needs (refer to the [manifest format](manifest.md#platform)). `--libc`
-selects the platform by its alias, and `--extlib` must give the package.
+bflat knows no zkVM. Each zkVM target is a **platform**, which is a manifest
+in its bflat-* package. The platform gives the entry point, the memory map,
+the instruction set, the RyuJIT options, the post-link steps and the modules
+that the guest needs. The [manifest format](manifest.md#platform) describes
+it. `--libc` selects the platform by its alias, and `--extlib` must give the
+package.
 
 All zkVM platforms link the same [modules](modules.md), the same soft-float
 musl and the same never-collecting GC. They differ in what this page
@@ -46,7 +47,7 @@ linked image.
 
 The flags select modules: `nothread` links only with `no-atomics`, `noos`
 only with `noos`, and the console wraps of `rhp` and `pal` only with
-`no-console`. Refer to the [flags table](manifest.md#conditions).
+`no-console`. See the [flags table](manifest.md#conditions).
 
 **The bump-pointer cell.** dotnet-riscv fixup 26 replaces the call to the
 allocation helper with an inline bump on a cell at a fixed address. The JIT
@@ -62,7 +63,7 @@ a stock riscv64 target never writes to an absolute guest address.
 **The platform interface.** The modules contain no code for one zkVM. `pal`
 calls `zkvm_platform_exit`, `zkvm_platform_write` and
 `zkvm_platform_syscall`, which the entry object of each platform defines
-(refer to the [platform interface](manifest.md#platform-interface)).
+(see the [platform interface](manifest.md#platform-interface)).
 
 ---
 
@@ -100,8 +101,8 @@ takes a ROM that is already converted.
 | RAM | `0xa0430000`–`0xbffc0000` | data, `.bss`, heap. It ends below the library RAM that ZisK 1.4 reserves. |
 | Cells | `0xbffbfff8`, `0xbffbfff0` | `g_zk_bump_ptr`, `g_zk_heap_floor` |
 
-Both linker scripts put the code that contains the C# entry point near the
-start of `.text`, so the call distance stays short for non-PIC near jumps.
+Both linker scripts put the code with the C# entry point near the start of
+`.text`. Thus the call distance stays short for non-PIC near jumps.
 
 **Entry.** `_start` sets `gp` and `sp` and calls musl's
 `__libc_start_main(uBootstrap_main, 1, {"app", NULL})`. The `argv_vec` also
@@ -125,7 +126,7 @@ Rust allocator gives NULL to `handle_alloc_error`, whose panic handler is
 
 **Post-link.** `patch_elf --fix-init-array --fix-tdata --trim-bss`, plus
 `--remove-eh` when the build has no unwind tables and
-`--print-fn-boundaries` with `-v`. Refer to
+`--print-fn-boundaries` with `-v`. See
 [Stage 3](architecture.md#stage-3--post-link-steps).
 
 **Code generation**, in optimized builds only:
@@ -243,8 +244,8 @@ ld and address 0`, with no hint of the cause. Thus the image is below 2^31.
 **Segment flags.** The SP1 loader rejects a segment without `PF_R` and a
 segment that is both writable and executable. It records `p_flags` as the
 initial protection of each page. The three loadable segments are `R+X`, `R`
-and `R+W`, and the read-only segment is page-aligned, so a page that it
-shares with `.text` cannot lose its execute bit.
+and `R+W`. The read-only segment is page-aligned, so a page that it shares
+with `.text` cannot lose its execute bit.
 
 **Entry.** `_start` sets `gp` and `sp` (SP1 does not set `sp` for the
 guest) and calls sp1-zkvm's `__start`. The guest must not bypass it:
@@ -256,8 +257,8 @@ with it. The `--wrap=main` is necessary because `libbootstrapper.o` also
 defines `main`, which a zkVM guest never enters.
 
 **Exit.** `zkvm_platform_exit` calls `zkvm_halt` of the bindings library.
-Without the bindings, it issues the syscalls itself: `ecall` with the
-syscall id in **`t0`**, `COMMIT` ×8, `COMMIT_DEFERRED_PROOFS` ×8, then
+Without the bindings, it issues the syscalls itself. Each one is an `ecall`
+with the syscall id in `t0`: `COMMIT` ×8, `COMMIT_DEFERRED_PROOFS` ×8, then
 `HALT` with the code in `a0`.
 
 **Syscalls and console.** `zkvm_platform_write` uses the `WRITE` syscall
@@ -270,9 +271,9 @@ it does not know, so `pal`'s `__wrap_syscall` returns `-1`.
 `JitNoUnalignedAccess=1`, the byte-wise expansion that
 `--no-unaligned-access` gives for any target, and `JitRiscV64StrictAlign=1`.
 The first option covers the accesses that the JIT knows are unaligned. The
-second covers the accesses whose address is a byref with an alignment that
-is known only at run time: codegen emits an `andi`/`bnez` check, with the
-wide access on the fast path and the byte-wise one on the slow path.
+second covers a byref address whose alignment is known only at run time.
+For it, codegen emits an `andi`/`bnez` check. The fast path has the wide
+access, and the slow path has the byte-wise one.
 Without it, one mainnet block made more than 200k misaligned accesses at 44
 sites.
 
@@ -280,7 +281,7 @@ sites.
 extension and rejects the FENCE encoding that musl emits. ILC pads between
 functions with a zero word (no encoding) or `c.nop` (a compressed one).
 Both passes change only words inside the function bodies of the symbol
-table, and zero words only in gaps of 16 bytes or less that are fully zero.
+table. They change zero words only in fully zero gaps of 16 bytes or less.
 A word outside a function is counted, reported and not changed.
 
 ## openvm
@@ -301,8 +302,8 @@ $ bflat build app.cs --os linux --arch riscv64 --libc openvm --no-pie \
     --extlib path/to/libopenvm.bflat.manifest -o app
 ```
 
-bflat-openvm builds the host runner (`runner/`), with the extension set of
-the guests, and publishes it as a Docker image. bflat-ts runs the OpenVM
+bflat-openvm builds the host runner (`runner/`) with the extension set of
+the guests. It publishes the runner as a Docker image. bflat-ts runs the OpenVM
 guests with it.
 
 **Memory map** (`openvm.ld`):
@@ -316,10 +317,10 @@ guests with it.
 | Address ceiling | 2^48 | |
 
 **Entry.** `_start` sets `gp` and `sp` and calls `noos_start_main`
-([noos](modules.md#noos)), which sets the thread pointer, runs
-`.init_array` and enters `uBootstrap_main`. musl's `__libc_start_main`
-reads an auxv that this guest does not have, and costs 126 instructions
-that the transpiler must accept.
+([noos](modules.md#noos)). `noos_start_main` sets the thread pointer, runs
+`.init_array` and enters `uBootstrap_main`. musl's `__libc_start_main` is
+not used: it reads an auxv that this guest does not have, and it costs 126
+instructions that the transpiler must accept.
 
 **Exit.** `TERMINATE`, a custom-0 instruction (`0x0b`, funct3 0). Its exit
 code is an **immediate**, so a code that is known only at run time becomes
@@ -339,10 +340,10 @@ guest gets wide unaligned accesses, as on ZisK.
 ### What sp1 and openvm share
 
 **Eager decoding of `.text`.** SP1 transpiles every word of every `PF_X`
-segment when it loads the ELF, and panics on a word that it cannot decode.
+segment when it loads the ELF. It panics on a word that it cannot decode.
 OpenVM does the same and fails with `TranspilerError::ParseError`. A
-zero-filled alignment gap is not a legal encoding, so both linker scripts
-fill `.text` padding with `NOP` (`=0x13000000`) and keep `.rodata` and the
+zero-filled alignment gap is not a legal encoding. Thus both linker scripts
+fill `.text` padding with `NOP` (`=0x13000000`). They keep `.rodata` and the
 unwind tables in a separate segment that is not executable.
 
 **The keccak permutation has three names.** Nethermind's `KeccakHash`
@@ -380,7 +381,7 @@ proves RV32IM with the ilp32 ABI. The package is
 | Unwind tables | none (`"unwind": false`) |
 
 The target needs a bflat built with the riscv32 target
-(`-p:BflatTargetRiscV32=true`, and `./build.sh modules riscv32`; refer to
+(`-p:BflatTargetRiscV32=true`, and `./build.sh modules riscv32`; see
 [BUILDING.md](https://github.com/NethermindEth/bflat-riscv64/blob/master/BUILDING.md)).
 
 ```console
@@ -426,8 +427,8 @@ no `zkvm_platform_syscall`.
 
 **No unwind tables.** The tables would take about half a MiB of the ROM.
 The platform sets `"unwind": false`, so bflat builds every guest as with
-`--remove-eh`: a `throw` goes to the guest's `ZkvmThrow` handler, or ends
-the guest (refer to [rhp](modules.md#rhp)).
+`--remove-eh`. A `throw` goes to the guest's `ZkvmThrow` handler, or ends
+the guest (see [rhp](modules.md#rhp)).
 
 **Code generation.**
 
@@ -447,9 +448,9 @@ the code.
 1. `patch_elf --nop-fences --unsigned-muldiv --unimp-system --unimp-csr 0xc22`.
    The native code has what Airbender cannot run: FENCE, and the signed RV32M
    instructions. The transpiler also decodes the full `.text` and rejects a
-   SYSTEM encoding that it does not know: the `ebreak` after a call to a
-   noreturn helper, musl's `ecall`s and the read of `vlenb` (`0xc22`) in the
-   runtime's libunwind. These become UNIMP (`csrrw x0, cycle, x0`). The
+   SYSTEM encoding that it does not know. The native code has three of them:
+   the `ebreak` after a call to a noreturn helper, musl's `ecall`s and the
+   read of `vlenb` (`0xc22`) in the runtime's libunwind. These become UNIMP (`csrrw x0, cycle, x0`). The
    guest reaches none of them.
 2. `flat_image --suffix .bin`: the ROM image.
 3. `flat_image --suffix .text --section .text`: the instructions.
@@ -464,10 +465,10 @@ riscv32 runtime has no OpenSSL and no ICU library.
 
 ## linux-x64
 
-bflat keeps the stock NativeAOT targets. A release of dotnet-riscv with the
-linux-x64 target (`BflatTargetLinuxX64`, the default; refer to
-[the runtime](runtime.md#the-linux-x64-target)) gives an ordinary x64 Linux
-program, with the full runtime and no zkVM module:
+bflat keeps the stock NativeAOT targets. The linux-x64 target needs a release
+of dotnet-riscv that has it (`BflatTargetLinuxX64`, the default; see
+[the runtime](runtime.md#the-linux-x64-target)). It gives an ordinary x64
+Linux program, with the full runtime and no zkVM module:
 
 ```console
 $ bflat build app.cs --arch x64 --os linux
@@ -476,8 +477,8 @@ $ ./app
 
 The program is dynamically linked against glibc, as a program of
 `dotnet publish -p:PublishAot=true` is. This target uses the x64 JIT and
-CoreLib of the same release, because Microsoft's x64 packages do not agree
-with the JIT/EE interface of this ILCompiler. CI builds and runs one guest
+CoreLib of the same release. bflat cannot use Microsoft's x64 packages,
+because they do not agree with the JIT/EE interface of this ILCompiler. CI builds and runs one guest
 in each image.
 
 The layout also has the stock linux-musl-riscv64 target (`--arch riscv64

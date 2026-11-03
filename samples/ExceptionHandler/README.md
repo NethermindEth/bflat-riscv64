@@ -47,9 +47,9 @@ static void ZkvmThrow(IntPtr exceptionObj)
    shutdown. While an exception is in flight, the shutdown enters the throw
    path again, and the handler recurses forever.
 
-The `rhp` and `pal` modules give the runtime side: the forward in
-`__wrap_RhpThrowEx`, the `exit` wrap, and a no-op `RhpReversePInvoke`, so
-that the handler can start from the throw path.
+The `rhp` and `pal` modules give the runtime side. It has the forward in
+`__wrap_RhpThrowEx`, the `exit` wrap, and a no-op `RhpReversePInvoke`. The
+no-op lets the handler start from the throw path.
 
 ## Build and run
 

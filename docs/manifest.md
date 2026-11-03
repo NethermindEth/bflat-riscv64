@@ -28,9 +28,9 @@ lead: >
 
 bflat reads schema 2 for the modules in this repository and for `--extlib`
 packages. bflat knows no zkVM: the five zkVM targets are platforms in their
-packages ([Targets](targets.md)). bflat parses and validates all sections. A manifest that uses a
-section that bflat does not act on in that kind of build causes an error.
-bflat does not ignore the section.
+packages ([Targets](targets.md)). bflat parses and validates all sections.
+A manifest can use a section that bflat does not act on in that type of
+build. Then bflat stops with an error. bflat does not ignore the section.
 
 | Section | Platform builds (platform, modules, packages) | Stock targets with `--extlib` |
 |---------|-----------------------------------------------|-------------------------------|
@@ -58,13 +58,17 @@ bflat does not ignore the section.
 ## Goals
 
 1. **A manifest declares all the parts of its module or package.** These
-   parts are: sources, objects, link position, wraps, linker scripts, entry
-   points, ILC inputs, codegen options, post-link steps, image checks, tests
-   and external downloads. `BuildCommand.cs`, `bflat.csproj` and `build.sh`
-   must not contain data about a specific module or target.
-2. **bflat does not know the name of a zkVM.** The bflat-* package of a
-   target (ZisK, SP1, OpenVM, Airbender) contains the platform manifest of that
-   target.
+   parts are:
+   - sources, objects, link position and wraps;
+   - linker scripts and entry points;
+   - ILC inputs and codegen options;
+   - post-link steps, image checks and tests;
+   - external downloads.
+
+   `BuildCommand.cs`, `bflat.csproj` and `build.sh` must not contain data
+   about a specific module or target.
+2. **bflat does not know the name of a zkVM.** Each target (ZisK, SP1,
+   OpenVM, Airbender) has its platform manifest in its bflat-* package.
    bflat knows only the format, the generic modules and the stock NativeAOT
    targets.
 3. **One parser reads the format.** The parser is `src/bflat/BflatManifest.cs`.
@@ -137,7 +141,7 @@ ignore the key. Use `metadata` for data that a build adds.
 ### Notes in place of comments
 
 JSON has no comments. But the comments in `module_params.yml` explained
-almost all `--wrap` entries, and this information is important. Thus each
+almost all `--wrap` entries, and a reader needs that information. Thus each
 object in a list can have a `"note"` string. bflat ignores the note.
 
 ```json
@@ -214,11 +218,15 @@ list item. A key that bflat does not know is an error.
 | `output` | The name of the object file. The default is `<stem>.o`. For example, `heap.c` gives `heap.o`. |
 | `when` | The module build compiles the source only if this condition is true. The condition can test only `arch` and `os`, because the module build does not know the guest. |
 
-The module build compiles for one architecture at a time: `build.sh modules
-riscv64` (the default) and `build.sh modules riscv32`. A module that a
-riscv32 platform links has its sources twice, each with its `arch`, and the
-riscv32 one with its own `output`, and its objects twice, each with its
-`arch`:
+The module build compiles for one architecture at a time:
+`build.sh modules riscv64` (the default) and `build.sh modules riscv32`.
+A module that a riscv32 platform links has these entries:
+
+- its sources two times, each with its `arch`. The riscv32 source has its
+  own `output`.
+- its objects two times, each with its `arch`.
+
+For example:
 
 ```json
 "sources": [
@@ -373,7 +381,7 @@ its own `when`.
   option of the user. `BFLAT_NO_ZK_ISA_REDUCTION=1` turns this off.
 - Without F and D, the compiler selects the soft-float ABI itself
   (`TargetAbi.NativeAotRiscV64SoftFloat`). bflat removes F and D from every
-  riscv64 target, because the riscv64 layout is lp64: the runtime, musl,
+  riscv64 target, because the riscv64 layout is lp64. The runtime, musl,
   `libgcc.a` and `libatomic.a` are built rv64im with `-mabi=lp64`. bflat
   links them as they are and changes no file. `bflat-modules check-abi`
   checks the layout when it is made. A package must also ship lp64
@@ -390,11 +398,11 @@ an error. If they give the same value, bflat writes the option one time. The
 `--codegenopt` option of the user comes last, so it replaces the value of
 all manifests.
 
-bflat writes two options for every RISC-V target (riscv64 and riscv32): `JitNoUnalignedAccess`
-and `JitRiscV64StrictAlign`, both `0` by default. A platform that gives them
-replaces the default (SP1 sets both to `1`; Airbender sets
-`JitNoUnalignedAccess=1` and `JitRiscV64StrictAlign=0`). `--no-unaligned-access` sets
-`JitNoUnalignedAccess=1` for any target.
+bflat writes two options for every RISC-V target (riscv64 and riscv32):
+`JitNoUnalignedAccess` and `JitRiscV64StrictAlign`, both `0` by default. A
+platform that gives them replaces the default. SP1 sets both to `1`.
+Airbender sets `JitNoUnalignedAccess=1` and `JitRiscV64StrictAlign=0`.
+`--no-unaligned-access` sets `JitNoUnalignedAccess=1` for any target.
 
 ### `postlink`: changes to the linked image
 
@@ -432,10 +440,10 @@ These keys turn on `--error-on-float-binary`, `--error-on-compressed` and
 on `--error-on-float`, which checks the IL. Airbender sets `float`,
 `compressed` and `atomic`. On the other platforms the checks stay opt-in.
 
-`il_float_allow` lists methods, as `Namespace.Type.Method`, whose floating
-point `--error-on-float` reports as a warning and not as an error: the IL has
-it, but in a block that the JIT removes on the target. Each item can have a
-`when` and a `note`. `guest_subst` lists `System.Threading.Lock.TryEnterSlow`,
+`il_float_allow` lists methods, as `Namespace.Type.Method`. For these
+methods, `--error-on-float` reports the floating point as a warning, and
+not as an error. The IL has the floating point, but in a block that the JIT
+removes on the target. Each item can have a `when` and a `note`. `guest_subst` lists `System.Threading.Lock.TryEnterSlow`,
 whose double is behind an EventSource test.
 
 ```json
@@ -513,8 +521,8 @@ A manifest with a `platform` object is a target that the user can select
 | `airbender` | `airbender` | bflat-airbender | `airbender.bflat.manifest`, `airbender_entry.o`, `airbender.ld` |
 
 `platform/build.sh` of each package builds these files. It needs only the
-RISC-V binutils (for Airbender, clang). The bindings library of the package (for example
-`libsp1.a`) has its own manifest, which applies with
+RISC-V binutils (for Airbender, clang). The bindings library of the package
+(for example `libsp1.a`) has its own manifest, which applies with
 `"when": { "platform": "sp1" }`.
 
 The SP1 platform, shortened:
@@ -579,10 +587,11 @@ Then bflat loads the manifests in this sequence (the load order):
 Each `--extlib` package must give at least one manifest to the build, as
 before schema 2.
 
-For a platform build, bflat links musl's `crt1.o` with `_start` renamed
-(`crt1-platform.o` in the musl directory of the layout:
+For a platform build, bflat links the `crt1.o` of musl with `_start`
+renamed. Thus the entry of the platform defines `_start`. The file is
+`crt1-platform.o` in the musl directory of the layout:
 `lib/linux/riscv64/musl`, or `lib/linux/riscv32/musl` for a riscv32
-platform), so that the entry of the platform defines `_start`.
+platform.
 
 ### Platform interface
 
@@ -660,7 +669,7 @@ compiles `BflatManifest.cs`, the parser of bflat. Thus the build has one
 parser.
 
 `bflat-modules` is a separate program because it must run before bflat can
-run: the bflat build puts the built modules into its layout, and bflat needs
+run. The bflat build puts the built modules into its layout, and bflat needs
 the layout.
 
 | Command | Action |
@@ -671,9 +680,13 @@ the layout.
 | `bflat-modules link <layout-modules-dir> <platform-manifest> [<package-manifest>...] [--remove-eh] [-O0] [-v] [--compiler <capability>]` | Shows what the manifests give a guest build on a platform: the ISA, the ABI, the RyuJIT options, the defines, the feature switches, the ILC files, the post-link steps and the link command (with placeholders for the parts that bflat adds itself). It uses the same code as bflat. |
 | `bflat-modules check-abi <dir>` | Makes sure that each RISC-V object in `<dir>` (each `.o` file and each member of each `.a` file) has the soft-float ABI: lp64 for ELF64, ilp32 for ELF32, and not both in one directory. `bflat.csproj` runs this command on `lib/linux/riscv64/musl`, and on `lib/linux/riscv32/musl` when it has the riscv32 target, when it makes the layout. |
 
-To add a module, add a directory with a manifest and add the name of the
-module to `requires` of each platform that needs it (in the platform
-packages). No other file of bflat needs a change.
+To add a module:
+
+1. Add a directory with a manifest.
+2. Add the name of the module to `requires` of each platform that needs it
+   (in the platform packages).
+
+No other file of bflat needs a change.
 
 ## Schema 1 compatibility
 
@@ -740,18 +753,22 @@ the start. Their unit tests went with them
 | the exit, console and syscall code of each zkVM in `pal` (selected by `__zkvm_target_*` marker symbols) | the [platform interface](#platform-interface), defined by the entry of each platform |
 | the ziskos allocator bridge in `pal` | `zkvm_alloc_or_abort`, bound by the ZisK entry |
 
-**Verification.** For each platform, the ISA string, the effective RyuJIT
-options, the defines, the feature switches, the direct P/Invoke list and the
-`patch_elf` arguments are the same as before, in all 16 combinations of
-`-O0`, `--remove-eh`, `-v` and the `zb-lowering-fixes` capability. The link
-command has the same files in the same sequence and the same set of
-`--wrap` options. The sequence of the `--wrap` options is the same, except
-for the 13 wraps that moved to the packages (the ZisK accelerator arenas,
-and `main`, `memcpy`, `memmove` and `memset` of SP1 and OpenVM): they now
-come after the first object of their package. The entry objects that the
-packages build have the same code and relocations as before; they no longer
-have the local symbol `BFLAT_DOTNET`, which `--discard-all` removed from the
-image anyway.
+**Verification.** We compared each platform before and after the change,
+in all 16 combinations of `-O0`, `--remove-eh`, `-v` and the
+`zb-lowering-fixes` capability. These values are the same as before:
+
+- the ISA string and the effective RyuJIT options;
+- the defines, the feature switches and the direct P/Invoke list;
+- the `patch_elf` arguments.
+
+The link command has the same files in the same sequence and the same set
+of `--wrap` options. The sequence of the `--wrap` options is also the same,
+with one exception. The 13 wraps that moved to the packages now come after
+the first object of their package. These are the ZisK accelerator arenas,
+and `main`, `memcpy`, `memmove` and `memset` of SP1 and OpenVM. The entry
+objects that the packages build have the same code and relocations as
+before. They no longer have the local symbol `BFLAT_DOTNET`, which
+`--discard-all` removed from the image in all cases.
 
 ## Substitutions
 
@@ -785,10 +802,10 @@ These substitutions are gone:
 The behavior that changes:
 
 - These methods run. Before, the removed ones threw.
-- The upstream bodies run, with their exact semantics: `Random(seed).Next(n)`
-  scales the sample in `double` as upstream does, `Hashtable` uses the load
-  factor that it gets, and a struct with a `-0.0` field has the same hash
-  code as one with `+0.0`.
+- The upstream bodies run, with their exact semantics:
+  - `Random(seed).Next(n)` scales the sample in `double` as upstream does;
+  - `Hashtable` uses the load factor that it gets;
+  - a struct with a `-0.0` field has the same hash code as one with `+0.0`.
 - The image gets the soft-float calls of these methods. Use bflat-ts to
   measure the size and the cycles.
 

@@ -161,9 +161,9 @@ $ python3 src/bflat/scripts/check_manifests.py          # needs python3-jsonsche
 $ dotnet run --project src/bflat-modules -- check src/bflat/modules
 ```
 
-**bflat unit tests.** The manifest parser, the package signatures, the
-`--extlib` resolution, the float-ABI check of the layout and the ISA
-verifier, for ELF64 and ELF32. They need only the .NET SDK. With `python3`
+**bflat unit tests.** They test the manifest parser, the package signatures,
+the `--extlib` resolution and the float-ABI check of the layout. They also
+test the ISA verifier, for ELF64 and ELF32. They need only the .NET SDK. With `python3`
 and `openssl`, they also sign with `sign_package.py` and check that bflat
 accepts the result:
 
@@ -244,9 +244,10 @@ x64 program that runs on the host. CI builds and runs one.
 ## CI
 
 `.github/workflows/build-riscv64.yml` runs on each push and pull request to
-master. It runs the checks above, builds bflat and the image for the default
-and the riscv32 SDK, links a guest for each zkVM target, and runs the
+master. It runs the checks above. It builds bflat and the image for the
+default and the riscv32 SDK, links a guest for each zkVM target, and runs the
 Airbender guests. On a pull request from this repository, it runs the
 `bflat-ts/simple` test of [bflat-ts](https://github.com/NethermindEth/bflat-ts)
-on zk-testing with the image of the pull request, and then the full suite.
+on zk-testing with the image of the pull request. Then it runs the full
+suite.
 [Verification](docs/verification.md#ci) has the list of jobs.
