@@ -399,7 +399,8 @@ internal partial class BuildCommand
             // as <name>.patched, and every consumer had to know which of the two
             // files was the real one; getting it wrong ran the unpatched image,
             // which starts and then misbehaves in ways that look like a compiler
-            // bug.) The only tool is patch_elf, which bflat ships.
+            // bug.) The tools are built in: patch_elf, which bflat ships, and
+            // flat_image, which writes a raw image beside the output.
             if (platformLink != null && exitCode == 0)
             {
                 foreach ((string tool, List<string> toolArgs) in platformLink.PostlinkSteps())

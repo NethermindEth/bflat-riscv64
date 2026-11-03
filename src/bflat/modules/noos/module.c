@@ -22,9 +22,9 @@
  * cgroup probing, directory walking, signals. A zkVM guest can service none
  * of it: one hart, no processes, no filesystem, no dynamic loader.
  *
- * Displacing them is worth doing on its own - it is dead weight in a proof -
- * and it became load-bearing when the p4 blob set started shipping musl built
- * with the C extension, which none of these VMs decode.
+ * Displacing them is worth doing on its own: it is dead weight in a proof.
+ * (It was also load-bearing while the layout's musl was built with the C
+ * extension, which none of these VMs decode; that musl is now rv64im.)
  *
  * TWO BEHAVIOURS, and the split is the design:
  *
