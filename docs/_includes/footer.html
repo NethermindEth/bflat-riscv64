@@ -1,7 +1,10 @@
 <footer class="site-footer">
   <div class="container footer-inner">
     <a class="footer-logo" href="https://www.nethermind.io" rel="noopener" aria-label="Nethermind">
-      <img src="{{ '/assets/img/NM_Logo_Vertical_Light.svg' | relative_url }}" alt="Nethermind">
+      <picture>
+        <source srcset="{{ '/assets/img/NM_Logo_Vertical_Light.svg' | relative_url }}" media="(prefers-color-scheme: dark)">
+        <img src="{{ '/assets/img/NM_Logo_Vertical_Dark.svg' | relative_url }}" alt="Nethermind">
+      </picture>
     </a>
     <div class="footer-meta">
       <p class="footer-brand">bflat-riscv64</p>
