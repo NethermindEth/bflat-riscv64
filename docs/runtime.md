@@ -3,31 +3,40 @@ layout: default
 title: Runtime (dotnet-riscv)
 eyebrow: The .NET runtime build
 lead: >
-  bflat-riscv64 has no runtime of its own. It downloads an official .NET
-  build from the sibling project
+  bflat-riscv64 has no runtime of its own. It downloads a .NET 11 build from
+  the sibling project
   <a href="https://github.com/NethermindEth/dotnet-riscv">dotnet-riscv</a>.
-  That build uses the upstream sources and the upstream build system. It
-  adds riscv64 patches for upstream and zkVM code-quality patches.
+  That build is .NET with a large riscv64 and zkVM patch series. It is not
+  a Microsoft build, and Microsoft's runtime packages do not work with it.
 prev: /
 next: /architecture/
 ---
 
-## An official build of upstream .NET
+## A patched build of .NET 11
 
-bflat links against .NET itself: the upstream VMR (`dotnet/dotnet`) at a
-release branch. Upstream's own build system builds it, for a target that
-upstream supports. The difference from upstream is a set of riscv64 patches:
-a series for upstream, and code-quality patches for the zkVM guests on top.
+dotnet-riscv takes the .NET VMR (`dotnet/dotnet`) at a release branch and
+builds it with its build system, with a patch series on top. The series is
+large. For .NET 11:
 
-This is possible because bflat applies each zkVM change *around* the
-runtime (see [Architecture](architecture.md)):
+| Patches | Count | Lines added | What they change |
+|---------|-------|-------------|------------------|
+| riscv64 base (`NN_*.patch`) | 22 | about 2000 | the soft-float `lp64` ABI, the ISA sets, the gates on F, D, C and A emission, the `-march`/`-mabi` of the native build |
+| zkVM code generation (`perf-*.patch`) | 67 | about 6000 | RyuJIT, ILC and the NativeAOT runtime: inline allocation, CSR P/Invokes, strict alignment, DMA idioms and more |
+| riscv32 (`fixup/11/riscv32/`) | 7 | about 4600 | a new RV32 target in RyuJIT, ILC and the NativeAOT runtime |
+
+Most of the lines are in RyuJIT. The patches change the JIT/EE interface,
+so the ILCompiler of a release works only with the runtime of the same
+release.
+
+bflat applies each zkVM change that it can *around* the runtime (see
+[Architecture](architecture.md)):
 
 - ILC-stage substitutions;
 - link-time [modules](modules.md);
 - post-link changes to the ELF.
 
-A change goes into the earliest of these layers that can express it. Only a
-change that none of them can make goes into .NET itself.
+A change goes into the earliest of these layers that can express it. A
+change that none of them can make goes into the patch series.
 
 ## The patches we carry
 
@@ -37,8 +46,7 @@ section describes the .NET 11 profiles:
 
 <dl class="kv">
   <dt><code>upstream</code></dt>
-  <dd>The numbered patches (<code>NN_*.patch</code>) staged for
-    dotnet/runtime: the soft-float <code>lp64</code> ABI, the ISA sets and
+  <dd>The numbered patches (<code>NN_*.patch</code>): the soft-float <code>lp64</code> ABI, the ISA sets and
     the gates on F, D, C and A emission, and the configurable
     <code>-march</code>/<code>-mabi</code> of the native build. The profile
     stands alone: its patches apply and build without the patches of the
@@ -47,7 +55,7 @@ section describes the .NET 11 profiles:
   <dd><code>upstream</code> plus the <code>perf-*.patch</code> files next to
     it: riscv64 code-quality patches for the zkVM guests. They work with
     the <a href="architecture.md#zkvm-ryujit-codegen-knobs">RyuJIT knobs</a>
-    of the platforms. They are for zkVMs only and do not go upstream.
+    of the platforms. They are for zkVMs only.
     bflat bundles this profile. The riscv32 target is available only with
     it.</dd>
   <dt><code>minimal</code>, <code>perf</code></dt>

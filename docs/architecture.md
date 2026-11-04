@@ -9,7 +9,7 @@ prev: /runtime/
 next: /modules/
 ---
 
-<div style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; margin: 16px 0 32px;">
+<div class="figure">
   {% include pipeline-diagram.html %}
 </div>
 
@@ -34,14 +34,13 @@ linux-x64 target, which builds an ordinary NativeAOT program.
 
 ## Why the extra stages exist
 
-Stock .NET NativeAOT compiles C# to a native binary. That binary needs a
+Microsoft's .NET NativeAOT compiles C# to a native binary. That binary needs a
 kernel, dynamic linking, floating-point hardware, atomics and compressed
 instructions. A zkVM gives none of them.
 
 bflat is a **compiler driver**. It contains no code generator of its own.
-Roslyn compiles C# into IL, Microsoft's ILCompiler compiles IL into a RISC-V
-object, and `lld` links it. All three are stock. bflat adds these stages
-around them:
+Roslyn compiles C# into IL, the ILCompiler of dotnet-riscv compiles IL into
+a RISC-V object, and `lld` links it. bflat adds these stages around them:
 
 - **ILC-stage substitutions** for the single hart;
 - **RyuJIT options** that keep the code inside the ISA of the zkVM;
@@ -58,10 +57,10 @@ a platform that its bflat-* package defines (bflat-libziskos, bflat-sp1,
 bflat-openvm, bflat-airbender), and `--extlib` gives the package. The
 [manifest format](manifest.md) page describes what a platform declares.
 
-These stages are outside .NET, so the runtime stays an official build. It
-uses the upstream sources, the upstream build system and a set of riscv
-fixes that we send upstream (see [Runtime](runtime.md)). Thus a new .NET
-version is a rebuild, not a merge. The pipeline takes ordinary C#.
+These stages are outside .NET. What they cannot do goes into the patch
+series of dotnet-riscv: the riscv64 ABI and ISA patches, and the RyuJIT and
+NativeAOT changes for zkVM guests (see [Runtime](runtime.md)). The pipeline
+takes ordinary C#.
 Exceptions, allocation, interface dispatch and generics all work. The same
 source builds for the prover, for QEMU and for real hardware.
 
@@ -69,7 +68,7 @@ source builds for the prover, for QEMU and for real hardware.
 
 | Stage | What happens | Unique to this fork? |
 |-------|--------------|----------------------|
-| **1 · Compile** | Microsoft's stock NativeAOT (ILC) compiles C# to a RISC-V object, with the RyuJIT options of the platform | No: upstream, plus the riscv fixups of the runtime |
+| **1 · Compile** | The NativeAOT compiler (ILC) of dotnet-riscv compiles C# to a RISC-V object, with the RyuJIT options of the platform | Partly: .NET 11 with the patch series of dotnet-riscv |
 | **1.5 · Substitute** | The platform's modules give ILC its single-hart ILLink substitutions and feature switches (`guest_subst`) | Yes |
 | **2 · Link** | `ld.lld` links the object statically and replaces unsupported OS and runtime calls with the [link-time modules](modules.md) | Yes |
 | **3 · Post-link** | The post-link steps of the platform change the ELF in place, or write the flat images, so that the loader of the prover accepts it (`zisk`, `sp1`, `airbender`) | Yes |
@@ -434,7 +433,7 @@ it as the end of the program. Thus `pal` wraps all three and calls the
 The runtime dispatches managed exceptions. A `throw` walks the stack two
 times: first for the filters, then to unwind with the `finally` funclets.
 Then it resumes in the `catch`. Filters, rethrow with `InnerException` and
-unwinding through many frames operate as on stock .NET. An exception that
+unwinding through many frames operate as on Microsoft's .NET. An exception that
 nothing catches ends in `FailFast`. To enter a `try` costs nothing at run
 time, so a guest that never throws does only one unwind-section lookup at
 startup.

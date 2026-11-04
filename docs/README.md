@@ -24,7 +24,7 @@ docs/
 ├── _includes/           header, sidebar, footer + reusable SVG diagrams
 ├── assets/css/style.scss  Theme: dark navy and Nethermind orange
 ├── index.html           Marketing landing page (uses landing layout)
-├── runtime.md           dotnet-riscv: an official .NET build for the target, and the patches we aim to upstream
+├── runtime.md           dotnet-riscv: the patched .NET 11 build that bflat uses
 ├── architecture.md      The pipeline end to end, incl. ILC substitutions and postprocessing
 ├── modules.md           Each module explained
 ├── targets.md           The zkVM platforms and the other targets, one by one
