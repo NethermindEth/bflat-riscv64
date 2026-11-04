@@ -1,524 +1,195 @@
 ---
 layout: landing
-title: bflat-riscv64 — NativeAOT C# for RISC-V zkVMs
-description: A fork of bflat that compiles C# to fully static RISC-V binaries for the ZisK, SP1, OpenVM and Airbender zkVMs. Nethermind builds its StatelessExecutor with it.
+title: bflat-riscv64
+description: A fork of bflat that compiles C# to static RISC-V binaries for the ZisK, SP1, OpenVM and Airbender zkVMs. Nethermind builds the guest of its stateless executor with it.
 ---
 
-<!-- ============================================================= HERO -->
-<section class="landing-hero">
+<section class="hero">
   <div>
-    <p class="eyebrow">Nethermind · zkVM tooling</p>
-    <h1>Native&nbsp;C# for <span class="accent">RISC-V zkVMs.</span></h1>
+    <p class="eyebrow">NethermindEth / bflat-riscv64</p>
+    <h1>NativeAOT C# for <span class="arch">RISC-V</span> zkVMs</h1>
     <p class="lead">
-      bflat-riscv64 compiles C# to fully static RISC-V ELF binaries. A
-      binary runs in a zkVM prover (ZisK, SP1, OpenVM or Airbender), under
-      <code>qemu-riscv64</code>, or on RISC-V64 Linux. The same source
-      builds for each target.
+      Nethermind's fork of <a href="https://github.com/bflattened/bflat">bflat</a>.
+      It compiles C# into a static RISC-V ELF that runs in a zkVM: ZisK, SP1,
+      OpenVM or ZKsync Airbender. Nethermind builds the guest of its
+      stateless executor with it.
     </p>
-    <div class="actions">
-      <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Get building →</a>
-      <a class="btn btn-ghost-cyan" href="{{ '/architecture/' | relative_url }}">See the architecture</a>
-    </div>
-    <div class="badges">
-      <span class="badge badge--accent">RISC-V64 · RISC-V32</span>
-      <span class="badge">rv64im · rv32im · soft-float</span>
-      <span class="badge badge--accent2">ZisK · SP1 · OpenVM · Airbender</span>
-      <span class="badge">musl-based</span>
-      <span class="badge">Statically linked</span>
-    </div>
+    <p class="links">
+      <a class="primary" href="{{ '/build/' | relative_url }}">Build &amp; use</a>
+      <a href="{{ '/targets/' | relative_url }}">Targets</a>
+      <a href="{{ '/architecture/' | relative_url }}">Architecture</a>
+      <a href="https://github.com/{{ site.repository }}">GitHub</a>
+    </p>
   </div>
-  <div class="hero-figure">
-    {% include hero-illustration.html %}
+
+  <div class="datasheet" aria-label="Summary">
+    <div class="ds-title"><span>summary</span><span>.NET 11</span></div>
+    <dl>
+      <dt>input</dt>      <dd>C# source, .NET 11 libraries</dd>
+      <dt>compiler</dt>   <dd>NativeAOT: ILC and RyuJIT of <a href="https://github.com/NethermindEth/dotnet-riscv">dotnet-riscv</a></dd>
+      <dt>output</dt>     <dd>One static ELF, no PIE, no dynamic loader</dd>
+      <dt>isa</dt>        <dd><code>rv64im</code>, plus Zba Zbb Zbs on ZisK; <code>rv32im</code> on Airbender</dd>
+      <dt>abi</dt>        <dd>Soft-float <code>lp64</code> and <code>ilp32</code></dd>
+      <dt>not emitted</dt><dd>C, A, F, D: <code>--error-on-*</code> checks the image</dd>
+      <dt>platforms</dt>  <dd><code>zisk</code> <code>zisk_sim</code> <code>sp1</code> <code>openvm</code> <code>airbender</code></dd>
+      <dt>runtime</dt>    <dd><code>11.0.100-upstream-perf.r400</code>, <code>r423</code> for riscv32</dd>
+    </dl>
   </div>
 </section>
 
-<!-- ============================================================ NATIVE -->
-<div class="native-pitch">
-  <div class="container">
-    <p class="eyebrow">How it executes</p>
-    <h2 class="native-pitch-h">
-      The prover proves the code that <span class="accent-token">NativeAOT</span> emits.
-    </h2>
-    <p class="native-pitch-lead">
-      NativeAOT compiles all of your C# to RISC-V instructions, with full
-      optimization. The guest has no IL interpreter and no JIT. The prover
-      executes native instructions, as it does for a C or Rust guest.
-    </p>
+<h2 id="quick-start">Quick start</h2>
+
+<p>The image has bflat, the .NET 11 SDK and lld. Mount the current directory and build:</p>
+
+<div class="tabs" data-tabs>
+  <div class="tab-bar" role="tablist" aria-label="Platform">
+    <button type="button" role="tab" aria-selected="true" data-tab="zisk_sim">zisk_sim</button>
+    <button type="button" role="tab" aria-selected="false" data-tab="zisk">zisk</button>
   </div>
+<pre data-pane="zisk_sim"><code><span class="cmt"># A ZisK-shaped guest that runs under QEMU or on RISC-V64 Linux</span>
+<span class="prompt">$ </span>docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w nethermindeth/bflat-riscv64-11 \
+    bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie --no-pthread \
+    --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
+<span class="prompt">$ </span>qemu-riscv64 ./hello</code></pre>
+<pre data-pane="zisk" hidden><code><span class="cmt"># A guest for the ZisK emulator and prover</span>
+<span class="prompt">$ </span>docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w nethermindeth/bflat-riscv64-11 \
+    bflat build hello.cs --arch riscv64 --os linux --libc zisk --no-pie --no-pthread \
+    --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
+<span class="prompt">$ </span>ziskemu -e ./hello</code></pre>
 </div>
 
-<!-- ====================================================== STAT STRIP -->
-<section class="stat-strip">
-  <div class="stat">
-    <div class="stat-value">15<span class="unit">modules</span></div>
-    <p class="stat-label">Link-time and ILC-stage adaptations</p>
-  </div>
-  <div class="stat">
-    <div class="stat-value">5<span class="unit">platforms</span></div>
-    <p class="stat-label">zisk · zisk_sim · sp1 · openvm · airbender</p>
-  </div>
-  <div class="stat">
-    <div class="stat-value">0<span class="unit">kernels</span></div>
-    <p class="stat-label">Under the guest</p>
-  </div>
-  <div class="stat">
-    <div class="stat-value">1<span class="unit">command</span></div>
-    <p class="stat-label">Source → ELF</p>
-  </div>
-</section>
+<p>
+  bflat downloads the package from its GitHub release and checks its
+  signature. <a href="{{ '/build/' | relative_url }}">Build &amp; use</a> has
+  SP1, OpenVM, Airbender and all options.
+</p>
 
-<!-- ============================================================ RUN IT -->
-<div class="run-it">
-  <div class="container">
-    <p class="eyebrow">Run it now</p>
-    <h2>Build in the published image.</h2>
-    <p class="lead">
-      Put a <code>.cs</code> file in the current directory and run the
-      command. The image has the driver, the runtime, the link-time modules
-      and the post-link tools.
-    </p>
+<h2 id="targets">Targets</h2>
 
-    <div class="run-toggle" role="tablist" aria-label="Build target">
-      <button type="button" class="run-toggle-btn is-active"
-              data-target="zisk" role="tab" aria-selected="true">
-        <span class="badge-dot" aria-hidden="true"></span>
-        ZisK
-      </button>
-      <button type="button" class="run-toggle-btn"
-              data-target="qemu" role="tab" aria-selected="false">
-        <span class="badge-dot" aria-hidden="true"></span>
-        QEMU
-      </button>
-    </div>
+<p>
+  Each zkVM target is a platform that a bflat-* package defines. <code>--libc</code>
+  selects the platform, and <code>--extlib</code> gives the package.
+</p>
 
-    <div class="codeshot codeshot--hero">
-      <div class="codeshot-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="label">your shell — bash</span>
-      </div>
-<pre class="run-pane is-active" data-pane="zisk"><code><span class="comment-token"># Build for the ZisK zkVM. The post-link steps run, and the ELF is ready to prove.</span>
-<span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
-    nethermindeth/bflat-riscv64-11 \
-    bflat build hello.cs --arch riscv64 --os linux --libc zisk --no-pie \
-        --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
-</code></pre>
-<pre class="run-pane" data-pane="qemu"><code><span class="comment-token"># Build for the simulator. The ELF runs under QEMU or on RISC-V64 Linux.</span>
-<span class="accent-token">docker run --rm</span> <span class="accent2-token">-v "$PWD:/work" -w /work</span> \
-    nethermindeth/bflat-riscv64-11 \
-    bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie \
-        --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
-</code></pre>
-    </div>
+<table>
+  <thead>
+    <tr><th>platform</th><th>arch</th><th>package</th><th>runs on</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><a href="{{ '/targets/#zisk' | relative_url }}"><code>zisk</code></a></td><td>riscv64</td><td><a href="https://github.com/NethermindEth/bflat-libziskos">bflat-libziskos</a></td><td>ZisK: <code>ziskemu</code> and the prover</td></tr>
+    <tr><td><a href="{{ '/targets/#zisk_sim' | relative_url }}"><code>zisk_sim</code></a></td><td>riscv64</td><td>bflat-libziskos</td><td><code>qemu-riscv64</code>, RISC-V64 Linux</td></tr>
+    <tr><td><a href="{{ '/targets/#sp1' | relative_url }}"><code>sp1</code></a></td><td>riscv64</td><td><a href="https://github.com/NethermindEth/bflat-sp1">bflat-sp1</a></td><td>SP1 v6</td></tr>
+    <tr><td><a href="{{ '/targets/#openvm' | relative_url }}"><code>openvm</code></a></td><td>riscv64</td><td><a href="https://github.com/NethermindEth/bflat-openvm">bflat-openvm</a></td><td>OpenVM, RV64 line</td></tr>
+    <tr><td><a href="{{ '/targets/#airbender' | relative_url }}"><code>airbender</code></a></td><td>riscv32</td><td><a href="https://github.com/NethermindEth/bflat-airbender">bflat-airbender</a></td><td>ZKsync Airbender v3</td></tr>
+  </tbody>
+</table>
 
-    <p class="codeshot-meta run-pane is-active" data-pane="zisk">
-      The image is published on
-      <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64-11" rel="noopener">Docker Hub</a>.
-      The ELF goes into the directory that you mounted. The post-link
-      steps are done, so the ZisK prover can take it. bflat downloads the
-      platform package from its GitHub release and checks its signature.
-    </p>
-    <p class="codeshot-meta run-pane" data-pane="qemu">
-      The image is published on
-      <a href="https://hub.docker.com/r/nethermindeth/bflat-riscv64-11" rel="noopener">Docker Hub</a>.
-      The ELF goes into the directory that you mounted. It runs under
-      <code>qemu-riscv64</code> or on RISC-V64 Linux. Use it to debug a
-      guest before you prove it.
-    </p>
-  </div>
+<p>bflat also builds ordinary linux-x64 programs.</p>
+
+<h2 id="gaps">What a zkVM does not give a guest</h2>
+
+<p>
+  A zkVM gives a guest much less than a Linux host. bflat links a small
+  module for each gap. The modules are the same on all five platforms.
+</p>
+
+<ul class="gaps">
+  <li><span class="gap">No kernel: no syscalls, files or processes</span>
+      <span class="fill"><a href="{{ '/modules/#noos' | relative_url }}">noos</a>, <a href="{{ '/modules/#pal' | relative_url }}">pal</a></span></li>
+  <li><span class="gap">One hart: nothing wakes a blocked call</span>
+      <span class="fill"><a href="{{ '/modules/#nothread' | relative_url }}">nothread</a>, <a href="{{ '/modules/#tls' | relative_url }}">tls</a>, <a href="{{ '/modules/#guest-subst' | relative_url }}">guest_subst</a></span></li>
+  <li><span class="gap">No loader to start the runtime</span>
+      <span class="fill"><a href="{{ '/modules/#ubootstrap' | relative_url }}">ubootstrap</a>, <a href="{{ '/modules/#eh' | relative_url }}">eh</a></span></li>
+  <li><span class="gap">No floating-point hardware</span>
+      <span class="fill">soft-float ABI; <a href="{{ '/modules/#nofp' | relative_url }}">nofp</a> for the transcendentals</span></li>
+  <li><span class="gap">No randomness, no clock; each run must reproduce</span>
+      <span class="fill"><a href="{{ '/modules/#rng-stupid' | relative_url }}">rng_stupid</a>, <a href="{{ '/modules/#gs-cookie' | relative_url }}">gs_cookie</a></span></li>
+  <li><span class="gap">Short runs with a known working set</span>
+      <span class="fill"><a href="{{ '/modules/#ugc-zero' | relative_url }}">ugc-zero</a>, <a href="{{ '/modules/#rhp' | relative_url }}">rhp</a>, <a href="{{ '/modules/#rhp-native' | relative_url }}">rhp_native</a></span></li>
+</ul>
+
+<h2 id="how-it-works">How a build works</h2>
+
+<div class="figure">
+  {% include pipeline-diagram.html %}
 </div>
 
-<!-- ============================================================ WHAT -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">What it is</p>
-    <div>
-      <h2>A compiler driver for .NET NativeAOT, with the parts that a zkVM needs.</h2>
-      <p>
-        The original <a href="https://github.com/bflattened/bflat">bflat</a>
-        compiles C# to native code with NativeAOT, and its binaries are
-        dynamically linked. A zkVM cannot load those dependencies. This fork
-        adds zkVM platforms that packages define, fifteen modules, ILC-stage
-        substitutions and post-link tools. It does not change the upstream
-        sources.
-      </p>
-    </div>
-  </div>
+<ol class="steps">
+  <li><div><strong>ILC compiles IL to a RISC-V object.</strong>
+    Roslyn compiles C# to IL first. ILC applies the ILC-stage substitutions
+    and the RyuJIT options of the platform.</div></li>
+  <li><div><strong>lld links the object statically.</strong>
+    The link adds the runtime, musl and the
+    <a href="{{ '/modules/' | relative_url }}">link-time modules</a>, which use
+    <code>--wrap</code> to replace the OS calls, the thread primitives and
+    some runtime helpers.</div></li>
+  <li><div><strong>The post-link tools change the ELF for the loader.</strong>
+    <code>patch_elf.py</code> runs on ZisK, SP1 and Airbender, and
+    <code>flat_image</code> on Airbender.</div></li>
+  <li><div><strong>The entry object starts the runtime.</strong>
+    It calls <code>Main</code>. No kernel runs under the guest.</div></li>
+</ol>
 
-  <div class="feature-grid">
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"/></svg>
-      </div>
-      <h3>Five zkVM platforms</h3>
-      <p><code>zisk</code>, <code>sp1</code> and <code>openvm</code> on
-      riscv64, <code>airbender</code> on riscv32, and <code>zisk_sim</code>
-      for a ZisK-shaped binary that runs in QEMU or on real hardware. Its
-      bflat-* package defines each platform. bflat itself defines none.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M3 12l2 2 4-4M3 6l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>
-      </div>
-      <h3>Fifteen modules</h3>
-      <p>Small C, C++ and assembly objects go into the link, and
-      <code>--wrap=</code> sends calls to them. One module gives ILC its
-      substitutions. No upstream code is patched.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg>
-      </div>
-      <h3>Per-platform memory maps</h3>
-      <p>Each package carries the linker script, the entry point and the
-      exit protocol of its zkVM, in its <code>platform/</code>
-      directory.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h8M19 18l2 2-2 2M21 20h-8"/></svg>
-      </div>
-      <h3>Post-link tools</h3>
-      <p><code>patch_elf.py</code> rewrites the ELF for the loader of ZisK,
-      SP1 and Airbender; <code>flat_image</code> writes the ROM images that
-      Airbender loads.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16zM3.3 7L12 12l8.7-5M12 22V12"/></svg>
-      </div>
-      <h3>NuGet integration</h3>
-      <p><code>--extlib</code> reads NuGet packages that have a bflat
-      manifest, for example the precompiled native library
-      <code>libziskos</code>.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">
-        <svg viewBox="0 0 24 24"><path d="M22 12A10 10 0 1 1 12 2M22 4 12 14.01l-3-3"/></svg>
-      </div>
-      <h3>Used in production</h3>
-      <p>bflat builds Nethermind's <a href="https://github.com/NethermindEth/nethermind">StatelessExecutor</a>,
-      an Ethereum state-transition function. zk-testing tracks its proof
-      time on each change.</p>
-    </div>
-  </div>
-</section>
+<p><a href="{{ '/architecture/' | relative_url }}">Architecture</a> has the details of each stage.</p>
 
-<!-- ====================================================== FOUNDATION -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">Foundation</p>
-    <div>
-      <h2>A sibling project builds the runtime that bflat uses.</h2>
-      <p>
-        dotnet-riscv builds the runtime and its cross rootfs for the zkVM
-        constraints: no compressed instructions, no FP, and one ABI for all
-        objects. It publishes them as release assets. The bflat build
-        downloads and unpacks them.
-      </p>
-    </div>
-  </div>
+<h2 id="runtime">The runtime</h2>
 
-  <div class="cards">
-    <a class="card" href="{{ '/runtime/' | relative_url }}">
-      <h3>.NET: dotnet-riscv</h3>
-      <p>Takes the upstream .NET VMR at a release branch and builds it for
-      the target ISA with its riscv64 patches. It publishes CoreLib, the
-      runtime libraries and ILCompiler as a signed release.
-      bflat uses the .NET 11 build, for riscv64, riscv32 and linux-x64.</p>
-    </a>
-  </div>
+<p>
+  bflat does not use Microsoft's runtime packages.
+  <a href="https://github.com/NethermindEth/dotnet-riscv">dotnet-riscv</a>
+  builds .NET 11 with its own patch series: 22 patches for the riscv64 base
+  ISA, soft-float and the lp64 ABI, and 67 patches that change RyuJIT, ILC
+  and the NativeAOT runtime for zkVM guests. The riscv32 target adds 7
+  patches more. Each runtime release is signed, and bflat checks the
+  signature when it downloads the release.
+</p>
 
-  <div class="divergence">
-    <div class="divergence-head">
-      <h2>An <em>official .NET build</em>.</h2>
-      <p>
-        The runtime is upstream .NET: the <code>dotnet/dotnet</code> VMR at a
-        release branch, built with upstream's own build system. bflat
-        applies the zkVM changes outside the runtime: at ILC time, at link
-        time and after the link. The runtime carries a riscv64 patch series
-        for upstream, and code-quality patches for the zkVM guests on top.
-      </p>
-    </div>
+<table>
+  <thead>
+    <tr><th>image</th><th>runtime release</th><th>targets</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>nethermindeth/bflat-riscv64-11</code></td><td><code>11.0.100-upstream-perf.r400</code></td><td>riscv64 platforms, linux-x64</td></tr>
+    <tr><td><code>nethermindeth/bflat-riscv64-11-riscv32</code></td><td><code>11.0.100-upstream-perf.r423</code></td><td>riscv64 platforms and Airbender</td></tr>
+  </tbody>
+</table>
 
-    <div class="divergence-stats">
-      <div class="div-stat">
-        <div class="div-stat-num">3<span class="unit">layers outside .NET</span></div>
-        <p class="div-stat-note">ILC substitutions · link-time modules · ELF postprocess</p>
-      </div>
-      <div class="div-stat">
-        <div class="div-stat-num">100%<span class="unit">upstream sources</span></div>
-        <p class="div-stat-note"><code>dotnet/dotnet</code> at a release branch, built with upstream's own build system</p>
-      </div>
-      <div class="div-stat">
-        <div class="div-stat-num">2<span class="unit">RISC-V ABIs</span></div>
-        <p class="div-stat-note">Soft-float <code>lp64</code> on riscv64 and <code>ilp32</code> on riscv32, checked on every object</p>
-      </div>
-      <div class="div-stat">
-        <div class="div-stat-num">1<span class="unit">.NET line</span></div>
-        <p class="div-stat-note">.NET 11, with the <code>upstream-perf</code> profile</p>
-      </div>
-    </div>
+<p>
+  <code>upstream-perf</code> is the name of the patch profile. See
+  <a href="{{ '/runtime/' | relative_url }}">Runtime</a>.
+</p>
 
-    <p class="divergence-foot">
-      <a href="{{ '/runtime/' | relative_url }}">See the fixup profiles and the targets →</a>
-    </p>
-  </div>
-</section>
+<h2 id="checks">Checks</h2>
 
-<!-- ============================================================ PIPELINE -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">bflat pipeline</p>
-    <div>
-      <h2>From <code>.cs</code> source to a zkVM-ready ELF in four stages.</h2>
-      <p>
-        bflat runs four stages. The <code>BuildCommand</code> files in
-        <code>src/bflat/</code> drive them. The compile from C# to an object
-        uses Microsoft's stock NativeAOT. The changes of this repository
-        apply at link time and after.
-      </p>
-    </div>
-  </div>
+<ol class="steps">
+  <li><div><strong>Contracts and proofs.</strong> Each function of the C
+    modules has an ACSL contract. Frama-C proves the <code>eh</code> module,
+    and CBMC proves the bounds of the allocator.</div></li>
+  <li><div><strong>Tests on the guest ISA.</strong> The module unit tests run
+    under qemu. The <code>vfprintf</code> parser and the allocator are
+    fuzzed.</div></li>
+  <li><div><strong>Guests in CI.</strong> CI builds both images, links a guest
+    for each riscv64 platform and runs the Airbender guests in the Airbender
+    simulator.</div></li>
+  <li><div><strong>bflat-ts on each pull request.</strong> The
+    <a href="https://github.com/NethermindEth/bflat-ts">bflat-ts</a> suite runs
+    on zk-testing with the image of the pull request.</div></li>
+</ol>
 
-  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
-    {% include pipeline-diagram.html %}
-  </div>
-
-  <ol style="margin-top: 32px; counter-reset: step; list-style: none; padding: 0;">
-    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
-      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">01</div>
-      <div>
-        <h3 style="margin: 0 0 4px;">Microsoft's NativeAOT (ILC) emits an object</h3>
-        <p style="margin: 0; color: var(--text-muted);">Stock ILC compiles C# to one RISC-V ELF relocatable. It contains the managed code, the type-system metadata and the module init tables. The upstream compiler has the same tests as the rest of .NET.</p>
-      </div>
-    </li>
-    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
-      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent); font-weight: 700;">02</div>
-      <div>
-        <h3 style="margin: 0 0 4px;">ld.lld links the binary statically</h3>
-        <p style="margin: 0; color: var(--text-muted);"><code>--whole-archive</code> pulls in the module objects. <code>--wrap=symbol</code> sends each musl, compiler-rt and runtime call that a module replaces to the module.</p>
-      </div>
-    </li>
-    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border);">
-      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">03</div>
-      <div>
-        <h3 style="margin: 0 0 4px;">Post-link steps rewrite the image</h3>
-        <p style="margin: 0; color: var(--text-muted);">Each platform lists its own steps. <code>zisk</code> fixes <code>.init_array</code> and <code>.tdata</code> for its loader and trims <code>.bss</code>. <code>sp1</code> changes FENCE and zero padding into NOPs. <code>airbender</code> rewrites the instructions that its RV32 machine cannot run, and writes flat <code>.bin</code>/<code>.text</code> images. <code>zisk_sim</code> and <code>openvm</code> have none.</p>
-      </div>
-    </li>
-    <li style="display: grid; grid-template-columns: 64px 1fr; gap: 24px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-      <div style="font-family: var(--font-mono); font-size: 28px; color: var(--accent-2); font-weight: 700;">04</div>
-      <div>
-        <h3 style="margin: 0 0 4px;">Run and prove on a zkVM</h3>
-        <p style="margin: 0; color: var(--text-muted);">The output is one ELF. It runs in a zkVM prover (ZisK, SP1, OpenVM or Airbender). The <code>zisk_sim</code> build runs under <code>qemu-riscv64</code> or on RISC-V64 Linux. The same source builds for all of them.</p>
-      </div>
-    </li>
-  </ol>
-</section>
-
-<!-- ====================================================== ARCHITECTURE -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">Architecture</p>
-    <div>
-      <h2>What this repository contains.</h2>
-      <p>
-        This repository has the compiler driver, the modules and the
-        post-link tools. The zkVM platforms are in their bflat-* packages.
-        <a href="{{ '/runtime/' | relative_url }}">dotnet-riscv</a> builds
-        the .NET runtime against an Alpine cross rootfs from upstream's own
-        tooling, with musl rebuilt for the base ISA. The bflat build
-        downloads its release assets.
-        No part of the stack emits compressed, atomic or FP instructions.
-        The code that bflat compiles and links uses the soft-float
-        <code>lp64</code> ABI (<code>ilp32</code> on riscv32).
-      </p>
-    </div>
-  </div>
-
-  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
-    {% include architecture-stack.html %}
-  </div>
-
-  <div class="module-grid">
-    <a class="mod" href="{{ '/modules/#ubootstrap' | relative_url }}">
-      <div class="mod-name">ubootstrap</div>
-      <p class="mod-desc">Runtime entry point. It calls <code>RhInitialize</code>, registers the managed-code range, runs the module initialisers and jumps to <code>__managed__Main</code>.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#pal' | relative_url }}">
-      <div class="mod-name">pal</div>
-      <p class="mod-desc">Deterministic OS calls: <code>getenv</code>, <code>sched_*</code>, <code>mmap</code> and the clock. The <code>malloc</code> family on a bump allocator, and a <code>vfprintf</code> with no FP.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#rhp' | relative_url }}">
-      <div class="mod-name">rhp</div>
-      <p class="mod-desc">Runtime helper replacements: P/Invoke frames, allocation fast paths, the console, and the exception policy of <code>--remove-eh</code>.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#rhp-native' | relative_url }}">
-      <div class="mod-name">rhp_native</div>
-      <p class="mod-desc">Hand-written RISC-V assembly for rv64 and rv32. Each GC write barrier is a plain store, because uGC has no card table.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#tls' | relative_url }}">
-      <div class="mod-name">tls</div>
-      <p class="mod-desc">Minimal thread-local storage without the ELF code of musl. It copies <code>.tdata</code> into a static block and answers <code>__tls_get_addr</code>.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#eh' | relative_url }}">
-      <div class="mod-name">eh</div>
-      <p class="mod-desc">Synthetic program headers. Answers <code>dl_iterate_phdr</code>, so the unwinder finds its tables in an image with no loader.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#nofp' | relative_url }}">
-      <div class="mod-name">nofp</div>
-      <p class="mod-desc">Traps the soft-float builtins and libm functions that must not run. A guest that calls one stops with an error. The exact libm operations run.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#noos' | relative_url }}">
-      <div class="mod-name">noos</div>
-      <p class="mod-desc">Defines the OS calls of the Unix PAL of the runtime, before musl. It links on the platforms with no OS: SP1, OpenVM and Airbender.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#nothread' | relative_url }}">
-      <div class="mod-name">nothread</div>
-      <p class="mod-desc">Single-hart replacements for musl's locking and thread primitives, on platforms with no atomics.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#rng-stupid' | relative_url }}">
-      <div class="mod-name">rng_stupid</div>
-      <p class="mod-desc">A deterministic PRNG for <code>RandomNumberGenerator</code> and the random entry points of the runtime. A proof must be reproducible.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#gs-cookie' | relative_url }}">
-      <div class="mod-name">gs_cookie</div>
-      <p class="mod-desc">Sets the stack cookie to the constant <code>0</code>. A zkVM has no entropy and no page protection.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#stdcppshim' | relative_url }}">
-      <div class="mod-name">stdcppshim</div>
-      <p class="mod-desc">The C++ runtime parts that the NativeAOT runtime needs: <code>operator new</code> and <code>delete</code> on <code>malloc</code>.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#rust-sys' | relative_url }}">
-      <div class="mod-name">rust_sys</div>
-      <p class="mod-desc">Connects the allocator hook of the zkVM Rust runtimes (<code>sys_alloc_aligned</code>) to the shared bump heap.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#ugc-zero' | relative_url }}">
-      <div class="mod-name">ugc-zero</div>
-      <p class="mod-desc">uGC, a GC that never collects, in place of the built-in GC. A proof run is short, and its working set is known.</p>
-    </a>
-    <a class="mod" href="{{ '/modules/#guest-subst' | relative_url }}">
-      <div class="mod-name">guest_subst</div>
-      <p class="mod-desc">ILC-stage substitutions and invariant feature switches for single-hart, OS-less guests. No native object.</p>
-    </a>
-    <a class="mod" href="{{ '/targets/' | relative_url }}">
-      <div class="mod-name">zkVM platforms</div>
-      <p class="mod-desc">The assembly <code>_start</code>, the linker script and the exit protocol. They are in the bflat-* package of each zkVM.</p>
-    </a>
-  </div>
-</section>
-
-<!-- ===================================================== VERIFICATION -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">Verification</p>
-    <div>
-      <h2>Checks that fail before the prover runs.</h2>
-      <p>
-        CI runs on each push and pull request in this repository. It checks
-        the contracts on the native modules and runs the C# analyzers and
-        unit tests on the driver. It runs the module unit tests on the real
-        ISA under qemu, fuzzing and a CBMC proof of the allocator. Then it
-        builds the Docker
-        images for riscv64 and riscv32 and links a guest for each zkVM
-        target. The riscv32 guests run on the Airbender simulator. A pull
-        request also runs the bflat-ts suite with its own image on the
-        <a href="https://zk-testing.nethermind.dev">zk-testing</a> host.
-        The suite includes Nethermind's StatelessExecutor.
-      </p>
-    </div>
-  </div>
-
-  <div class="figure" style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px;">
-    {% include verify-flow.html %}
-  </div>
-
-  <div class="verify-ribbon">
-    <div class="item">
-      <h4>Repository CI</h4>
-      <p>GitHub Actions <a href="https://github.com/NethermindEth/bflat-riscv64/actions/workflows/build-riscv64.yml"><code>build-riscv64.yml</code></a> runs the contract gate, the analyzers, the unit tests, fuzzing and the CBMC proof. Then it builds each module and the driver from source, in two legs: riscv64, and riscv32 with the Airbender run.</p>
-    </div>
-    <div class="item">
-      <h4>bflat-ts on each pull request</h4>
-      <p>CI pushes the image of the pull request to GHCR. The <code>simple</code> test of bflat-ts runs with it first. Then the full suite runs on each zkVM.</p>
-    </div>
-    <div class="item">
-      <h4>End-to-end proofs</h4>
-      <p>The <a href="https://zk-testing.nethermind.dev">zk-testing</a> dashboard shows the bflat-ts results with proof timings, and a public badge. The results include the Nethermind StatelessExecutor.</p>
-    </div>
-  </div>
-
-  <p style="margin-top: 28px; color: var(--text-muted);">
-    See <a href="{{ '/verification/' | relative_url }}">Verification</a> for the
-    full list of checks, the CI jobs, and how to read the dashboard.
-  </p>
-</section>
-
-<!-- ============================================================ QUICK START -->
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">Quick start</p>
-    <div>
-      <h2>One command, source to ELF.</h2>
-      <p>With a built bflat in your <code>$PATH</code>:</p>
-    </div>
-  </div>
-
-  <div class="codeshot">
-    <div class="codeshot-bar">
-      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      <span class="label">~/work/hello — bash</span>
-    </div>
-    <pre><code><span style="color:#6b738c"># The ZisK platform and its precompile library, from a signed GitHub release</span>
-$ bflat build hello.cs --arch riscv64 --os linux --libc zisk --no-pie \
-      --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
-
-<span style="color:#6b738c"># The same source, for the simulator target</span>
-$ bflat build hello.cs --arch riscv64 --os linux --libc zisk_sim --no-pie \
-      --extlib https://github.com/NethermindEth/bflat-libziskos:v1.4.0-alpha.153
-$ qemu-riscv64 ./hello
-Hello world!
-
-<span style="color:#6b738c"># Airbender, on riscv32: the assets of a bflat-airbender release, downloaded,</span>
-<span style="color:#6b738c"># and a bflat built with the riscv32 target</span>
-$ bflat build hello.cs --arch riscv32 --os linux --libc airbender --no-pie --no-pthread \
-      --extlib bflat-airbender/libairbender.bflat.manifest
-$ ls hello hello.bin hello.text
-</code></pre>
-  </div>
-
-  <div class="cta">
-    <h2>Build something for a zkVM.</h2>
-    <p>
-      bflat downloads the runtime. The samples build in seconds.
-      Nethermind uses the same pipeline in production.
-    </p>
-    <div class="actions">
-      <a class="btn btn-primary" href="{{ '/build/' | relative_url }}">Read the build guide →</a>
-      <a class="btn btn-ghost-cyan" href="https://github.com/{{ site.repository }}" rel="noopener">Browse the source</a>
-    </div>
-  </div>
-</section>
+<p><a href="{{ '/verification/' | relative_url }}">Verification</a> lists each check and each CI job.</p>
 
 <script>
-(function () {
-  var toggle = document.querySelector('.run-toggle');
-  if (!toggle) return;
-  var btns  = document.querySelectorAll('.run-toggle-btn');
-  var panes = document.querySelectorAll('.run-pane');
-
-  toggle.addEventListener('click', function (e) {
-    var btn = e.target.closest('.run-toggle-btn');
-    if (!btn) return;
-    var target = btn.getAttribute('data-target');
-    btns.forEach(function (b) {
-      var on = b === btn;
-      b.classList.toggle('is-active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-    });
-    panes.forEach(function (p) {
-      p.classList.toggle('is-active', p.getAttribute('data-pane') === target);
+  document.querySelectorAll('[data-tabs]').forEach(function (box) {
+    var tabs = box.querySelectorAll('[data-tab]');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        tabs.forEach(function (t) {
+          t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+        });
+        box.querySelectorAll('[data-pane]').forEach(function (pane) {
+          pane.hidden = pane.getAttribute('data-pane') !== tab.dataset.tab;
+        });
+      });
     });
   });
-})();
 </script>

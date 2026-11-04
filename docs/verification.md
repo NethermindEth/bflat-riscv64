@@ -11,7 +11,7 @@ lead: >
 prev: /build/
 ---
 
-<div style="background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; margin: 16px 0 32px;">
+<div class="figure">
   {% include verify-flow.html %}
 </div>
 
