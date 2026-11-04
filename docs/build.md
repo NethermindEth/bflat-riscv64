@@ -14,10 +14,18 @@ next: /verification/
 The easy way is the image. It has bflat, the .NET 11 SDK, lld and
 llvm-objcopy:
 
-| Image | Targets |
-|-------|---------|
-| `nethermindeth/bflat-riscv64-11` | riscv64 zkVM platforms, linux-x64 |
-| `nethermindeth/bflat-riscv64-11-riscv32` | the same, plus the riscv32 platforms (Airbender) |
+| Image | Runtime release | Targets |
+|-------|-----------------|---------|
+| `nethermindeth/bflat-riscv64-11` | `11.0.100-upstream-perf.r400` | riscv64 zkVM platforms, linux-x64 |
+| `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.100-upstream-perf.r423` | the same, plus the riscv32 platform (Airbender) |
+| `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>` | as the default image | the default image of a pull request, for the bflat-ts runs |
+
+The two .NET 11 images use different runtime releases. Each release is a
+separate build of the dotnet-riscv patch series (see
+[Runtime](runtime.md)). `upstream-perf` is the name of the patch profile;
+the runtime is not a Microsoft build. The images `bflat-riscv64`,
+`bflat-riscv64-min` and `bflat-riscv64-11-min` on Docker Hub are older
+builds and get no updates.
 
 ```console
 $ docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w \

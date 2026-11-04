@@ -15,9 +15,9 @@ next: /targets/
 Each module is a small object file in C, C++ or assembly. The linker pulls it
 into the final binary. The module overrides a specific symbol with
 `--wrap=` or with an earlier definition. Together, the modules replace the
-parts of .NET, musl and compiler-RT that a zkVM cannot honour. No line of
-upstream source changes. Thus a .NET version bump is a rebase, and we keep
-no fork.
+parts of .NET, musl and compiler-RT that a zkVM cannot honour. The modules
+change no runtime source. What they cannot do is in the patch series of
+dotnet-riscv (see [Runtime](runtime.md)).
 
 A zkVM gives a guest much less than a Linux host:
 
@@ -54,7 +54,7 @@ platform. Refer to [Targets](targets.md).
 
 ## Results
 
-To run C# in a zkVM, we change no upstream source. Each adaptation is an
+The modules change no runtime source. Each adaptation is an
 object that the linker pulls in. `guest_subst` is the one exception: it is
 data that the driver applies one stage earlier. The same set runs
 Nethermind's

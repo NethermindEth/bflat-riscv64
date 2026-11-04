@@ -6,7 +6,7 @@ prev: /targets/
 next: /signing/
 lead: >
   One JSON format describes all the parts that bflat links into a guest in
-  addition to the stock NativeAOT runtime. The format covers the modules in
+  addition to the NativeAOT runtime. The format covers the modules in
   this repository, the bflat-* packages, and the platforms (zkVM targets).
 ---
 
@@ -69,8 +69,8 @@ build. Then bflat stops with an error. bflat does not ignore the section.
    about a specific module or target.
 2. **bflat does not know the name of a zkVM.** Each target (ZisK, SP1,
    OpenVM, Airbender) has its platform manifest in its bflat-* package.
-   bflat knows only the format, the generic modules and the stock NativeAOT
-   targets.
+   bflat knows only the format, the generic modules and the ordinary
+   NativeAOT targets.
 3. **One parser reads the format.** The parser is `src/bflat/BflatManifest.cs`.
    bflat and the `bflat-modules` program both compile this file. The build
    scripts get data from `bflat-modules`. They do not read JSON themselves.

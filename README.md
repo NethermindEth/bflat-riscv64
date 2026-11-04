@@ -11,7 +11,7 @@ stateless executor of [Nethermind](https://github.com/NethermindEth/nethermind)
 for each zkVM below.
 
 Bflat is a **compiler driver**. It has no code generator of its own. It
-drives the stock .NET toolchain and adapts the result for a target that the
+drives the .NET toolchain of dotnet-riscv and adapts the result for a target that the
 toolchain does not know:
 
 | Stage | Who does the work | What Bflat adds |
@@ -85,11 +85,10 @@ $ ./build.sh bflat riscv64
 [BUILDING.md](BUILDING.md) has the prerequisites, the riscv32 target, the
 Docker scripts and the checks.
 
-## Design principle: stock .NET, no patches inside bflat
+## Design principle: the earliest layer that can make the change
 
-Bflat applies each adaptation *around* the runtime and keeps the runtime
-source as it is. Thus a new .NET version needs a rebuild and no merge. An adaptation goes into the earliest
-layer that can express it:
+Bflat makes as many adaptations as it can outside the runtime. An
+adaptation goes into the earliest layer that can express it:
 
 1. **ILC stage: substitutions and feature switches.** The `guest_subst`
    module gives ILC an ILLink substitutions file and the invariant feature
@@ -103,11 +102,15 @@ layer that can express it:
 4. **Post-link.** `patch_elf.py` and `flat_image` change the linked image for
    the loader of the zkVM.
 
-The runtime is an official build of the .NET VMR from
-[dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv), with a set of
-riscv64 fixes that we send upstream (see [Runtime](docs/runtime.md)). The
-release that bflat bundles is in `src/bflat/bflat.variant.props`. Bflat
-checks its signature (see [Package signatures](docs/signing.md)).
+The changes that no layer above can make go into the runtime itself.
+[dotnet-riscv](https://github.com/NethermindEth/dotnet-riscv) builds the
+.NET 11 VMR with its own patch series: 22 patches for the riscv64 base ISA,
+soft-float and the lp64 ABI, and 67 patches that change RyuJIT, ILC and the
+NativeAOT runtime for zkVM guests. The riscv32 target adds 7 patches more.
+Thus bflat uses its own build of .NET, and Microsoft's runtime packages do
+not work with it (see [Runtime](docs/runtime.md)). The release that bflat
+bundles is in `src/bflat/bflat.variant.props`. Bflat checks its signature
+(see [Package signatures](docs/signing.md)).
 
 ## Modules
 

@@ -52,8 +52,9 @@ $ dotnet build src/bflat/bflat.csproj -p:SkipCompilerLayout=true
 ## Target .NET version and runtime
 
 Bflat builds for .NET 11 (`net11.0`) only. It bundles the
-`upstream-perf` runtime of dotnet-riscv: the riscv64 fixes that we send
-upstream, plus the zkVM code-quality patches. `RuntimeReleaseTag` in
+`upstream-perf` runtime of dotnet-riscv: .NET 11 with the riscv64 patch
+series and the zkVM code-generation patches. The name of the profile does
+not mean that the build is upstream .NET. `RuntimeReleaseTag` in
 `src/bflat/bflat.variant.props` is the release tag, and `bflat --info`
 prints it. The build output and the download cache use the tag as their
 key, so a new tag downloads the new release and extracts it again.
