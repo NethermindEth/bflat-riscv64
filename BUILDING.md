@@ -61,8 +61,8 @@ key, so a new tag downloads the new release and extracts it again.
 
 | Build | Release tag | Targets in the layout |
 |-------|-------------|-----------------------|
-| default | `11.0.100-upstream-perf.r400` | linux-musl-riscv64, linux-glibc-x64 |
-| `-p:BflatTargetRiscV32=true` | `11.0.100-upstream-perf.r423` | the same, plus linux-musl-riscv32 |
+| default | `11.0.101-upstream-perf` | linux-musl-riscv64, linux-glibc-x64 |
+| `-p:BflatTargetRiscV32=true` | `11.0.101-upstream-perf` | the same, plus linux-musl-riscv32 |
 
 `-p:BflatTargetLinuxX64=false` builds without the linux-x64 target.
 
@@ -76,8 +76,8 @@ variable, nothing is checked and the build says so. See
 
 `--arch riscv32` builds an RV32IM ilp32 guest for a riscv32 platform:
 ZKsync Airbender, in [bflat-airbender](https://github.com/NethermindEth/bflat-airbender).
-The target needs the r423 release, which has the riscv32 JIT, the NativeAOT
-runtime and the rv32im musl, and the rv32 objects of the modules:
+The target needs the riscv32 JIT, the NativeAOT runtime and the rv32im musl
+of the release, and the rv32 objects of the modules:
 
 ```console
 $ ./build.sh modules riscv64
@@ -86,7 +86,7 @@ $ dotnet build src/bflat/bflat.csproj -p:Flavor=riscv64 -p:BflatTargetRiscV32=tr
 ```
 
 `RV32_SYSROOT` is the rv32im musl sysroot with the libc++ and Linux headers:
-the `crossrootfs-musl-riscv32.tar.xz` asset of the r423 release, unpacked.
+the `crossrootfs-musl-riscv32.tar.xz` asset of the release, unpacked.
 `./build.sh modules riscv32` writes each `module.rv32.o` with clang
 (`-march=rv32im -mabi=ilp32`, no LTO, one section for each function). The
 riscv32 flavor builds only modules. The layout keeps the riscv64 target.

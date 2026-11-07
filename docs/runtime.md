@@ -153,12 +153,11 @@ target.
 bflat downloads one release that a property names. The release tag is
 `RuntimeReleaseTag` in
 [`bflat.variant.props`](https://github.com/NethermindEth/bflat-riscv64/blob/master/src/bflat/bflat.variant.props).
-The tag is the SDK version of the VMR plus the profile and the run number:
-
-| Build | Tag |
-|-------|-----|
-| Default | `11.0.100-upstream-perf.r400` |
-| `-p:BflatTargetRiscV32=true` | `11.0.100-upstream-perf.r423`, a release of dotnet-riscv `main` that has the riscv32 target |
+The tag is the SDK version of the VMR plus the profile, and the run number
+when a release of that SDK version exists already. The default build and
+`-p:BflatTargetRiscV32=true` use the same release,
+`11.0.101-upstream-perf`, a release of dotnet-riscv `main` that has the
+riscv32 target too.
 
 The tag changes with each new release. The download cache uses the tag as
 its key, so a new tag downloads again. The build checks the signature of
