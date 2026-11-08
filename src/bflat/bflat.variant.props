@@ -19,11 +19,10 @@
          (docs/signing.md). -->
     <!-- -p:BflatTargetRiscV32=true builds the riscv32 target too (the
          riscv32 JIT, runtime and musl that the runtime-riscv32 job of
-         dotnet-riscv makes), from the release of dotnet-riscv main that has
-         it. The rv32 modules must be built (build.sh modules riscv32). -->
+         dotnet-riscv makes), from the same release. The rv32 modules must be
+         built (build.sh modules riscv32). -->
     <BflatTargetRiscV32 Condition="'$(BflatTargetRiscV32)' == ''">false</BflatTargetRiscV32>
-    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == '' and '$(BflatTargetRiscV32)' == 'true'">11.0.100-upstream-perf.r423</RuntimeReleaseTag>
-    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == ''">11.0.100-upstream-perf.r400</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == ''">11.0.101-upstream-perf</RuntimeReleaseTag>
 
     <!-- Whether the release has the linux-x64 target of bflat (the x64 JIT,
          runtime and glibc sysroot that the runtime-x64 job of dotnet-riscv

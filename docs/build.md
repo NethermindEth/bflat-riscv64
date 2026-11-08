@@ -16,14 +16,14 @@ llvm-objcopy:
 
 | Image | Runtime release | Targets |
 |-------|-----------------|---------|
-| `nethermindeth/bflat-riscv64-11` | `11.0.100-upstream-perf.r400` | riscv64 zkVM platforms, linux-x64 |
-| `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.100-upstream-perf.r423` | the same, plus the riscv32 platform (Airbender) |
+| `nethermindeth/bflat-riscv64-11` | `11.0.101-upstream-perf` | riscv64 zkVM platforms, linux-x64 |
+| `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.101-upstream-perf` | the same, plus the riscv32 platform (Airbender) |
 | `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>` | as the default image | the default image of a pull request, for the bflat-ts runs |
 
-The two .NET 11 images use different runtime releases. Each release is a
-separate build of the dotnet-riscv patch series (see
-[Runtime](runtime.md)). `upstream-perf` is the name of the patch profile;
-the runtime is not a Microsoft build. The images `bflat-riscv64`,
+The two .NET 11 images use the same runtime release, a build of the
+dotnet-riscv patch series (see [Runtime](runtime.md)). The riscv32 image
+also has the riscv32 target of that release. `upstream-perf` is the name of
+the patch profile; the runtime is not a Microsoft build. The images `bflat-riscv64`,
 `bflat-riscv64-min` and `bflat-riscv64-11-min` on Docker Hub are older
 builds and get no updates.
 
