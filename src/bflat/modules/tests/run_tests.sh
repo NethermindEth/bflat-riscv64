@@ -95,6 +95,10 @@ run_one test_rng_stupid \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_rng_stupid.c" \
 	"${MOD_DIR}/rng_stupid/module.c"
 
+run_one test_rng_stupid_openssl_err \
+	${CC} ${CFLAGS} -DRNG_STUPID_OPENSSL_ERR \
+	"${TESTS_DIR}/test_rng_stupid.c" "${MOD_DIR}/rng_stupid/module.c"
+
 run_one test_rust_sys \
 	${CC} ${CFLAGS} "${TESTS_DIR}/test_rust_sys.c" \
 	"${MOD_DIR}/rust_sys/module.c"

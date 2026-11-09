@@ -6,6 +6,8 @@
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
+#include <stdint.h>
+
 static unsigned long _next = 0x34095153;
 
 /*@ // Deterministic LCG step (deliberately: a zkVM guest must be
@@ -78,3 +80,37 @@ __wrap_CryptoNative_GetRandomBytes(unsigned char *buffer, int length)
         buffer[i] = (unsigned char)(get_val() % 0x100);
     return 1;
 }
+
+#ifdef RNG_STUPID_OPENSSL_ERR
+/*
+ * The riscv32 runtime ships no System.Security.Cryptography.Native.OpenSsl,
+ * yet the managed crypto interop still references its error helpers, and the
+ * link fails without them. Nothing here ever fails, so there is never an
+ * error to report.
+ */
+
+/*@ requires isAllocFailure == \null || \valid(isAllocFailure);
+    assigns *isAllocFailure;
+    ensures isAllocFailure != \null ==> *isAllocFailure == 0;
+    ensures \result == 0;
+*/
+uint64_t
+CryptoNative_ErrGetExceptionError(int32_t *isAllocFailure)
+{
+    if (isAllocFailure != 0)
+        *isAllocFailure = 0;
+    return 0;
+}
+
+/*@ requires len <= 0 || \valid(buf + (0 .. len - 1));
+    assigns buf[0];
+    ensures len > 0 ==> buf[0] == 0;
+*/
+void
+CryptoNative_ErrErrorStringN(uint64_t e, char *buf, int32_t len)
+{
+    (void)e;
+    if (len > 0)
+        buf[0] = 0;
+}
+#endif

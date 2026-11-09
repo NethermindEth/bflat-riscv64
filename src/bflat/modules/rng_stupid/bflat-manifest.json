@@ -5,7 +5,13 @@
   "description": "Deterministic randomness: proofs must be reproducible",
   "sources": [
     {"file": "module.c", "when": {"arch": "riscv64"}},
-    {"file": "module.c", "output": "module.rv32.o", "when": {"arch": "riscv32"}}
+    {
+      "file": "module.c",
+      "output": "module.rv32.o",
+      "cflags": ["-DRNG_STUPID_OPENSSL_ERR"],
+      "when": {"arch": "riscv32"},
+      "note": "The riscv32 runtime has no OpenSSL shim, so the module also defines the error helpers the crypto interop references."
+    }
   ],
   "objects": [
     {"file": "module.o", "group": "normal", "order": 10, "when": {"arch": "riscv64"}},
