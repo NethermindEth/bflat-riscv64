@@ -417,17 +417,20 @@ jobs:
           exit "$rc"
 
       # bflat-ts on zk-testing pulls the image of the pull request from GHCR:
-      # Docker Hub takes images of master only. One tag for each pull request,
-      # and the jobs below take it by digest, so a new push does not change the
-      # image of a run that is in progress. Only the image of the default SDK:
-      # it is the one that Nethermind and bflat-ts use. A pull request from a
+      # Docker Hub takes images of master only. One tag for each pull request
+      # and SDK, and the jobs below take it by digest, so a new push does not
+      # change the image of a run that is in progress. The jobs below run the
+      # image of the default SDK; the riscv32 one is there for the bflat-ts
+      # runs of the Airbender target, started by hand. A pull request from a
       # fork gets no token to push with and no bflat-ts run.
       - name: Push the image of the pull request to GHCR
         id: pr_image
-        if: matrix.sdk == 'default' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_IMAGE: ghcr.io/nethermindeth/bflat-riscv64-11:pr-${{ github.event.number }}
+          PR_IMAGE: ghcr.io/${{ matrix.image }}:pr-${{ github.event.number }}
+          # The job outputs are shared by the matrix: only the default SDK sets it.
+          DEFAULT_SDK: ${{ matrix.sdk == 'default' }}
         run: |
           set -e
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -436,7 +439,8 @@ jobs:
           digest=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$PR_IMAGE" | grep '^ghcr.io/' | head -n 1)
           digest=${digest#*@}
           [ -n "$digest" ]
-          echo "image=$PR_IMAGE@$digest" >> "$GITHUB_OUTPUT"
+          if [ "$DEFAULT_SDK" = true ]; then echo "image=$PR_IMAGE@$digest" >> "$GITHUB_OUTPUT"; fi
+          echo "::notice::$PR_IMAGE@$digest"
 
       - name: Log in to Docker Hub
         if: inputs.publish
