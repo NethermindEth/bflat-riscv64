@@ -45,6 +45,10 @@
       {
         "value": "JitZkNoGcMustInit=1",
         "note": "dotnet-riscv fixup perf-83: uGC never collects, so no stack is ever scanned, and zeroing a slot only because it holds GC references is dead work. localsinit and read-before-write zeroing stay."
+      },
+      {
+        "value": "IlcZkNoGcInfo=1",
+        "note": "dotnet-riscv fixup perf-85: for the same reason the LSDA of a managed method needs no GC info; only a reverse P/Invoke method keeps it, as its unwind reads it. About 160 KiB of the unwind tables of the Nethermind Airbender guest. The compiler reads it, not the JIT; an older compiler ignores it."
       }
     ]
   }
