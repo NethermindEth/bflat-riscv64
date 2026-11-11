@@ -10,7 +10,7 @@
       "output": "module.rv32.o",
       "cflags": ["-DRNG_STUPID_OPENSSL_ERR"],
       "when": {"arch": "riscv32"},
-      "note": "The riscv32 runtime has no OpenSSL shim, so the module also defines the error helpers the crypto interop references."
+      "note": "The riscv32 runtime has no OpenSSL shim, so the module also defines the error helpers and CryptoNative_GetMaxMdSize that the crypto interop references."
     }
   ],
   "objects": [

@@ -22,6 +22,7 @@ extern int __wrap_CryptoNative_GetRandomBytes(unsigned char *buffer,
 #ifdef RNG_STUPID_OPENSSL_ERR
 extern uint64_t CryptoNative_ErrGetExceptionError(int32_t *isAllocFailure);
 extern void CryptoNative_ErrErrorStringN(uint64_t e, char *buf, int32_t len);
+extern int32_t CryptoNative_GetMaxMdSize(void);
 #endif
 
 /* Reference model of the module's LCG (same seed, same constants). */
@@ -116,6 +117,7 @@ int main(void)
         CHECK(msg[0] == 0 && msg[1] == 'x');
         CryptoNative_ErrErrorStringN(1, msg + 1, 0);
         CHECK(msg[1] == 'x');
+        CHECK(CryptoNative_GetMaxMdSize() == 64);
     }
 #endif
 
