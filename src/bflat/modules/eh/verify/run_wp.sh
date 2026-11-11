@@ -2,11 +2,13 @@
 # Formal verification gate for the eh module (Frama-C).
 #
 #   1. WP  - deductive proof of the ACSL contracts that describe the answer
-#      the module builds (zk_eh_fill_phdrs, zk_eh_extent, zk_eh_build_info),
+#      the module builds (zk_eh_fill_phdrs, zk_eh_extent, zk_eh_index_size,
+#      zk_eh_build_info),
 #      with RTE guards. Fails unless every goal is discharged.
-#   2. Eva - value analysis of the two drivers, which run the module end to
-#      end, dispatcher included, in both shapes an image can have: unwind
-#      tables kept (eva_main.c) and stripped (eva_main_stripped.c). Fails on
+#   2. Eva - value analysis of the drivers, which run the module end to end,
+#      dispatcher included, in every shape an image can have: unwind tables
+#      kept (eva_main.c), stripped by the link (eva_main_stripped.c) and
+#      dropped after it (the same driver with EVA_POSTLINK). Fails on
 #      any alarm or any logical property left unknown or invalid.
 #
 # The split is not cosmetic: WP cannot reason about a call through a
@@ -38,7 +40,7 @@ NPROC="$(nproc 2>/dev/null || echo 4)"
 
 # The functions that build the answer. The dispatcher is deliberately absent:
 # see the header comment.
-WP_FCTS="zk_eh_fill_phdrs,zk_eh_extent,zk_eh_build_info"
+WP_FCTS="zk_eh_fill_phdrs,zk_eh_extent,zk_eh_index_size,zk_eh_build_info"
 
 command -v "${FRAMAC}" > /dev/null 2>&1 || {
 	echo "error: frama-c not found (apt install frama-c, or use the docker image)" >&2
@@ -66,11 +68,14 @@ else
 	echo "WP: OK - all ${total} goals proved"
 fi
 
-for driver in eva_main.c eva_main_stripped.c ; do
+for run in eva_main.c eva_main_stripped.c eva_main_stripped.c:-DEVA_POSTLINK ; do
+	driver="${run%%:*}"
+	defines=""
+	[ "${run}" != "${driver}" ] && defines="${run#*:}" && driver="${driver} (${defines})"
 	echo ""
 	echo "=== Eva: absence of runtime errors (${driver}) ==="
 	eva_out=$("${FRAMAC}" -eva -eva-precision 2 -machdep gcc_x86_64 \
-		"${VERIFY_DIR}/${driver}" 2>&1)
+		${defines:+-cpp-extra-args="${defines}"} "${VERIFY_DIR}/${run%%:*}" 2>&1)
 	eva_status=$?
 	echo "${eva_out}" | grep -E "alarms generated|Assertions|Preconditions" | head -10
 

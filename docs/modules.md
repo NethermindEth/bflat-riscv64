@@ -428,7 +428,11 @@ libunwind reads only what the callback gives it. Thus this module wraps
 The image is not position independent, so `dlpi_addr` is 0 and the vaddrs
 are absolute. A build without unwind tables has an empty `.eh_frame_hdr`.
 Then the module reports only the load segment, and the lookup fails
-cleanly. It does not decode a stripped range.
+cleanly. It does not decode a stripped range. The same holds when a
+post-link step drops the tables, as `patch_elf --remove-eh` does on riscv32.
+The symbols then still span the range, but the image does not have its
+bytes. The first byte of an `.eh_frame_hdr` is its version, 1, and the
+module reports the header only when it finds that byte.
 
 Frama-C proves its contracts. Refer to
 [Fuzzing and machine-checked proofs](verification.md#fuzzing-and-machine-checked-proofs).
