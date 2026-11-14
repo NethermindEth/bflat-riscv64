@@ -3,7 +3,8 @@
  * @brief Eva driver for the eh module, stripped-unwind-tables shape.
  *
  * Same driver as eva_main.c, but the image reports an empty .eh_frame_hdr -
- * what a --remove-eh link leaves behind. The module must then describe the
+ * what a --remove-eh link leaves behind - or, with EVA_POSTLINK, a range that
+ * no longer holds one, as a post-link step that dropped the tables leaves it. The module must then describe the
  * load segment alone, so the unwinder's lookup fails cleanly instead of
  * decoding whatever occupies the range.
  *
@@ -20,9 +21,14 @@ static const char eva_eh_frame_hdr[256];
 #define ZK_EH_IMAGE_SYMBOLS_DEFINED 1
 #define __image_text_start   (eva_image)
 #define __image_text_end     (eva_image + sizeof(eva_image))
-/* Empty extent: start == end, as an emitted-but-stripped section looks. */
 #define __eh_frame_hdr_start (eva_eh_frame_hdr)
+#ifdef EVA_POSTLINK
+/* The extent survives, but the bytes are gone: no version 1 header. */
+#define __eh_frame_hdr_end   (eva_eh_frame_hdr + sizeof(eva_eh_frame_hdr))
+#else
+/* Empty extent: start == end, as an emitted-but-stripped section looks. */
 #define __eh_frame_hdr_end   (eva_eh_frame_hdr)
+#endif
 
 #include "../module.c"
 

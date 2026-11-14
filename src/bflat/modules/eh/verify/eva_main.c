@@ -14,10 +14,10 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-/* Stand-ins for the linker script's image bounds. Addresses are all that
- * matter to the module; the contents are never read by it. */
+/* Stand-ins for the linker script's image bounds. Of the contents the
+ * module reads only the version byte of .eh_frame_hdr. */
 static const char eva_image[4096];
-static const char eva_eh_frame_hdr[256];
+static const char eva_eh_frame_hdr[256] = { 1 };
 
 #define ZK_EH_IMAGE_SYMBOLS_DEFINED 1
 #define __image_text_start   (eva_image)

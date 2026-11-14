@@ -5,12 +5,18 @@
 #
 # Usage: run-bflat-ts.sh <image> [<test>]
 # With a test, every test of the run must pass (require_pass).
+# BFLAT_RISCV32_IMAGE, when set, is the image for the riscv32 target.
 set -eu
 
 image=$1
 test=${2:-}
 
 set -- -f ref=main -F return_run_details=true -f "inputs[bflat_image]=$image"
+# The riscv32 image, for the Airbender target; bflat-ts takes its own default
+# without it.
+if [ -n "${BFLAT_RISCV32_IMAGE:-}" ]; then
+    set -- "$@" -f "inputs[bflat_riscv32_image]=$BFLAT_RISCV32_IMAGE"
+fi
 if [ -n "$test" ]; then
     set -- "$@" -f "inputs[test]=$test" -f "inputs[require_pass]=true"
 fi

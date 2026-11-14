@@ -108,11 +108,14 @@ def prepare_parser():
 # place, on the bytes of the file: --nop-fences and --unsigned-muldiv. lief
 # would rebuild the file, and the flat image of a riscv32 zkVM is the file's
 # load segments as linked.
-ELF32_PASSES = ("nop_fences", "unsigned_muldiv", "unimp_system", "unimp_csr")
+ELF32_PASSES = ("nop_fences", "unsigned_muldiv", "unimp_system", "unimp_csr", "remove_eh")
+
+# The sections the unwinder reads; --remove-eh drops them.
+EH_SECTIONS = (".dotnet_eh_table", ".eh_frame_hdr", ".eh_frame")
 
 
 def rewrite_elf32(args):
-    """--nop-fences, --unsigned-muldiv and --unimp-system on an ELF32 RISC-V image, in place in a copy of it.
+    """--nop-fences, --unsigned-muldiv, --unimp-system and --remove-eh on an ELF32 RISC-V image, in place in a copy of it.
 
     Only words inside a sized function are instructions: ILC parks data in .text too, and a
     data word that happens to look like one of these instructions must keep its value. The
@@ -262,10 +265,25 @@ def rewrite_elf32(args):
             struct.pack_into("<I", data, p, jal(ZERO, tramp - addr))
             tramp += 4 * len(code)
             patched += 1
+
+    removed = 0
+    if args.remove_eh:
+        # The unwind tables become SHT_NOBITS: they keep their addresses, but
+        # objcopy -O binary leaves them out of the flat image, which a
+        # linker script that places them last in the ROM ends without them.
+        e_shstrndx, = struct.unpack_from("<H", data, 0x32)
+        shstrtab = sections[e_shstrndx][4]
+        for i, sh in enumerate(sections):
+            end = data.index(0, shstrtab + sh[0])
+            if data[shstrtab + sh[0]:end].decode() in EH_SECTIONS and sh[1] == 1:  # SHT_PROGBITS
+                struct.pack_into("<I", data, e_shoff + i * e_shentsize + 4, 8)  # SHT_NOBITS
+                removed += 1
+
     open(args.output_file, "wb").write(data)
     print(f"elf32 rewrites: {fences} fence(s) to NOP, {patched} signed mul/div moved out of line, "
           f"{unimps} system instruction(s) to UNIMP; "
-          f"{skipped} matching word(s) outside any function left untouched")
+          f"{skipped} matching word(s) outside any function left untouched; "
+          f"{removed} unwind table section(s) dropped")
 
 
 def fix_init_array(args, elf):
@@ -655,7 +673,8 @@ if ident[:4] == b"\x7fELF" and ident[4] == 1:
     unsupported = [name for name, value in vars(args).items()
                    if (value is True or (isinstance(value, list) and value)) and name not in ELF32_PASSES]
     if unsupported:
-        sys.exit(f"patch_elf: an ELF32 image takes only --nop-fences, --unsigned-muldiv and --unimp-system, not: "
+        sys.exit(f"patch_elf: an ELF32 image takes only --nop-fences, --unsigned-muldiv, --unimp-system, "
+                 f"--unimp-csr and --remove-eh, not: "
                  + ", ".join("--" + name.replace("_", "-") for name in unsupported))
     rewrite_elf32(args)
     print("ELF file postprocessed")

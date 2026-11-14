@@ -8,6 +8,8 @@
  */
 #include "common.h"
 
+#include <stdint.h>
+
 extern int
 __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer,
                                                          int bufferLength);
@@ -17,6 +19,11 @@ __wrap_minipal_get_non_cryptographically_secure_random_bytes(
 extern int __wrap_CryptoNative_EnsureOpenSslInitialized(void);
 extern int __wrap_CryptoNative_GetRandomBytes(unsigned char *buffer,
                                               int length);
+#ifdef RNG_STUPID_OPENSSL_ERR
+extern uint64_t CryptoNative_ErrGetExceptionError(int32_t *isAllocFailure);
+extern void CryptoNative_ErrErrorStringN(uint64_t e, char *buf, int32_t len);
+extern int32_t CryptoNative_GetMaxMdSize(void);
+#endif
 
 /* Reference model of the module's LCG (same seed, same constants). */
 static unsigned long ref_next = 0x34095153;
@@ -97,6 +104,22 @@ int main(void)
         __wrap_minipal_get_non_cryptographically_secure_random_bytes(guard, 0);
         CHECK(guard[0] == 1 && guard[3] == 4);
     }
+
+#ifdef RNG_STUPID_OPENSSL_ERR
+    /* The OpenSSL error helpers of riscv32 never report an error. */
+    {
+        int32_t alloc_failure = 1;
+        char msg[4] = { 'x', 'x', 'x', 'x' };
+        CHECK(CryptoNative_ErrGetExceptionError(&alloc_failure) == 0);
+        CHECK(alloc_failure == 0);
+        CHECK(CryptoNative_ErrGetExceptionError(0) == 0);
+        CryptoNative_ErrErrorStringN(1, msg, sizeof(msg));
+        CHECK(msg[0] == 0 && msg[1] == 'x');
+        CryptoNative_ErrErrorStringN(1, msg + 1, 0);
+        CHECK(msg[1] == 'x');
+        CHECK(CryptoNative_GetMaxMdSize() == 64);
+    }
+#endif
 
     TEST_MAIN_END("rng_stupid");
 }

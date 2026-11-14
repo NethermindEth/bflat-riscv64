@@ -354,7 +354,7 @@ known behaviour of a loader or a decoder:
 |------|-----|--------------|-----|
 | `--fix-init-array` | 64 | Forces `.init_array` to `SHT_PROGBITS`, alignment 8 | Otherwise the ZisK loader skips the section and module initialisers never run |
 | `--fix-tdata` | 64 | Adds `ALLOC \| WRITE \| TLS` flags, alignment ≥ 8 | Without the TLS bit the loader leaves `.tdata` out; the TLS shim then sees zero bytes |
-| `--remove-eh` | 64 | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame` | Only without unwind tables. The unwinder reads these tables, so this pass gives a smaller image and no exception handling |
+| `--remove-eh` | 64, 32 | Drops `.dotnet_eh_table`, `.eh_frame_hdr`, `.eh_frame`; on ELF32 it makes them `SHT_NOBITS`, so the flat image leaves them out | Only without unwind tables. The unwinder reads these tables, so this pass gives a smaller image and no exception handling |
 | `--trim-bss` | 64 | Removes the `.bss` section header | Linker scripts already provide explicit heap symbols; without `.bss`, the prover does not account for that region |
 | `--nop-zero-words` | 64 | Rewrites to NOP the alignment padding between functions in `.text` | ILC pads with a zero word (no encoding) or `c.nop` (compressed); SP1 rejects both when it transpiles the whole segment |
 | `--print-fn-boundaries` | 64 | Prints the function boundaries (EH, symbol table, objdump, and the size it uses) | Debugging of the passes |
@@ -363,9 +363,11 @@ known behaviour of a loader or a decoder:
 | `--unimp-system` | 32 | Rewrites to UNIMP (`csrrw x0, cycle, x0`) each SYSTEM instruction with funct3 0 that is code (an `ebreak` after a call to a noreturn helper, an `ecall`) | The Airbender transpiler decodes the whole `.text` and rejects any other SYSTEM encoding |
 | `--unimp-csr <n>` | 32 | With `--unimp-system`, also rewrites to UNIMP each access of CSR `<n>` | The decoder does not know it; for example `vlenb` (`0xc22`), which libunwind reads |
 
-An ELF32 image gets only the passes that rewrite instruction words, on the
-bytes of the file. The reason is that the flat image of a riscv32 zkVM is
-the load segments as linked. `--split-code-data` also exists, but no
+An ELF32 image gets only the passes that rewrite instruction words, and
+`--remove-eh`, on the bytes of the file. The reason is that the flat image
+of a riscv32 zkVM is the load segments as linked. `--remove-eh` changes only
+the section types there, so the tables shrink the flat image only when the
+linker script places them last in the ROM, as Airbender's does. `--split-code-data` also exists, but no
 platform uses it.
 
 ## Stage 4 — ISA checks
@@ -448,7 +450,7 @@ exception. Optionally, a `ZkvmThrow` handler of the program gets the throw
 (see the [rhp module](modules.md#rhp) and the
 [ExceptionHandler sample](https://github.com/NethermindEth/bflat-riscv64/tree/master/samples/ExceptionHandler)).
 `--remove-eh` selects this build. The conditions then see `eh: failfast`,
-`rhp` wraps `RhpThrowEx`, and the post-link step of `zisk` removes the
-tables. A platform with `"unwind": false` always builds this way. Airbender
-is such a platform: its 4 MiB ROM cannot hold about half a MiB of tables,
-and its linker script keeps none.
+`rhp` wraps `RhpThrowEx`, and the post-link steps of `zisk` and `airbender`
+remove the tables. A platform with `"unwind": false` always builds this
+way. On Airbender the tables take about half a MiB of the 4 MiB ROM, so a
+large guest builds with `--remove-eh`.

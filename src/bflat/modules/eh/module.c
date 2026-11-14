@@ -25,7 +25,11 @@
  * start-up (RhRegisterOSModule), and on a target that links noos the
  * unwrapped symbol is a trap, so the guest would die there instead of failing
  * fast on a throw. With the tables stripped this reports the load segment
- * alone and the lookup fails, which is what the policy wants.
+ * alone and the lookup fails, which is what the policy wants. The same
+ * holds when a post-link step drops the tables behind the link's back
+ * (riscv32's patch_elf --remove-eh makes them NOBITS, so the flat image ends
+ * before them): the symbols still span the range, but it no longer holds an
+ * .eh_frame_hdr, whose first byte is its version, 1.
  *
  * Verified by verify/run_wp.sh: WP proves the contracts below (functional
  * properties plus RTE) for everything that builds the answer, and Eva
@@ -50,7 +54,13 @@ extern const char __image_text_start[];
 extern const char __image_text_end[];
 /* .eh_frame_hdr, the FDE binary-search index. Empty when the link dropped
  * the unwind tables. */
+#ifdef __FRAMAC__
+/* One byte, the version, is all the module reads; WP cannot reason about
+ * the validity of an unsized array. */
+extern const char __eh_frame_hdr_start[1];
+#else
 extern const char __eh_frame_hdr_start[];
+#endif
 extern const char __eh_frame_hdr_end[];
 #endif
 
@@ -58,6 +68,8 @@ extern const char __eh_frame_hdr_end[];
 #define ZK_PT_GNU_EH_FRAME 0x6474e550u
 #define ZK_PF_X            1u
 #define ZK_PF_R            4u
+
+#define ZK_EH_FRAME_HDR_VERSION 1
 
 /* The ELF program header of the target's class, as the unwinder expects to
  * read it. ELF32 is not ELF64 narrowed: p_flags moves after p_memsz. */
@@ -171,10 +183,29 @@ zk_eh_extent(uintptr_t start, uintptr_t end)
     return end - start;
 }
 
+/*@ // The size of the unwind index: the extent of .eh_frame_hdr, or 0 when
+    // the range does not start with a version 1 header - what is left of it
+    // once a post-link step has dropped the tables from the image.
+    requires \valid_read(hdr);
+    assigns \nothing;
+    ensures \result == ((size > 0 && hdr[0] == ZK_EH_FRAME_HDR_VERSION) ? size : 0);
+*/
+static uintptr_t
+zk_eh_index_size(const char *hdr, uintptr_t size)
+{
+    if (size == 0 || hdr[0] != ZK_EH_FRAME_HDR_VERSION)
+        return 0;
+
+    return size;
+}
+
 /*@ // Builds the info block over this module's phdr storage. The image is
     // not position independent, so dlpi_addr is 0 and the vaddrs are
     // absolute; dlpi_phnum matches what the fill reported.
     requires \valid(info);
+    // The header's first byte is readable even when the section is empty:
+    // the symbol still points into the image.
+    requires \valid_read(&__eh_frame_hdr_start[0]);
     assigns *info, zk_eh_phdrs[0 .. 1];
     ensures info->dlpi_addr == 0;
     ensures info->dlpi_phdr == &zk_eh_phdrs[0];
@@ -193,7 +224,8 @@ zk_eh_build_info(zk_dl_phdr_info *info)
     info->dlpi_phnum = zk_eh_fill_phdrs(zk_eh_phdrs, text_start,
                                         zk_eh_extent(text_start, text_end),
                                         hdr_start,
-                                        zk_eh_extent(hdr_start, hdr_end));
+                                        zk_eh_index_size(__eh_frame_hdr_start,
+                                                         zk_eh_extent(hdr_start, hdr_end)));
     info->dlpi_addr = 0;
     info->dlpi_name = "";
     info->dlpi_phdr = &zk_eh_phdrs[0];
@@ -207,6 +239,9 @@ zk_eh_build_info(zk_dl_phdr_info *info)
     // verdict is the result - what dl_iterate_phdr does when the iteration
     // stops on the first entry.
     requires \valid_function(callback);
+    // The header's first byte is readable even when the section is empty:
+    // the symbol still points into the image.
+    requires \valid_read(&__eh_frame_hdr_start[0]);
     assigns zk_eh_phdrs[0 .. 1];
 */
 int
