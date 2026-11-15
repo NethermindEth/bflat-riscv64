@@ -9,7 +9,7 @@ necessary.
 ## Prerequisites
 
 - A .NET 11 SDK. The image and CI use `11.0.100-preview.6.26359.118`
-  (`SDK_VERSION` in `Dockerfile` and in the workflow).
+  (`SDK_VERSION` in `Dockerfile`, `build-riscv64.yml` and `build-image.yml`).
 - `clang`, `clang++` and `lld`. Clang compiles the C and C++ modules for
   `riscv64-linux-gnu` (and for `riscv32-unknown-linux-musl`).
 - `gcc-riscv64-linux-gnu` and `binutils-riscv64-linux-gnu`: the sysroot that
@@ -66,6 +66,14 @@ key, so a new tag downloads the new release and extracts it again.
 
 `-p:BflatTargetLinuxX64=false` builds without the linux-x64 target.
 
+`-p:RuntimeLocalDir=<dir>` takes the runtime from a local directory, not
+from the release: the artifacts of a build run of dotnet-riscv, unpacked
+into one directory. The files keep the names of the release assets
+(`<asset>.zip` and `bflat.compiler.10.0.0.nupkg`). Such a run has no
+signature, so the build fails unless `-p:AllowUnsignedRuntime=true` is also
+set. `-p:RuntimeLocalId=<id>` names the run; `bflat --info` prints
+`local-<id>`. See [Runtime](docs/runtime.md#how-the-artifact-reaches-bflat).
+
 The build checks the signature of the release with the public keys in
 `BFLAT_SIGNING_PUBLIC_KEY`, and writes the keys into the bflat binary.
 `build.sh modules` checks the uGC release in the same way. Without the
@@ -119,8 +127,12 @@ that cannot start bflat fails to build.
 CI builds two images: `nethermindeth/bflat-riscv64-11` and, with the
 riscv32 target, `nethermindeth/bflat-riscv64-11-riscv32`. A manual run of
 the workflow with `publish` set pushes them to Docker Hub as `latest` and as
-the commit SHA. A pull request from this repository pushes the default image
-to GHCR as `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>`.
+the commit SHA. CI also pushes both images to GHCR
+(`ghcr.io/nethermindeth/bflat-riscv64-11[-riscv32]`): a pull request from
+this repository as `<sha>` and `pr-<number>`, a push to the default branch
+as `<sha>` and the branch name. A build with the runtime of a dotnet-riscv
+run is tagged `<sha>-rt<run id>` only. A pull request from a fork pushes
+nothing. See [Verification](docs/verification.md#ci).
 
 ## Checks you can run locally
 
@@ -247,7 +259,8 @@ x64 program that runs on the host. CI builds and runs one.
 `.github/workflows/build-riscv64.yml` runs on each push and pull request to
 master. It runs the checks above. It builds bflat and the image for the
 default and the riscv32 SDK, links a guest for each zkVM target, and runs the
-Airbender guests. On a pull request from this repository, it runs the
+Airbender guests. The image build is the reusable workflow
+`.github/workflows/build-image.yml`, which other repositories can also call. On a pull request from this repository, it runs the
 `bflat-ts/simple` test of [bflat-ts](https://github.com/NethermindEth/bflat-ts)
 on zk-testing with the image of the pull request. Then it runs the full
 suite.

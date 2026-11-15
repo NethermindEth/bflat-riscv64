@@ -163,6 +163,35 @@ The tag changes with each new release. The download cache uses the tag as
 its key, so a new tag downloads again. The build checks the signature of
 the release before it uses it.
 
+A build can also take the runtime of one run of the dotnet-riscv workflow,
+before there is a release. Each run uploads the files of a release as
+artifacts, also when it makes no release. `-p:RuntimeLocalDir=<dir>` names
+a directory with these files, unpacked from the artifacts, with the names
+of the release assets:
+
+| Artifact | Files |
+|----------|-------|
+| `bflat-compiler-nupkg` | `bflat.compiler.10.0.0.nupkg` |
+| `bflat-compiler-native-linux-glibc-x64` | `bflat-compiler-native-linux-glibc-x64.zip` |
+| `bflat-libs-linux` | `bflat-libs-linux-musl-riscv64.zip` |
+| `bflat-refs` | `bflat-refs.zip` |
+| `compiler-linux-glibc-x64` | `compiler-linux-glibc-x64.zip` |
+| `libs-linux-musl-riscv64` | `libs-linux-musl-riscv64.zip` |
+| `bflat-linux-glibc-x64` | `bflat-compiler-native-x64-linux-glibc-x64.zip`, `bflat-libs-linux-glibc-x64.zip`, `libs-linux-glibc-x64.zip` |
+| `bflat-linux-musl-riscv32` | `bflat-compiler-native-riscv32-linux-glibc-x64.zip`, `bflat-libs-linux-musl-riscv32.zip`, `libs-linux-musl-riscv32.zip`, `crossrootfs-musl-riscv32.tar.xz` |
+
+The build copies the files into the download cache on each build and names
+the missing ones. The files have no signature, so the build fails unless
+`-p:AllowUnsignedRuntime=true` is also set. `-p:RuntimeLocalId=<id>` names
+the run (default `dir`); the cache key and `bflat --info` show
+`local-<id>`. Without `RuntimeLocalDir`, the build takes the release as
+before.
+
+In CI, the input `dotnet_riscv_run_id` of `build-image.yml` (and of a manual
+run of `build-riscv64.yml`) does this. It accepts only a successful run of
+`build.yml` whose head repository is NethermindEth/dotnet-riscv. The images
+get the GHCR tag `<sha>-rt<run id>` and are never published to Docker Hub.
+
 The build unpacks the archives into `lib/<os>/<arch>/<libc>` next to the
 bflat binary. `bflat build` gives these files to the linker.
 

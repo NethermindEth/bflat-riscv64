@@ -64,7 +64,7 @@ unless the table gives a different rule.
 | Fuzz smoke (vfprintf + allocator) | The libFuzzer targets for a short time; a crash is uploaded as an artifact |
 | CBMC allocator proof | `tests/verify/run_verify.sh` |
 | Module unit tests (riscv64 under qemu) | `modules/tests/run_tests.sh` |
-| Build RISC-V64 on Ubuntu 26.04 | A matrix of two legs, below. Each builds the modules and bflat, builds the Docker image, runs `bflat --info`, the linux-x64 smoke test, a smoke build for `zisk`, `zisk_sim`, `sp1` and `openvm`, and the unaligned-access check |
+| Build RISC-V64 on Ubuntu 26.04 | The reusable workflow `build-image.yml`: a matrix of two legs, below. Each builds the modules and bflat, builds the Docker image, runs `bflat --info`, the linux-x64 smoke test, a smoke build for `zisk`, `zisk_sim`, `sp1` and `openvm`, and the unaligned-access check, and pushes the image to GHCR (see the tags below) |
 | Run the Airbender guests | Runs the guests of the riscv32 leg on the Airbender v3 simulator (`AIRBENDER_COMMIT`) |
 | bflat-ts (simple) | Pull requests only: the `simple` test of bflat-ts with the image of the pull request. A failed test fails the job |
 | bflat-ts | Pull requests only, after `simple` passes: the full bflat-ts suite with the same image. The job fails when the run fails; a failed test shows in the run of bflat-ts, not in this job |
@@ -73,21 +73,47 @@ The two legs of the build matrix:
 
 | Leg | Image | Runtime release | Also |
 |-----|-------|-----------------|------|
-| `default` SDK | `nethermindeth/bflat-riscv64-11` | `11.0.101-upstream-perf` | Pushes the image of a pull request to GHCR |
+| `default` SDK | `nethermindeth/bflat-riscv64-11` | `11.0.101-upstream-perf` | |
 | `riscv32` SDK | `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.101-upstream-perf` (`BflatTargetRiscV32=true`) | Builds the rv32 modules and the Airbender guests |
 
 The zkVM platforms come from the `main` branch of bflat-libziskos, bflat-sp1,
 bflat-openvm and bflat-airbender. A manual run (`workflow_dispatch`) can
-take other branches (`packages_ref`, `airbender_ref`) and can publish the
-images to Docker Hub (`publish`).
+take other branches (`packages_ref`, `airbender_ref`), can take the runtime
+of a dotnet-riscv run (`dotnet_riscv_run_id`), and can publish the images to
+Docker Hub (`publish`, not with `dotnet_riscv_run_id`).
+
+Both legs push their image to GHCR, `ghcr.io/nethermindeth/bflat-riscv64-11`
+and `ghcr.io/nethermindeth/bflat-riscv64-11-riscv32`:
+
+| Run | Tags |
+|-----|------|
+| Pull request from this repository | `<sha>`, `pr-<number>` |
+| Push to the default branch | `<sha>`, the branch name |
+| Manual run | `<sha>` |
+| With `dotnet_riscv_run_id` | `<sha>-rt<run id>` only |
+| Pull request from a fork | nothing is pushed |
+
+`<sha>` is the commit that was built (for a pull request, the test merge
+commit). The tags `<sha>` and `<sha>-rt<run id>` are not replaced once they
+exist.
+
+`build-image.yml` is a reusable workflow (`workflow_call`). Its inputs are
+`ref` (a branch or a full SHA of this repository; empty only when this
+repository calls it), `dotnet_riscv_run_id`, `packages_ref`,
+`airbender_ref`, `pr_number`, `branch_tag`, `push`, `publish` and
+`signing_public_key`. Its outputs are `sha` (the commit that was built),
+and `image` and `image_riscv32` (the pushed images by digest). It checks every input before it uses it. A run id must be
+a successful run of `build.yml` whose head repository is
+NethermindEth/dotnet-riscv. It publishes to Docker Hub only in a manual run
+of this repository.
 
 ### bflat-ts on a pull request
 
 For a pull request from a branch of this repository:
 
 1. The `default` leg pushes its image to
-   `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>`. It gives the image
-   to the jobs below by digest. Thus a new push to the pull request does
+   `ghcr.io/nethermindeth/bflat-riscv64-11` (`<sha>` and `pr-<number>`). It
+   gives the image to the jobs below by digest. Thus a new push to the pull request does
    not change the image of a run in progress.
 2. The job "bflat-ts (simple)" starts the workflow `compiler-tests.yml` of
    bflat-ts with that image, the `simple` test and `require_pass`

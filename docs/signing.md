@@ -83,7 +83,7 @@ it.
 |------|------------------------|-------------|--------------------|
 | Signature is valid | The package is used. | The release is used. | The archive is unpacked. |
 | Signature is not valid, or a file does not agree with the list | Error. | Error. | Error. |
-| No signature | Error, unless `--allow-unsigned`; then a warning. | Error, unless `-p:AllowUnsignedRuntime=true`; then a message. | Error, unless `ALLOW_UNSIGNED_EXTERNAL=true`; then a message. |
+| No signature | Error, unless `--allow-unsigned`; then a warning. | Error, unless `-p:AllowUnsignedRuntime=true`; then a message. `-p:RuntimeLocalDir` (the files of a dotnet-riscv run) always needs it. | Error, unless `ALLOW_UNSIGNED_EXTERNAL=true`; then a message. |
 | No trusted key | A warning. Nothing is checked. | A message. Nothing is checked. | A message. Nothing is checked. |
 
 A bad signature is always an error: no option accepts it.
