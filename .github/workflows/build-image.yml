@@ -21,7 +21,9 @@ name: Build the bflat image
 # From another repository, ref is required, and a SHA must be the head of a
 # branch of this repository or a commit of master: a commit of a fork pull
 # request is fetchable by SHA here, but it is not built. Empty ref, from this
-# repository only, is the commit of the caller's event (github.sha).
+# repository only, is the commit of the caller's event: the head commit of a
+# pull request from this repository (not the merge commit that github.sha
+# names, so that the tag <sha> is a commit of a branch here), else github.sha.
 #
 # The GHCR tags (sha = the resolved commit):
 #   <sha>             the commit, without dotnet_riscv_run_id. It is not
@@ -30,6 +32,13 @@ name: Build the bflat image
 #   master or main    with branch_tag (moves with each push to the branch)
 #   <sha>-rt<run id>  with dotnet_riscv_run_id, and no other tag. It is not
 #                     replaced once it exists.
+#
+# Each image has the labels org.opencontainers.image.source and
+# org.opencontainers.image.revision (the commit), and
+# io.nethermind.bflat.run-repository, io.nethermind.bflat.run-id and
+# io.nethermind.bflat.dotnet-riscv-run: the run that built it, which is the
+# run of the caller, and the dotnet-riscv run of the runtime (empty = the
+# release). A consumer of an immutable tag checks them before it uses the tag.
 #
 # The vars and the github context of a called workflow are those of the
 # caller, so the caller gives the signing public key as an input. A pull
@@ -120,6 +129,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REF: ${{ inputs.ref }}
           EVENT_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
           PACKAGES_REF: ${{ inputs.packages_ref }}
           AIRBENDER_REF: ${{ inputs.airbender_ref }}
@@ -145,6 +155,9 @@ jobs:
           if [ -z "$REF" ]; then
             [ "$REPOSITORY" = "$repo" ] || fail "ref is required when another repository calls this workflow"
             sha="$EVENT_SHA"
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPOSITORY" = "$REPOSITORY" ]; then
+              sha="$PR_HEAD_SHA"
+            fi
           elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
             sha="$REF"
             if [ "$REPOSITORY" != "$repo" ] || [ "$sha" != "$EVENT_SHA" ]; then
@@ -398,8 +411,14 @@ jobs:
       - name: Build Docker image
         env:
           PUBLISH: ${{ needs.inputs.outputs.publish }}
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
         run: |
-          set -- -t "$IMAGE:test"
+          set -- -t "$IMAGE:test" \
+            --label org.opencontainers.image.source=https://github.com/NethermindEth/bflat-riscv64 \
+            --label "org.opencontainers.image.revision=$REF" \
+            --label "io.nethermind.bflat.run-repository=$GITHUB_REPOSITORY" \
+            --label "io.nethermind.bflat.run-id=$GITHUB_RUN_ID" \
+            --label "io.nethermind.bflat.dotnet-riscv-run=$RUN_ID"
           if [ "$PUBLISH" = "true" ]; then
             set -- "$@" -t "$IMAGE:latest" -t "$IMAGE:$REF"
           fi

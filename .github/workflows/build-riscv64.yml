@@ -218,8 +218,8 @@ jobs:
   # The two builds of bflat and their images (build-image.yml): with the
   # runtime release of bflat.variant.props, and with the riscv32 target too.
   # GHCR gets the immutable tag <sha> for a pull request from this repository
-  # (with pr-<number>) and for a push to the default branch (with the branch
-  # name). With dotnet_riscv_run_id, the images take the runtime of that run
+  # (the head commit, with pr-<number>) and for a push to the default branch
+  # (with the branch name). With dotnet_riscv_run_id, the images take the runtime of that run
   # and get only the tag <sha>-rt<run id>. A pull request from a fork pushes
   # nothing.
   build_riscv64:
