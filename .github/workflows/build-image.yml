@@ -546,9 +546,17 @@ jobs:
           pushed=""
           for tag in $TAGS; do
             ref="$GHCR_IMAGE:$tag"
-            if [ "$tag" = "$IMMUTABLE_TAG" ] && docker manifest inspect "$ref" > /dev/null 2>&1; then
-              echo "::notice::$ref exists and is not replaced"
-              continue
+            if [ "$tag" = "$IMMUTABLE_TAG" ]; then
+              # Only "not found" lets the push create the tag: any other
+              # error stops the job, so that it cannot replace the tag.
+              if err=$(docker manifest inspect "$ref" 2>&1 > /dev/null); then
+                echo "::notice::$ref exists and is not replaced"
+                continue
+              fi
+              if ! grep -qiE 'no such manifest|manifest unknown' <<<"$err"; then
+                echo "::error::$ref: cannot check whether the tag exists: $err"
+                exit 1
+              fi
             fi
             docker tag "$IMAGE:test" "$ref"
             docker push "$ref"

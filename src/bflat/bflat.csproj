@@ -196,10 +196,13 @@
   <!-- Runtime artifact caches are keyed by $(BlobsVersion), not
        $(RuntimeVersion): the plain version is identical across variants and
        would let one variant's cached zips/semaphores satisfy the other's. -->
-  <!-- With RuntimeLocalDir, the download targets copy from that directory,
-       on each build: the files of a directory can change without a new
-       RuntimeLocalId. A changed file is newer than its extract semaphore, so
-       it is extracted again. -->
+  <!-- With RuntimeLocalDir, the download targets take the files from that
+       directory: the files of a directory can change without a new
+       RuntimeLocalId. _SyncRuntimeLocalDir compares their hashes with the
+       hashes of the last copy, not their timestamps, since a replaced file can
+       be older than the extract semaphores. When a hash differs, it copies
+       all the files and sets their time to now, so every extract target
+       extracts them again. -->
   <Target Name="_CheckRuntimeLocalDir" Condition="'$(RuntimeLocalDir)' != ''">
     <Error Condition="'$(AllowUnsignedRuntime)' != 'true'"
            Text="RuntimeLocalDir=$(RuntimeLocalDir) takes dotnet-riscv files that have no signature. Set AllowUnsignedRuntime=true with it." />
@@ -212,9 +215,49 @@
            Text="RuntimeLocalDir=$(RuntimeLocalDir): %(_RuntimeLocalFile.Filename)%(_RuntimeLocalFile.Extension) is missing in $(_RuntimeLocalDir)." />
   </Target>
 
+  <Target Name="_SyncRuntimeLocalDir"
+          Condition="'$(RuntimeLocalDir)' != ''"
+          DependsOnTargets="_CheckRuntimeLocalDir">
+    <PropertyGroup>
+      <_RuntimeLocalHashList>$(DownloadCachePath)runtime-local-$(BlobsVersion).sha256</_RuntimeLocalHashList>
+    </PropertyGroup>
+    <ItemGroup>
+      <_RuntimeLocalZip Include="$(_RuntimeLocalDir)%(RuntimeArtifact.Identity).zip"
+                        Cached="$(DownloadCachePath)%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
+      <_RuntimeLocalZip Include="$(_RuntimeLocalDir)%(Blob.Identity).zip"
+                        Cached="$(DownloadCachePath)%(Blob.Identity)-$(BlobsVersion).zip" />
+      <_RuntimeLocalMissing Include="%(_RuntimeLocalZip.Cached)"
+                            Condition="!Exists('%(_RuntimeLocalZip.Cached)')" />
+    </ItemGroup>
+    <GetFileHash Files="@(_RuntimeLocalZip)">
+      <Output TaskParameter="Items" ItemName="_RuntimeLocalZipHash" />
+    </GetFileHash>
+    <ReadLinesFromFile File="$(_RuntimeLocalHashList)"
+                       Condition="Exists('$(_RuntimeLocalHashList)')">
+      <Output TaskParameter="Lines" PropertyName="_RuntimeLocalLastHashes" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_RuntimeLocalHashes>@(_RuntimeLocalZipHash->'%(Filename)%(Extension) %(FileHash)')</_RuntimeLocalHashes>
+      <_RuntimeLocalChanged>false</_RuntimeLocalChanged>
+      <_RuntimeLocalChanged Condition="'$(_RuntimeLocalHashes)' != '$(_RuntimeLocalLastHashes)' or '@(_RuntimeLocalMissing)' != ''">true</_RuntimeLocalChanged>
+    </PropertyGroup>
+
+    <Message Text="Taking the runtime files from $(_RuntimeLocalDir) (BlobsVersion=$(BlobsVersion)) ..." Importance="High"
+             Condition="'$(_RuntimeLocalChanged)' == 'true'" />
+    <Copy Condition="'$(_RuntimeLocalChanged)' == 'true'"
+          SourceFiles="@(_RuntimeLocalZip)"
+          DestinationFiles="@(_RuntimeLocalZip->'%(Cached)')" />
+    <Touch Condition="'$(_RuntimeLocalChanged)' == 'true'"
+           Files="@(_RuntimeLocalZip->'%(Cached)')" />
+    <WriteLinesToFile Condition="'$(_RuntimeLocalChanged)' == 'true'"
+                      File="$(_RuntimeLocalHashList)"
+                      Lines="@(_RuntimeLocalZipHash->'%(Filename)%(Extension) %(FileHash)')"
+                      Overwrite="true" />
+  </Target>
+
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"
-          DependsOnTargets="_CheckRuntimeLocalDir"
+          DependsOnTargets="_SyncRuntimeLocalDir"
           Condition="'$(RuntimeLocalDir)' != '' or !Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
           Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
@@ -223,15 +266,11 @@
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
-    <Copy Condition="'$(RuntimeLocalDir)' != ''"
-          SourceFiles="@(RuntimeArtifact->'$(_RuntimeLocalDir)%(Identity).zip')"
-          DestinationFiles="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
-          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="DownloadBlobs"
           AfterTargets="CollectPackageReferences"
-          DependsOnTargets="_CheckRuntimeLocalDir"
+          DependsOnTargets="_SyncRuntimeLocalDir"
           Condition="'$(RuntimeLocalDir)' != '' or !Exists(@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
           Outputs="@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
@@ -240,10 +279,6 @@
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(Blob.Identity)-$(BlobsVersion).zip" />
-    <Copy Condition="'$(RuntimeLocalDir)' != ''"
-          SourceFiles="@(Blob->'$(_RuntimeLocalDir)%(Identity).zip')"
-          DestinationFiles="@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')"
-          SkipUnchangedFiles="true" />
   </Target>
 
   <!--

@@ -93,9 +93,9 @@ and `ghcr.io/nethermindeth/bflat-riscv64-11-riscv32`:
 | With `dotnet_riscv_run_id` | `<sha>-rt<run id>` only |
 | Pull request from a fork | nothing is pushed |
 
-`<sha>` is the commit that was built (for a pull request, the test merge
-commit). The tags `<sha>` and `<sha>-rt<run id>` are not replaced once they
-exist.
+`<sha>` is the commit that was built (for a pull request, the head commit
+of the pull request, not the test merge commit). The tags `<sha>` and
+`<sha>-rt<run id>` are not replaced once they exist.
 
 `build-image.yml` is a reusable workflow (`workflow_call`). Its inputs are
 `ref` (a branch or a full SHA of this repository; empty only when this

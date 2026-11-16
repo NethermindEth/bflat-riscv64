@@ -184,7 +184,9 @@ The build copies the files into the download cache on each build and names
 the missing ones. The files have no signature, so the build fails unless
 `-p:AllowUnsignedRuntime=true` is also set. `-p:RuntimeLocalId=<id>` names
 the run (default `dir`); the cache key and `bflat --info` show
-`local-<id>`. Without `RuntimeLocalDir`, the build takes the release as
+`local-<id>`. When a file in the directory changes, the next build
+extracts the files again: the build compares the hashes of the files, not
+their times. Without `RuntimeLocalDir`, the build takes the release as
 before.
 
 In CI, the input `dotnet_riscv_run_id` of `build-image.yml` (and of a manual
