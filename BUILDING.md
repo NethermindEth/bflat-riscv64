@@ -67,11 +67,12 @@ key, so a new tag downloads the new release and extracts it again.
 `-p:BflatTargetLinuxX64=false` builds without the linux-x64 target.
 
 `-p:RuntimeLocalDir=<dir>` takes the runtime from a local directory, not
-from the release: the artifacts of a build run of dotnet-riscv, unpacked
-into one directory. The files keep the names of the release assets
-(`<asset>.zip` and `bflat.compiler.10.0.0.nupkg`). Such a run has no
-signature, so the build fails unless `-p:AllowUnsignedRuntime=true` is also
-set. `-p:RuntimeLocalId=<id>` names the run; `bflat --info` prints
+from the release: the signed set of a build run of dotnet-riscv (the
+`release-assets-*` and `bflat-signatures` artifacts), unpacked into one
+directory. The files keep the names of the release assets (`<asset>.zip`,
+`bflat.compiler.10.0.0.nupkg`, `bflat-signature.sha256` and
+`bflat-signature.sha256.sig`), and the build checks them with
+`verify-release` as for a release. `-p:RuntimeLocalId=<id>` names the run; `bflat --info` prints
 `local-<id>`. See [Runtime](docs/runtime.md#how-the-artifact-reaches-bflat).
 
 The build checks the signature of the release with the public keys in

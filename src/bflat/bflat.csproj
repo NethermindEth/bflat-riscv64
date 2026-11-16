@@ -4,11 +4,12 @@
   <Import Project="bflat.build.props" />
 
   <!-- -p:RuntimeLocalDir=<dir> takes the dotnet-riscv files from a local
-       directory, not from the release: the artifacts of a build run of
-       dotnet-riscv, unpacked into one directory. The files have the names of
-       the release assets (<asset>.zip and bflat.compiler.$(RuntimeVersion).nupkg).
-       Such a run has no signature, so the build requires
-       AllowUnsignedRuntime=true with it. RuntimeLocalId names the run in the
+       directory, not from the release: the signed set of a build run of
+       dotnet-riscv (the release-assets-* and bflat-signatures artifacts),
+       unpacked into one directory. The files have the names of the release
+       assets (<asset>.zip, bflat.compiler.$(RuntimeVersion).nupkg,
+       bflat-signature.sha256 and bflat-signature.sha256.sig), and the build
+       checks them as for a release. RuntimeLocalId names the run in the
        download cache and in bflat info (BlobsVersion local-<id>). Without
        RuntimeLocalDir, nothing changes. -->
   <PropertyGroup Condition="'$(RuntimeLocalDir)' != ''">
@@ -204,8 +205,6 @@
        all the files and sets their time to now, so every extract target
        extracts them again. -->
   <Target Name="_CheckRuntimeLocalDir" Condition="'$(RuntimeLocalDir)' != ''">
-    <Error Condition="'$(AllowUnsignedRuntime)' != 'true'"
-           Text="RuntimeLocalDir=$(RuntimeLocalDir) takes dotnet-riscv files that have no signature. Set AllowUnsignedRuntime=true with it." />
     <Error Condition="!Exists('$(_RuntimeLocalDir)')"
            Text="RuntimeLocalDir=$(RuntimeLocalDir): the directory $(_RuntimeLocalDir) does not exist." />
     <ItemGroup>
@@ -220,24 +219,35 @@
           DependsOnTargets="_CheckRuntimeLocalDir">
     <PropertyGroup>
       <_RuntimeLocalHashList>$(DownloadCachePath)runtime-local-$(BlobsVersion).sha256</_RuntimeLocalHashList>
+      <_RuntimeLocalSigned Condition="Exists('$(_RuntimeLocalDir)bflat-signature.sha256') and Exists('$(_RuntimeLocalDir)bflat-signature.sha256.sig')">true</_RuntimeLocalSigned>
     </PropertyGroup>
+    <!-- Without the list and its signature in the directory, an earlier copy
+         of them must not be taken for this one. -->
+    <Delete Files="$(_ReleaseSignatureList);$(_ReleaseSignature)"
+            Condition="'$(_RuntimeLocalSigned)' != 'true'" />
     <ItemGroup>
-      <_RuntimeLocalZip Include="$(_RuntimeLocalDir)%(RuntimeArtifact.Identity).zip"
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)%(RuntimeArtifact.Identity).zip"
                         Cached="$(DownloadCachePath)%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
-      <_RuntimeLocalZip Include="$(_RuntimeLocalDir)%(Blob.Identity).zip"
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)%(Blob.Identity).zip"
                         Cached="$(DownloadCachePath)%(Blob.Identity)-$(BlobsVersion).zip" />
-      <_RuntimeLocalMissing Include="%(_RuntimeLocalZip.Cached)"
-                            Condition="!Exists('%(_RuntimeLocalZip.Cached)')" />
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)bflat-signature.sha256"
+                        Cached="$(_ReleaseSignatureList)"
+                        Condition="'$(_RuntimeLocalSigned)' == 'true'" />
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)bflat-signature.sha256.sig"
+                        Cached="$(_ReleaseSignature)"
+                        Condition="'$(_RuntimeLocalSigned)' == 'true'" />
+      <_RuntimeLocalMissing Include="%(_RuntimeLocalCopy.Cached)"
+                            Condition="!Exists('%(_RuntimeLocalCopy.Cached)')" />
     </ItemGroup>
-    <GetFileHash Files="@(_RuntimeLocalZip)">
-      <Output TaskParameter="Items" ItemName="_RuntimeLocalZipHash" />
+    <GetFileHash Files="@(_RuntimeLocalCopy)">
+      <Output TaskParameter="Items" ItemName="_RuntimeLocalCopyHash" />
     </GetFileHash>
     <ReadLinesFromFile File="$(_RuntimeLocalHashList)"
                        Condition="Exists('$(_RuntimeLocalHashList)')">
       <Output TaskParameter="Lines" PropertyName="_RuntimeLocalLastHashes" />
     </ReadLinesFromFile>
     <PropertyGroup>
-      <_RuntimeLocalHashes>@(_RuntimeLocalZipHash->'%(Filename)%(Extension) %(FileHash)')</_RuntimeLocalHashes>
+      <_RuntimeLocalHashes>@(_RuntimeLocalCopyHash->'%(Filename)%(Extension) %(FileHash)')</_RuntimeLocalHashes>
       <_RuntimeLocalChanged>false</_RuntimeLocalChanged>
       <_RuntimeLocalChanged Condition="'$(_RuntimeLocalHashes)' != '$(_RuntimeLocalLastHashes)' or '@(_RuntimeLocalMissing)' != ''">true</_RuntimeLocalChanged>
     </PropertyGroup>
@@ -245,13 +255,13 @@
     <Message Text="Taking the runtime files from $(_RuntimeLocalDir) (BlobsVersion=$(BlobsVersion)) ..." Importance="High"
              Condition="'$(_RuntimeLocalChanged)' == 'true'" />
     <Copy Condition="'$(_RuntimeLocalChanged)' == 'true'"
-          SourceFiles="@(_RuntimeLocalZip)"
-          DestinationFiles="@(_RuntimeLocalZip->'%(Cached)')" />
+          SourceFiles="@(_RuntimeLocalCopy)"
+          DestinationFiles="@(_RuntimeLocalCopy->'%(Cached)')" />
     <Touch Condition="'$(_RuntimeLocalChanged)' == 'true'"
-           Files="@(_RuntimeLocalZip->'%(Cached)')" />
+           Files="@(_RuntimeLocalCopy->'%(Cached)')" />
     <WriteLinesToFile Condition="'$(_RuntimeLocalChanged)' == 'true'"
                       File="$(_RuntimeLocalHashList)"
-                      Lines="@(_RuntimeLocalZipHash->'%(Filename)%(Extension) %(FileHash)')"
+                      Lines="@(_RuntimeLocalCopyHash->'%(Filename)%(Extension) %(FileHash)')"
                       Overwrite="true" />
   </Target>
 
@@ -359,8 +369,11 @@
 
     Without the keys nothing is checked, and the build says so. A release
     without a signature is an error unless AllowUnsignedRuntime=true. The
-    check runs again when a download changes (the .verified stamp). The files
-    of RuntimeLocalDir have no signature and are not checked.
+    check runs again when a download changes (the .verified stamp). With
+    RuntimeLocalDir, the list and its signature are the bflat-signature.sha256
+    and bflat-signature.sha256.sig of that directory, and the files are
+    checked as for a release. A directory without them, or a build without
+    the keys, is an error, also with AllowUnsignedRuntime=true.
   -->
   <PropertyGroup>
     <_ReleaseSignatureList>$(DownloadCachePath)bflat-signature-$(BlobsVersion).sha256</_ReleaseSignatureList>
@@ -399,11 +412,15 @@
 
   <Target Name="_CheckReleaseIsSigned">
     <PropertyGroup>
-      <_ReleaseIsSigned Condition="'$(RuntimeLocalDir)' == '' and Exists('$(_ReleaseSignatureList)') and Exists('$(_ReleaseSignature)')">true</_ReleaseIsSigned>
+      <_ReleaseIsSigned Condition="Exists('$(_ReleaseSignatureList)') and Exists('$(_ReleaseSignature)')">true</_ReleaseIsSigned>
     </PropertyGroup>
     <Message Importance="High"
              Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' == ''"
              Text="BFLAT_SIGNING_PUBLIC_KEY is not set: the dotnet-riscv downloads are not checked, and this bflat checks no package signature." />
+    <Error Condition="'$(RuntimeLocalDir)' != '' and '$(BFLAT_SIGNING_PUBLIC_KEY)' == ''"
+           Text="RuntimeLocalDir needs BFLAT_SIGNING_PUBLIC_KEY: the files of $(_RuntimeSource) are checked with verify-release." />
+    <Error Condition="'$(RuntimeLocalDir)' != '' and '$(_ReleaseIsSigned)' != 'true'"
+           Text="There is no bflat-signature.sha256 and bflat-signature.sha256.sig for $(_RuntimeSource). RuntimeLocalDir takes a signed set only." />
     <Error Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' != 'true' and '$(AllowUnsignedRuntime)' != 'true'"
            Text="The dotnet-riscv release $(RuntimeReleaseTag) has no bflat-signature.sha256 and bflat-signature.sha256.sig. Use a signed release, or set AllowUnsignedRuntime=true." />
     <Message Importance="High"

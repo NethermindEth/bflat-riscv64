@@ -226,10 +226,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Commit: $sha; tags: $tags; push: $push; publish: $publish"
 
-  # The runtime of a dotnet-riscv run: each run uploads the files that bflat
-  # takes as separate artifacts, with the names of the release assets, also
-  # when it makes no release. They have no signature, so the build takes them
-  # with AllowUnsignedRuntime=true (RuntimeLocalDir in bflat.csproj).
+  # The runtime of a dotnet-riscv run: its signed set, the release-assets-*
+  # artifacts (merged into one directory, with the names of the release
+  # assets) and bflat-signatures (bflat-signature.sha256 and its signature).
+  # The build checks them with verify-release as for a release
+  # (RuntimeLocalDir in bflat.csproj). A run without bflat-signatures fails
+  # here.
   runtime:
     needs: inputs
     if: inputs.dotnet_riscv_run_id != ''
@@ -264,19 +266,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p runtime
-          for name in \
-            bflat-compiler-nupkg \
-            bflat-compiler-native-linux-glibc-x64 \
-            bflat-libs-linux \
-            bflat-refs \
-            compiler-linux-glibc-x64 \
-            libs-linux-musl-riscv64 \
-            bflat-linux-glibc-x64; do
-            gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -n "$name" -D "dl/$name"
+          gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -p 'release-assets-*' -D dl \
+            || { echo "::error::Run $RUN_ID has no release-assets-* artifacts"; exit 1; }
+          gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -n bflat-signatures -D dl/bflat-signatures \
+            || { echo "::error::Run $RUN_ID has no bflat-signatures artifact"; exit 1; }
+          for f in bflat-signature.sha256 bflat-signature.sha256.sig; do
+            [ -f "dl/bflat-signatures/$f" ] || { echo "::error::The bflat-signatures artifact of run $RUN_ID has no $f"; exit 1; }
           done
-          if ! gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -n bflat-linux-musl-riscv32 -D dl/bflat-linux-musl-riscv32; then
-            echo "::warning::Run $RUN_ID has no riscv32 target (bflat-linux-musl-riscv32)"
-          fi
           find dl -type f | while read -r f; do
             dest="runtime/$(basename "$f")"
             [ ! -e "$dest" ] || { echo "::error::Two artifacts have $(basename "$f")"; exit 1; }
@@ -379,44 +375,51 @@ jobs:
           path: /opt/dotnet-riscv-runtime
 
       # Properties of bflat.csproj, which MSBuild reads from the environment.
+      # The build checks the files of the run with verify-release before it
+      # takes them, so the public key is required here.
       - name: Take the runtime from the dotnet-riscv run
         if: inputs.dotnet_riscv_run_id != ''
         env:
           RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
         run: |
+          if [ -z "$BFLAT_SIGNING_PUBLIC_KEY" ]; then
+            echo "::error::dotnet_riscv_run_id needs signing_public_key: the files of the run are checked with verify-release"
+            exit 1
+          fi
           {
             echo "RuntimeLocalDir=/opt/dotnet-riscv-runtime"
             echo "RuntimeLocalId=$RUN_ID"
-            echo "AllowUnsignedRuntime=true"
           } >> "$GITHUB_ENV"
 
       - name: Build modules (riscv64)
         run: ./build.sh modules riscv64
 
       # The rv32 musl sysroot that the rv32 modules compile against: the
-      # crossrootfs asset of the release, checked against its signed list
-      # before it is unpacked (docs/signing.md). With a dotnet-riscv run, the
-      # file of that run, which has no signature.
+      # crossrootfs asset of the release, or of the signed set of the
+      # dotnet-riscv run, checked against its signed list before it is
+      # unpacked (docs/signing.md). The file of a run is always checked.
       - name: Fetch the riscv32 sysroot
         if: matrix.sdk == 'riscv32'
         run: |
           set -e
           mkdir -p /tmp/rv32-dl /opt/rv32
           if [ -n "${RuntimeLocalDir:-}" ]; then
-            tar -xJf "$RuntimeLocalDir/crossrootfs-musl-riscv32.tar.xz" -C /opt/rv32
+            dir="$RuntimeLocalDir"
+            [ -f "$dir/crossrootfs-musl-riscv32.tar.xz" ] || { echo "::error::The run has no crossrootfs-musl-riscv32.tar.xz"; exit 1; }
           else
+            dir=/tmp/rv32-dl
             tag="$(dotnet msbuild src/bflat/bflat.csproj -getProperty:RuntimeReleaseTag -p:BflatTargetRiscV32=true)"
             url="https://github.com/NethermindEth/dotnet-riscv/releases/download/$tag"
             for f in crossrootfs-musl-riscv32.tar.xz bflat-signature.sha256 bflat-signature.sha256.sig; do
-              curl -fsSL -o "/tmp/rv32-dl/$f" "$url/$f"
+              curl -fsSL -o "$dir/$f" "$url/$f"
             done
-            if [ -n "$BFLAT_SIGNING_PUBLIC_KEY" ]; then
-              dotnet run --project src/bflat-modules/bflat-modules.csproj -c Release --no-build -- verify-release \
-                /tmp/rv32-dl/bflat-signature.sha256 /tmp/rv32-dl/bflat-signature.sha256.sig \
-                /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz=crossrootfs-musl-riscv32.tar.xz
-            fi
-            tar -xJf /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz -C /opt/rv32
           fi
+          if [ -n "$BFLAT_SIGNING_PUBLIC_KEY" ] || [ -n "${RuntimeLocalDir:-}" ]; then
+            dotnet run --project src/bflat-modules/bflat-modules.csproj -c Release --no-build -- verify-release \
+              "$dir/bflat-signature.sha256" "$dir/bflat-signature.sha256.sig" \
+              "$dir/crossrootfs-musl-riscv32.tar.xz=crossrootfs-musl-riscv32.tar.xz"
+          fi
+          tar -xJf "$dir/crossrootfs-musl-riscv32.tar.xz" -C /opt/rv32
           echo "RV32_SYSROOT=/opt/rv32" >> "$GITHUB_ENV"
 
       - name: Build modules (riscv32)

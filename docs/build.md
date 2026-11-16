@@ -24,7 +24,7 @@ llvm-objcopy:
 The GHCR tags are `<sha>` (the commit, not replaced once it exists),
 `pr-<number>` (moves with each push to the pull request), `master` (moves
 with each push to the branch), and `<sha>-rt<run id>` for an image with the
-runtime of a dotnet-riscv run, which has no signature.
+runtime of a dotnet-riscv run.
 
 The two .NET 11 images use the same runtime release, a build of the
 dotnet-riscv patch series (see [Runtime](runtime.md)). The riscv32 image
@@ -80,9 +80,8 @@ checked and the build says so. `-p:AllowUnsignedRuntime=true` and
 `ALLOW_UNSIGNED_EXTERNAL=true` accept a release that has no signature. See
 [Package signatures](signing.md).
 
-`-p:RuntimeLocalDir=<dir>` takes the runtime from the artifacts of a
-dotnet-riscv run in a local directory. These files have no signature, so
-the build also needs `-p:AllowUnsignedRuntime=true`. See
+`-p:RuntimeLocalDir=<dir>` takes the runtime from the signed set of a
+dotnet-riscv run in a local directory, and checks it as for a release. See
 [Runtime](runtime.md#how-the-artifact-reaches-bflat).
 
 ## Build a guest
