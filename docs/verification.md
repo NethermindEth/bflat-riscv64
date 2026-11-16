@@ -87,15 +87,28 @@ and `ghcr.io/nethermindeth/bflat-riscv64-11-riscv32`:
 
 | Run | Tags |
 |-----|------|
-| Pull request from this repository | `<sha>`, `pr-<number>` |
+| Pull request from this repository | `pr-<number>` only |
 | Push to the default branch | `<sha>`, the branch name |
-| Manual run | `<sha>` |
-| With `dotnet_riscv_run_id` | `<sha>-rt<run id>` only |
+| Manual run on a branch | `<sha>` |
+| With `dotnet_riscv_run_id`, on a branch | `<sha>-rt<run id>` only |
 | Pull request from a fork | nothing is pushed |
 
-`<sha>` is the commit that was built (for a pull request, the head commit
-of the pull request, not the test merge commit). The tags `<sha>` and
-`<sha>-rt<run id>` are not replaced once they exist.
+`<sha>` is the commit that was built. A pull request builds the merge
+commit of the pull request with the base branch (`github.sha`). That commit
+is on no branch, so it gets only the moving tag `pr-<number>`. The immutable
+tags `<sha>` and `<sha>-rt<run id>` go only to a commit of a branch, and
+they are not replaced once they exist. When the immutable tag exists already
+(a rerun), the image is not pushed again: the moving tags take the image of
+the immutable tag.
+
+The outputs `image` and `image_riscv32` give the image by digest. With an
+immutable tag, the output is always `<image>:<sha>[-rt<run id>]@<digest>`,
+also on a rerun. For a pull request, it is `<image>:pr-<number>@<digest>`.
+
+Each image has the label `io.nethermind.bflat.platforms` with the commits of
+bflat-libziskos, bflat-sp1, bflat-openvm and (riscv32 leg) bflat-airbender
+that the checks of the image used, as `<repository>=<commit>` entries with a
+space between them. The summary of each build job shows them in a table.
 
 `build-image.yml` is a reusable workflow (`workflow_call`). Its inputs are
 `ref` (a branch or a full SHA of this repository; empty only when this
@@ -112,8 +125,9 @@ of this repository.
 For a pull request from a branch of this repository:
 
 1. The `default` leg pushes its image to
-   `ghcr.io/nethermindeth/bflat-riscv64-11` (`<sha>` and `pr-<number>`). It
-   gives the image to the jobs below by digest. Thus a new push to the pull request does
+   `ghcr.io/nethermindeth/bflat-riscv64-11` (`pr-<number>`), built from the
+   merge commit of the pull request. It gives the image to the jobs below by
+   digest. Thus a new push to the pull request does
    not change the image of a run in progress.
 2. The job "bflat-ts (simple)" starts the workflow `compiler-tests.yml` of
    bflat-ts with that image, the `simple` test and `require_pass`
