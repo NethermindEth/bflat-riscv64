@@ -553,7 +553,7 @@ jobs:
                 echo "::notice::$ref exists and is not replaced"
                 continue
               fi
-              if ! grep -qiE 'no such manifest|manifest unknown' <<<"$err"; then
+              if ! printf '%s\n' "$err" | grep -qiE 'no such manifest|manifest unknown'; then
                 echo "::error::$ref: cannot check whether the tag exists: $err"
                 exit 1
               fi
