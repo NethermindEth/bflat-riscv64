@@ -21,16 +21,22 @@ on:
         type: string
         default: main
         required: false
+      dotnet_riscv_run_id:
+        description: Run id of the dotnet-riscv build workflow to take the runtime from (empty = the release of bflat.variant.props). Not with publish
+        type: string
+        default: ''
+        required: false
 
 # The public key of the package signatures (docs/signing.md). The bflat
 # build checks the dotnet-riscv downloads with it and writes it into the
 # bflat binary, which then checks the --extlib packages. A public key is not
 # a secret, so it is a variable, not a secret. Without it the build checks
-# nothing and says so.
+# nothing and says so. build-image.yml gets it as an input.
 env:
   BFLAT_SIGNING_PUBLIC_KEY: ${{ vars.BFLAT_SIGNING_PUBLIC_KEY }}
   # bflat builds for .NET 11 with the perf runtime of dotnet-riscv
-  # (bflat.variant.props). The SDK is the one the image ships.
+  # (bflat.variant.props). The SDK is the one the image ships. Keep it equal
+  # to SDK_VERSION in build-image.yml.
   SDK_VERSION: 11.0.100-preview.6.26359.118
   # The Airbender v3 simulator that runs the riscv32 guests: the cli of
   # matter-labs/zksync-airbender with the 4 MiB ROM, the unsigned RV32M machine
@@ -209,253 +215,28 @@ jobs:
       - name: Run module unit tests
         run: ./src/bflat/modules/tests/run_tests.sh
 
-  # Two builds of bflat, each with its own image: with the runtime release of
-  # bflat.variant.props, and with the release that has the riscv32 target too
-  # (BflatTargetRiscV32), whose image also builds the Airbender guests. Both
-  # run the riscv64 checks, so the riscv32 runtime fixups are checked against
-  # the riscv64 guests as well.
+  # The two builds of bflat and their images (build-image.yml): with the
+  # runtime release of bflat.variant.props, and with the riscv32 target too.
+  # A pull request from this repository builds its merge commit and gets the
+  # tag pr-<number> only. A push to the default branch gets the immutable tag
+  # <sha> and the branch name. With dotnet_riscv_run_id, the images take the
+  # runtime of that run and get only the tag <sha>-rt<run id>. A pull request
+  # from a fork pushes nothing.
   build_riscv64:
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
       packages: write
-    outputs:
-      pr_image: ${{ steps.pr_image.outputs.image }}
-      pr_image_riscv32: ${{ steps.pr_image.outputs.image_riscv32 }}
-    container:
-      image: ubuntu:26.04
-      options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sdk: default
-            image: nethermindeth/bflat-riscv64-11
-          - sdk: riscv32
-            image: nethermindeth/bflat-riscv64-11-riscv32
-    env:
-      IMAGE: ${{ matrix.image }}
-      # A property of bflat.csproj, which MSBuild reads from the environment.
-      BflatTargetRiscV32: ${{ matrix.sdk == 'riscv32' }}
-    name: Build RISC-V64 on Ubuntu 26.04 (${{ matrix.sdk }} SDK)
-    steps:
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y \
-            git \
-            gcc-riscv64-linux-gnu \
-            g++-riscv64-linux-gnu \
-            binutils-riscv64-linux-gnu \
-            llvm \
-            clang \
-            lld \
-            xxd \
-            python3 \
-            python3-pip \
-            wget \
-            curl \
-            ca-certificates \
-            docker.io \
-            libicu-dev \
-            xz-utils
-          pip3 install lief pyelftools --break-system-packages
-          # gcc-riscv64-linux-gnu only ships hard-float (lp64d) glibc stubs. We
-          # compile native modules with -mabi=lp64 (soft-float) to match zisk's
-          # crt1.o, so we need an empty gnu/stubs-lp64.h marker.
-          touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
-
-      - name: Install .NET SDK
-        run: |
-          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
-          chmod +x dotnet-install.sh
-          ./dotnet-install.sh --version "$SDK_VERSION" --install-dir /usr/share/dotnet
-          ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
-          echo "DOTNET_ROOT=/usr/share/dotnet" >> $GITHUB_ENV
-          echo "/usr/share/dotnet" >> $GITHUB_PATH
-
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Build modules (riscv64)
-        run: ./build.sh modules riscv64
-
-      # The rv32 musl sysroot that the rv32 modules compile against: the
-      # crossrootfs asset of the release, checked against its signed list
-      # before it is unpacked (docs/signing.md).
-      - name: Fetch the riscv32 sysroot
-        if: matrix.sdk == 'riscv32'
-        run: |
-          set -e
-          tag="$(dotnet msbuild src/bflat/bflat.csproj -getProperty:RuntimeReleaseTag -p:BflatTargetRiscV32=true)"
-          url="https://github.com/NethermindEth/dotnet-riscv/releases/download/$tag"
-          mkdir -p /tmp/rv32-dl /opt/rv32
-          for f in crossrootfs-musl-riscv32.tar.xz bflat-signature.sha256 bflat-signature.sha256.sig; do
-            curl -fsSL -o "/tmp/rv32-dl/$f" "$url/$f"
-          done
-          if [ -n "$BFLAT_SIGNING_PUBLIC_KEY" ]; then
-            dotnet run --project src/bflat-modules/bflat-modules.csproj -c Release --no-build -- verify-release \
-              /tmp/rv32-dl/bflat-signature.sha256 /tmp/rv32-dl/bflat-signature.sha256.sig \
-              /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz=crossrootfs-musl-riscv32.tar.xz
-          fi
-          tar -xJf /tmp/rv32-dl/crossrootfs-musl-riscv32.tar.xz -C /opt/rv32
-          echo "RV32_SYSROOT=/opt/rv32" >> "$GITHUB_ENV"
-
-      - name: Build modules (riscv32)
-        if: matrix.sdk == 'riscv32'
-        run: ./build.sh modules riscv32
-
-      - name: Build bflat (riscv64)
-        run: ./build.sh bflat riscv64
-
-      - name: Build Docker image
-        run: |
-          EXTRA_TAGS=""
-          if [ "${{ inputs.publish }}" = "true" ]; then
-            EXTRA_TAGS="-t $IMAGE:latest -t $IMAGE:$GITHUB_SHA"
-          fi
-          docker build --platform linux/amd64 \
-            --build-arg SDK_VERSION="$SDK_VERSION" \
-            -t $IMAGE:test \
-            $EXTRA_TAGS \
-            .
-
-      - name: Check the packaged runtime
-        run: |
-          docker run --rm --platform linux/amd64 $IMAGE:test bash -lc "bflat --info"
-
-      # The ordinary linux-x64 target (BflatTargetLinuxX64 in
-      # bflat.variant.props). The image is linux/amd64, so the program runs
-      # here.
-      - name: Smoke test bflat (linux-x64)
-        run: |
-          docker run --rm --platform linux/amd64 $IMAGE:test bash -lc '
-            set -e
-            if [ ! -d /share/bflat/lib/linux/x64/glibc ]; then
-              echo "This layout has no linux-x64 target"
-              exit 0
-            fi
-            printf "%s\n" "class Program { static int Main() { System.Console.WriteLine(\"Hello from bflat\"); return 0; } }" > /tmp/hello.cs
-            bflat build --arch x64 --os linux -o /tmp/hello /tmp/hello.cs
-            file /tmp/hello | grep -q "x86-64"
-            /tmp/hello | grep -qx "Hello from bflat"
-            echo "linux-x64: OK"'
-
-      # bflat knows no zkVM: each target is a platform (entry point, memory
-      # map, manifest) in its bflat-* package. Only the platform part of each
-      # package is built here - it needs nothing but binutils - into one
-      # directory; the guests below do not use the bindings libraries.
-      - name: Build the zkVM platforms
-        env:
-          PACKAGES_REF: ${{ inputs.packages_ref || 'main' }}
-        run: |
-          set -e
-          for repo in bflat-libziskos bflat-sp1 bflat-openvm; do
-            git clone --depth 1 --branch "$PACKAGES_REF" "https://github.com/NethermindEth/$repo.git" "/tmp/$repo"
-            "/tmp/$repo/platform/build.sh" "$PWD/platforms"
-          done
-          ls -l platforms
-
-      # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
-      - name: Smoke test bflat (every zkVM target)
-        run: |
-          set -e
-          for libc in zisk zisk_sim sp1 openvm; do
-            echo "::group::Smoke build for libc=$libc"
-            id=$(docker create --platform linux/amd64 $IMAGE:test \
-              bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --extlib /platforms/$libc.bflat.manifest --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'")
-            docker cp platforms/. "$id:/platforms"
-            rc=0
-            docker start -a "$id" || rc=$?
-            docker rm "$id" > /dev/null
-            [ "$rc" = 0 ] || exit "$rc"
-            echo "::endgroup::"
-          done
-
-      # The Airbender platform and libairbender from bflat-airbender, built
-      # with the clang and lld of this job, and the test guests built with them
-      # in the image. tests/run-airbender.sh runs them in the next job.
-      - name: Build the Airbender guests
-        if: matrix.sdk == 'riscv32'
-        env:
-          AIRBENDER_REF: ${{ inputs.airbender_ref || 'main' }}
-        run: |
-          set -e
-          git clone --depth 1 --branch "$AIRBENDER_REF" https://github.com/NethermindEth/bflat-airbender.git /tmp/bflat-airbender
-          bash /tmp/bflat-airbender/build/build.sh airbender
-          id=$(docker create --platform linux/amd64 -e BFLAT_AIRBENDER=/airbender -e OUT=/guests $IMAGE:test \
-            bash /t/build-airbender.sh)
-          docker cp tests/. "$id:/t"
-          docker cp /tmp/bflat-airbender/output/airbender/. "$id:/airbender"
-          rc=0
-          docker start -a "$id" || rc=$?
-          if [ "$rc" = 0 ]; then
-            mkdir -p airbender-guests
-            docker cp "$id:/guests/." airbender-guests/
-          fi
-          docker rm "$id" > /dev/null
-          exit "$rc"
-
-      - name: Upload the Airbender guests
-        if: matrix.sdk == 'riscv32'
-        uses: actions/upload-artifact@v4
-        with:
-          name: airbender-guests
-          path: airbender-guests/
-          if-no-files-found: error
-
-      - name: Check unaligned-access codegen per zkVM target
-        # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
-        run: |
-          set -e
-          id=$(docker create --platform linux/amd64 -e BFLAT_PLATFORMS=/platforms $IMAGE:test bash /t/run-unaligned-access.sh)
-          docker cp tests/. "$id:/t"
-          docker cp platforms/. "$id:/platforms"
-          rc=0
-          docker start -a "$id" || rc=$?
-          docker rm "$id" > /dev/null
-          exit "$rc"
-
-      # bflat-ts on zk-testing pulls the image of the pull request from GHCR:
-      # Docker Hub takes images of master only. One tag for each pull request
-      # and SDK, and the jobs below take it by digest, so a new push does not
-      # change the image of a run that is in progress. The jobs below give
-      # bflat-ts both: the image of the default SDK for riscv64 and the
-      # riscv32 one for the Airbender target. A pull request from a fork gets
-      # no token to push with and no bflat-ts run.
-      - name: Push the image of the pull request to GHCR
-        id: pr_image
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_IMAGE: ghcr.io/${{ matrix.image }}:pr-${{ github.event.number }}
-          # The job outputs are shared by the matrix: each SDK sets its own.
-          OUTPUT: ${{ matrix.sdk == 'default' && 'image' || 'image_riscv32' }}
-        run: |
-          set -e
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker tag $IMAGE:test "$PR_IMAGE"
-          docker push "$PR_IMAGE"
-          digest=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$PR_IMAGE" | grep '^ghcr.io/' | head -n 1)
-          digest=${digest#*@}
-          [ -n "$digest" ]
-          echo "$OUTPUT=$PR_IMAGE@$digest" >> "$GITHUB_OUTPUT"
-          echo "::notice::$PR_IMAGE@$digest"
-
-      - name: Log in to Docker Hub
-        if: inputs.publish
-        uses: docker/login-action@v4
-        env:
-          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
-        with:
-          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
-
-      - name: Publish to Docker Hub
-        if: inputs.publish
-        run: |
-          docker push $IMAGE:latest
-          docker push "$IMAGE:$GITHUB_SHA"
+    uses: ./.github/workflows/build-image.yml
+    with:
+      dotnet_riscv_run_id: ${{ inputs.dotnet_riscv_run_id || '' }}
+      packages_ref: ${{ inputs.packages_ref || 'main' }}
+      airbender_ref: ${{ inputs.airbender_ref || 'main' }}
+      pr_number: ${{ github.event_name == 'pull_request' && format('{0}', github.event.number) || '' }}
+      branch_tag: ${{ github.event_name == 'push' && github.ref_name || '' }}
+      push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      publish: ${{ inputs.publish == true }}
+      signing_public_key: ${{ vars.BFLAT_SIGNING_PUBLIC_KEY }}
 
   # The Airbender guests of the riscv32 build, run on the Airbender v3
   # simulator: the console, the input and output words, an accelerator, and
@@ -496,7 +277,7 @@ jobs:
   # host for the two hours of the suite.
   bflat_ts_simple:
     needs: build_riscv64
-    if: needs.build_riscv64.outputs.pr_image != ''
+    if: github.event_name == 'pull_request' && needs.build_riscv64.outputs.image != ''
     runs-on: ubuntu-latest
     name: bflat-ts (simple)
     permissions:
@@ -508,8 +289,9 @@ jobs:
       - name: Run bflat-ts/simple
         env:
           GH_TOKEN: ${{ secrets.BFLAT_TS_TOKEN }}
-          BFLAT_RISCV32_IMAGE: ${{ needs.build_riscv64.outputs.pr_image_riscv32 }}
-        run: .github/scripts/run-bflat-ts.sh "${{ needs.build_riscv64.outputs.pr_image }}" bflat-ts/simple
+          BFLAT_RISCV32_IMAGE: ${{ needs.build_riscv64.outputs.image_riscv32 }}
+          BFLAT_IMAGE: ${{ needs.build_riscv64.outputs.image }}
+        run: .github/scripts/run-bflat-ts.sh "$BFLAT_IMAGE" bflat-ts/simple
 
   bflat_ts:
     needs: [build_riscv64, bflat_ts_simple]
@@ -524,5 +306,6 @@ jobs:
       - name: Run the bflat-ts suite
         env:
           GH_TOKEN: ${{ secrets.BFLAT_TS_TOKEN }}
-          BFLAT_RISCV32_IMAGE: ${{ needs.build_riscv64.outputs.pr_image_riscv32 }}
-        run: .github/scripts/run-bflat-ts.sh "${{ needs.build_riscv64.outputs.pr_image }}"
+          BFLAT_RISCV32_IMAGE: ${{ needs.build_riscv64.outputs.image_riscv32 }}
+          BFLAT_IMAGE: ${{ needs.build_riscv64.outputs.image }}
+        run: .github/scripts/run-bflat-ts.sh "$BFLAT_IMAGE"

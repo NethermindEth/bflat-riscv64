@@ -163,6 +163,33 @@ The tag changes with each new release. The download cache uses the tag as
 its key, so a new tag downloads again. The build checks the signature of
 the release before it uses it.
 
+A build can also take the runtime of one run of the dotnet-riscv workflow,
+before there is a release. A run uploads the signed set of a release as
+artifacts: `release-assets-*` (the release assets) and `bflat-signatures`
+(`bflat-signature.sha256` and `bflat-signature.sha256.sig`).
+`-p:RuntimeLocalDir=<dir>` names a directory with these files, unpacked
+from the artifacts into one directory, with the names of the release
+assets.
+
+The build copies the files into the download cache on each build and names
+the missing ones. It checks them with `verify-release` as for a release.
+Without `bflat-signature.sha256` and its signature, or without
+`BFLAT_SIGNING_PUBLIC_KEY`, the build fails; `-p:AllowUnsignedRuntime=true`
+does not apply to it. `-p:RuntimeLocalId=<id>` names
+the run (default `dir`); the cache key and `bflat --info` show
+`local-<id>`. When a file in the directory changes, the next build
+extracts the files again: the build compares the hashes of the files, not
+their times. Without `RuntimeLocalDir`, the build takes the release as
+before.
+
+In CI, the input `dotnet_riscv_run_id` of `build-image.yml` (and of a manual
+run of `build-riscv64.yml`) does this. It accepts only a successful run of
+`build.yml` whose head repository is NethermindEth/dotnet-riscv, and it
+takes the `release-assets-*` and `bflat-signatures` artifacts of the run. A
+run without `bflat-signatures`, or whose files do not agree with the signed
+list, fails, and the input `signing_public_key` is required. The images get
+the GHCR tag `<sha>-rt<run id>` and are never published to Docker Hub.
+
 The build unpacks the archives into `lib/<os>/<arch>/<libc>` next to the
 bflat binary. `bflat build` gives these files to the linker.
 

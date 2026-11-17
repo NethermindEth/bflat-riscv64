@@ -18,7 +18,13 @@ llvm-objcopy:
 |-------|-----------------|---------|
 | `nethermindeth/bflat-riscv64-11` | `11.0.101-upstream-perf` | riscv64 zkVM platforms, linux-x64 |
 | `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.101-upstream-perf` | the same, plus the riscv32 platform (Airbender) |
-| `ghcr.io/nethermindeth/bflat-riscv64-11:pr-<number>` | as the default image | the default image of a pull request, for the bflat-ts runs |
+| `ghcr.io/nethermindeth/bflat-riscv64-11:<tag>` | as the default image | the default image of a CI build, for the bflat-ts runs |
+| `ghcr.io/nethermindeth/bflat-riscv64-11-riscv32:<tag>` | as the riscv32 image | the riscv32 image of a CI build |
+
+The GHCR tags are `<sha>` (the commit, not replaced once it exists),
+`pr-<number>` (moves with each push to the pull request), `master` (moves
+with each push to the branch), and `<sha>-rt<run id>` for an image with the
+runtime of a dotnet-riscv run.
 
 The two .NET 11 images use the same runtime release, a build of the
 dotnet-riscv patch series (see [Runtime](runtime.md)). The riscv32 image
@@ -73,6 +79,10 @@ checks each `--extlib` `.nupkg` with them. Without the variable, nothing is
 checked and the build says so. `-p:AllowUnsignedRuntime=true` and
 `ALLOW_UNSIGNED_EXTERNAL=true` accept a release that has no signature. See
 [Package signatures](signing.md).
+
+`-p:RuntimeLocalDir=<dir>` takes the runtime from the signed set of a
+dotnet-riscv run in a local directory, and checks it as for a release. See
+[Runtime](runtime.md#how-the-artifact-reaches-bflat).
 
 ## Build a guest
 

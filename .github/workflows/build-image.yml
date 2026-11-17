@@ -1,0 +1,652 @@
+name: Build the bflat image
+
+# Builds bflat and the two images (the default SDK and the riscv32 one), runs
+# the checks that need the image, and can push the images to GHCR. build-riscv64.yml
+# calls it for each push and pull request. Another repository can call it to
+# build an image of a commit of this repository, for example with the runtime
+# of a dotnet-riscv run:
+#
+#   image:
+#     permissions:
+#       contents: read
+#       id-token: write
+#       packages: write
+#     uses: NethermindEth/bflat-riscv64/.github/workflows/build-image.yml@<sha> # master
+#     with:
+#       ref: <branch or full commit SHA of bflat-riscv64>
+#       dotnet_riscv_run_id: <run id of the dotnet-riscv build workflow>
+#       push: true
+#
+# ref is resolved to its commit SHA once, and every job builds that commit.
+# From another repository, ref is required, and a SHA must be the head of a
+# branch of this repository or a commit of master: a commit of a fork pull
+# request is fetchable by SHA here, but it is not built. Empty ref, from this
+# repository only, is the commit of the caller's event (github.sha): for a
+# pull request, the merge commit with the base branch.
+#
+# The GHCR tags (sha = the resolved commit):
+#   <sha>             the commit of a branch: a push to a branch, a manual run
+#                     or a call on a branch, or a ref (branch or SHA) of a
+#                     branch. A pull request does not get it, because its
+#                     merge commit is on no branch. Without
+#                     dotnet_riscv_run_id. It is not replaced once it exists.
+#   pr-<number>       with pr_number (moves with each push to the pull request)
+#   master or main    with branch_tag (moves with each push to the branch)
+#   <sha>-rt<run id>  with dotnet_riscv_run_id, for the commit of a branch,
+#                     and no other tag. It is not replaced once it exists.
+#
+# When the immutable tag exists already (a rerun), the image is not pushed
+# again: the moving tags take the image of the immutable tag. The outputs
+# image and image_riscv32 are then <image>:<immutable tag>@<digest> of that
+# image, and for a pull request <image>:pr-<number>@<digest>.
+#
+# Each image has the labels org.opencontainers.image.source and
+# org.opencontainers.image.revision (the commit), and
+# io.nethermind.bflat.run-repository, io.nethermind.bflat.run-id and
+# io.nethermind.bflat.dotnet-riscv-run: the run that built it, which is the
+# run of the caller, and the dotnet-riscv run of the runtime (empty = the
+# release). A consumer of an immutable tag checks them before it uses the tag.
+# The label io.nethermind.bflat.platforms gives the commits of the zkVM
+# platforms that the checks of the image used (<repository>=<commit>, with a
+# space between the entries).
+#
+# The vars and the github context of a called workflow are those of the
+# caller, so the caller gives the signing public key as an input. A pull
+# request from a fork never pushes, and only a manual run of this repository
+# with the runtime release publishes to Docker Hub.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The branch or full commit SHA of NethermindEth/bflat-riscv64 to build (empty = the commit of the caller's event, from this repository only)
+        type: string
+        default: ''
+      dotnet_riscv_run_id:
+        description: A run of the build workflow of NethermindEth/dotnet-riscv to take the runtime from, in place of the release of bflat.variant.props (empty = the release)
+        type: string
+        default: ''
+      packages_ref:
+        description: Branch of bflat-libziskos, bflat-sp1 and bflat-openvm to take the zkVM platforms from
+        type: string
+        default: main
+      airbender_ref:
+        description: Branch of bflat-airbender to take the Airbender platform and libairbender from
+        type: string
+        default: main
+      pr_number:
+        description: The pull request of the build, for the pr-<number> tag (empty = no such tag)
+        type: string
+        default: ''
+      branch_tag:
+        description: The branch tag, master or main (empty = no such tag)
+        type: string
+        default: ''
+      push:
+        description: Push the images to GHCR
+        type: boolean
+        default: false
+      publish:
+        description: Publish the images to Docker Hub (a manual run of this repository only)
+        type: boolean
+        default: false
+      signing_public_key:
+        description: The public keys of the package signatures (BFLAT_SIGNING_PUBLIC_KEY, docs/signing.md)
+        type: string
+        default: ''
+    outputs:
+      sha:
+        description: The commit that was built
+        value: ${{ jobs.inputs.outputs.sha }}
+      image:
+        description: The GHCR image of the default SDK, by digest (empty when nothing was pushed)
+        value: ${{ jobs.build.outputs.image }}
+      image_riscv32:
+        description: The GHCR image of the riscv32 SDK, by digest (empty when nothing was pushed)
+        value: ${{ jobs.build.outputs.image_riscv32 }}
+
+permissions:
+  contents: read
+
+env:
+  # The bflat build checks the dotnet-riscv downloads with it and writes it
+  # into the bflat binary, which then checks the --extlib packages. Without it
+  # the build checks nothing and says so.
+  BFLAT_SIGNING_PUBLIC_KEY: ${{ inputs.signing_public_key }}
+  # bflat builds for .NET 11 with the perf runtime of dotnet-riscv
+  # (bflat.variant.props). The SDK is the one the image ships. Keep it equal
+  # to SDK_VERSION in build-riscv64.yml.
+  SDK_VERSION: 11.0.100-preview.6.26359.118
+
+jobs:
+  # Every input is checked here, before any job uses it, and the decisions
+  # (tags, push, publish) are made once.
+  inputs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: Check the inputs
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      tags: ${{ steps.check.outputs.tags }}
+      immutable_tag: ${{ steps.check.outputs.immutable_tag }}
+      push: ${{ steps.check.outputs.push }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Check the inputs
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
+          PACKAGES_REF: ${{ inputs.packages_ref }}
+          AIRBENDER_REF: ${{ inputs.airbender_ref }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          BRANCH_TAG: ${{ inputs.branch_tag }}
+          PUSH: ${{ inputs.push }}
+          PUBLISH: ${{ inputs.publish }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ -z "$REF" || "$REF" =~ ^[0-9a-f]{40}$ || ( "$REF" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$ && "$REF" != *..* ) ]] \
+            || fail "ref must be a branch name or a full commit SHA"
+          [[ -z "$RUN_ID" || "$RUN_ID" =~ ^[0-9]{1,20}$ ]] || fail "dotnet_riscv_run_id must be a run id (digits)"
+          [[ "$PACKAGES_REF" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$ ]] || fail "packages_ref is not a branch name"
+          [[ "$AIRBENDER_REF" =~ ^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$ ]] || fail "airbender_ref is not a branch name"
+          [[ -z "$PR_NUMBER" || "$PR_NUMBER" =~ ^[0-9]{1,10}$ ]] || fail "pr_number must be a number"
+          [[ -z "$BRANCH_TAG" || "$BRANCH_TAG" =~ ^(master|main)$ ]] || fail "branch_tag must be master or main"
+
+          repo=NethermindEth/bflat-riscv64
+          # The immutable tag goes only to a commit of a branch. The event of a
+          # pull request has the ref refs/pull/<number>/merge, and its commit
+          # is the merge commit, which is on no branch.
+          event_on_branch=false
+          [[ "$EVENT_REF" != refs/heads/* ]] || event_on_branch=true
+          on_branch=true
+          if [ -z "$REF" ]; then
+            [ "$REPOSITORY" = "$repo" ] || fail "ref is required when another repository calls this workflow"
+            sha="$EVENT_SHA"
+            on_branch="$event_on_branch"
+          elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            sha="$REF"
+            if [ "$REPOSITORY" != "$repo" ] || [ "$sha" != "$EVENT_SHA" ] || [ "$event_on_branch" != true ]; then
+              heads="$(gh api "repos/$repo/commits/$sha/branches-where-head" --jq 'length')" || fail "ref $sha is not a commit of $repo"
+              if [ "$heads" = "0" ]; then
+                status="$(gh api "repos/$repo/compare/$sha...master" --jq '.status')" || fail "ref $sha is not a commit of $repo"
+                [ "$status" = "ahead" ] || [ "$status" = "identical" ] || fail "ref $sha is not the head of a branch of $repo or a commit of master"
+              fi
+            fi
+          else
+            sha="$(gh api "repos/$repo/branches/$REF" --jq '.commit.sha')" || fail "ref $REF is not a branch of $repo"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "ref did not resolve to a commit"
+
+          # The immutable tag is the first one: the push step takes its image
+          # for the other tags.
+          immutable=""
+          if [ "$on_branch" = true ]; then
+            immutable="$sha${RUN_ID:+-rt$RUN_ID}"
+          fi
+          tags="$immutable"
+          if [ -z "$RUN_ID" ]; then
+            [ -z "$PR_NUMBER" ] || tags="${tags:+$tags }pr-$PR_NUMBER"
+            [ -z "$BRANCH_TAG" ] || tags="${tags:+$tags }$BRANCH_TAG"
+          fi
+
+          push=false
+          if [ "$PUSH" = "true" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+              echo "::notice::A pull request from a fork pushes no image"
+            elif [ -z "$tags" ]; then
+              echo "::notice::$sha is not a commit of a branch and has no other tag: no image is pushed"
+            else
+              push=true
+            fi
+          fi
+
+          publish=false
+          if [ "$PUBLISH" = "true" ]; then
+            [ "$EVENT_NAME" = "workflow_dispatch" ] || fail "publish needs a manual run"
+            [ "$REPOSITORY" = "NethermindEth/bflat-riscv64" ] || fail "publish needs a run of NethermindEth/bflat-riscv64"
+            [ -z "$RUN_ID" ] || fail "publish takes the runtime release only, not dotnet_riscv_run_id"
+            publish=true
+          fi
+
+          {
+            echo "sha=$sha"
+            echo "tags=$tags"
+            echo "immutable_tag=$immutable"
+            echo "push=$push"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "Commit: $sha; tags: $tags; push: $push; publish: $publish"
+
+  # The runtime of a dotnet-riscv run: its signed set, the release-assets-*
+  # artifacts (merged into one directory, with the names of the release
+  # assets) and bflat-signatures (bflat-signature.sha256 and its signature).
+  # The build checks them with verify-release as for a release
+  # (RuntimeLocalDir in bflat.csproj). A run without bflat-signatures fails
+  # here.
+  runtime:
+    needs: inputs
+    if: inputs.dotnet_riscv_run_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    name: Take the runtime of the dotnet-riscv run
+    steps:
+      - name: Check the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]{1,20}$ ]] || { echo "::error::dotnet_riscv_run_id must be a run id"; exit 1; }
+          run="$(gh api "repos/NethermindEth/dotnet-riscv/actions/runs/$RUN_ID")"
+          head_repo="$(jq -r '.head_repository.full_name' <<< "$run")"
+          path="$(jq -r '.path' <<< "$run")"
+          status="$(jq -r '.status' <<< "$run")"
+          conclusion="$(jq -r '.conclusion' <<< "$run")"
+          echo "Run $RUN_ID: $(jq -r '.head_branch + " " + .head_sha' <<< "$run"), $path, $status/$conclusion"
+          [ "$head_repo" = "NethermindEth/dotnet-riscv" ] || { echo "::error::The head repository of run $RUN_ID is $head_repo, not NethermindEth/dotnet-riscv"; exit 1; }
+          [ "$path" = ".github/workflows/build.yml" ] || { echo "::error::Run $RUN_ID is not a run of build.yml"; exit 1; }
+          [ "$status" = "completed" ] && [ "$conclusion" = "success" ] || { echo "::error::Run $RUN_ID did not complete with success"; exit 1; }
+
+      # The riscv32 target is in the run only when it was built with it; the
+      # riscv32 leg below then fails with the name of the missing file.
+      - name: Download the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p runtime
+          gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -p 'release-assets-*' -D dl \
+            || { echo "::error::Run $RUN_ID has no release-assets-* artifacts"; exit 1; }
+          gh run download "$RUN_ID" -R NethermindEth/dotnet-riscv -n bflat-signatures -D dl/bflat-signatures \
+            || { echo "::error::Run $RUN_ID has no bflat-signatures artifact"; exit 1; }
+          for f in bflat-signature.sha256 bflat-signature.sha256.sig; do
+            [ -f "dl/bflat-signatures/$f" ] || { echo "::error::The bflat-signatures artifact of run $RUN_ID has no $f"; exit 1; }
+          done
+          find dl -type f | while read -r f; do
+            dest="runtime/$(basename "$f")"
+            [ ! -e "$dest" ] || { echo "::error::Two artifacts have $(basename "$f")"; exit 1; }
+            mv "$f" "$dest"
+          done
+          (cd runtime && sha256sum -- * | tee -a "$GITHUB_STEP_SUMMARY")
+
+      - name: Upload the runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-riscv-runtime
+          path: runtime/
+          retention-days: 1
+          if-no-files-found: error
+
+  # Two builds of bflat, each with its own image: with the runtime release of
+  # bflat.variant.props, and with the release that has the riscv32 target too
+  # (BflatTargetRiscV32), whose image also builds the Airbender guests. Both
+  # run the riscv64 checks, so the riscv32 runtime fixups are checked against
+  # the riscv64 guests as well. With dotnet_riscv_run_id, both take the
+  # runtime of that run.
+  build:
+    needs: [inputs, runtime]
+    if: ${{ !cancelled() && needs.inputs.result == 'success' && (needs.runtime.result == 'success' || needs.runtime.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      image: ${{ steps.ghcr.outputs.image }}
+      image_riscv32: ${{ steps.ghcr.outputs.image_riscv32 }}
+    container:
+      image: ubuntu:26.04
+      options: --privileged -v /var/run/docker.sock:/var/run/docker.sock
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: default
+            image: nethermindeth/bflat-riscv64-11
+          - sdk: riscv32
+            image: nethermindeth/bflat-riscv64-11-riscv32
+    env:
+      IMAGE: ${{ matrix.image }}
+      REF: ${{ needs.inputs.outputs.sha }}
+      # A property of bflat.csproj, which MSBuild reads from the environment.
+      BflatTargetRiscV32: ${{ matrix.sdk == 'riscv32' }}
+    name: Build RISC-V64 on Ubuntu 26.04 (${{ matrix.sdk }} SDK)
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git \
+            gcc-riscv64-linux-gnu \
+            g++-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu \
+            llvm \
+            clang \
+            lld \
+            xxd \
+            python3 \
+            python3-pip \
+            wget \
+            curl \
+            ca-certificates \
+            docker.io \
+            libicu-dev \
+            xz-utils
+          pip3 install lief pyelftools --break-system-packages
+          # gcc-riscv64-linux-gnu only ships hard-float (lp64d) glibc stubs. We
+          # compile native modules with -mabi=lp64 (soft-float) to match zisk's
+          # crt1.o, so we need an empty gnu/stubs-lp64.h marker.
+          touch /usr/riscv64-linux-gnu/include/gnu/stubs-lp64.h
+
+      - name: Install .NET SDK
+        run: |
+          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+          chmod +x dotnet-install.sh
+          ./dotnet-install.sh --version "$SDK_VERSION" --install-dir /usr/share/dotnet
+          ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+          echo "DOTNET_ROOT=/usr/share/dotnet" >> "$GITHUB_ENV"
+          echo "/usr/share/dotnet" >> "$GITHUB_PATH"
+
+      # A called workflow checks out the caller's repository by default: take
+      # this repository at the commit to build.
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          repository: NethermindEth/bflat-riscv64
+          ref: ${{ needs.inputs.outputs.sha }}
+          persist-credentials: false
+
+      - name: Download the runtime of the dotnet-riscv run
+        if: inputs.dotnet_riscv_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: dotnet-riscv-runtime
+          path: /opt/dotnet-riscv-runtime
+
+      # Properties of bflat.csproj, which MSBuild reads from the environment.
+      # The build checks the files of the run with verify-release before it
+      # takes them, so the public key is required here.
+      - name: Take the runtime from the dotnet-riscv run
+        if: inputs.dotnet_riscv_run_id != ''
+        env:
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
+        run: |
+          if [ -z "$BFLAT_SIGNING_PUBLIC_KEY" ]; then
+            echo "::error::dotnet_riscv_run_id needs signing_public_key: the files of the run are checked with verify-release"
+            exit 1
+          fi
+          {
+            echo "RuntimeLocalDir=/opt/dotnet-riscv-runtime"
+            echo "RuntimeLocalId=$RUN_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Build modules (riscv64)
+        run: ./build.sh modules riscv64
+
+      # The rv32 musl sysroot that the rv32 modules compile against: the
+      # crossrootfs asset of the release, or of the signed set of the
+      # dotnet-riscv run, checked against its signed list before it is
+      # unpacked (docs/signing.md). The file of a run is always checked.
+      - name: Fetch the riscv32 sysroot
+        if: matrix.sdk == 'riscv32'
+        run: |
+          set -e
+          mkdir -p /tmp/rv32-dl /opt/rv32
+          if [ -n "${RuntimeLocalDir:-}" ]; then
+            dir="$RuntimeLocalDir"
+            [ -f "$dir/crossrootfs-musl-riscv32.tar.xz" ] || { echo "::error::The run has no crossrootfs-musl-riscv32.tar.xz"; exit 1; }
+          else
+            dir=/tmp/rv32-dl
+            tag="$(dotnet msbuild src/bflat/bflat.csproj -getProperty:RuntimeReleaseTag -p:BflatTargetRiscV32=true)"
+            url="https://github.com/NethermindEth/dotnet-riscv/releases/download/$tag"
+            for f in crossrootfs-musl-riscv32.tar.xz bflat-signature.sha256 bflat-signature.sha256.sig; do
+              curl -fsSL -o "$dir/$f" "$url/$f"
+            done
+          fi
+          if [ -n "$BFLAT_SIGNING_PUBLIC_KEY" ] || [ -n "${RuntimeLocalDir:-}" ]; then
+            dotnet run --project src/bflat-modules/bflat-modules.csproj -c Release --no-build -- verify-release \
+              "$dir/bflat-signature.sha256" "$dir/bflat-signature.sha256.sig" \
+              "$dir/crossrootfs-musl-riscv32.tar.xz=crossrootfs-musl-riscv32.tar.xz"
+          fi
+          tar -xJf "$dir/crossrootfs-musl-riscv32.tar.xz" -C /opt/rv32
+          echo "RV32_SYSROOT=/opt/rv32" >> "$GITHUB_ENV"
+
+      - name: Build modules (riscv32)
+        if: matrix.sdk == 'riscv32'
+        run: ./build.sh modules riscv32
+
+      - name: Build bflat (riscv64)
+        run: ./build.sh bflat riscv64
+
+      # The zkVM platforms that the checks below use, cloned by branch. Their
+      # commits go into the step summary and into the label
+      # io.nethermind.bflat.platforms of the image.
+      - name: Clone the zkVM platforms
+        env:
+          PACKAGES_REF: ${{ inputs.packages_ref }}
+          AIRBENDER_REF: ${{ inputs.airbender_ref }}
+          SDK: ${{ matrix.sdk }}
+        run: |
+          set -e
+          commits=""
+          clone() {
+            git clone --depth 1 --branch "$2" "https://github.com/NethermindEth/$1.git" "/tmp/$1"
+            commit=$(git -C "/tmp/$1" rev-parse HEAD)
+            commits="${commits:+$commits }$1=$commit"
+            echo "| $1 | \`$2\` | \`$commit\` |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          {
+            echo "### zkVM platforms ($SDK SDK)"
+            echo
+            echo "| Repository | Branch | Commit |"
+            echo "|------------|--------|--------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for repo in bflat-libziskos bflat-sp1 bflat-openvm; do
+            clone "$repo" "$PACKAGES_REF"
+          done
+          if [ "$SDK" = riscv32 ]; then
+            clone bflat-airbender "$AIRBENDER_REF"
+          fi
+          echo "PLATFORM_COMMITS=$commits" >> "$GITHUB_ENV"
+          echo "Platforms: $commits"
+
+      - name: Build Docker image
+        env:
+          PUBLISH: ${{ needs.inputs.outputs.publish }}
+          RUN_ID: ${{ inputs.dotnet_riscv_run_id }}
+        run: |
+          set -- -t "$IMAGE:test" \
+            --label org.opencontainers.image.source=https://github.com/NethermindEth/bflat-riscv64 \
+            --label "org.opencontainers.image.revision=$REF" \
+            --label "io.nethermind.bflat.run-repository=$GITHUB_REPOSITORY" \
+            --label "io.nethermind.bflat.run-id=$GITHUB_RUN_ID" \
+            --label "io.nethermind.bflat.dotnet-riscv-run=$RUN_ID" \
+            --label "io.nethermind.bflat.platforms=$PLATFORM_COMMITS"
+          if [ "$PUBLISH" = "true" ]; then
+            set -- "$@" -t "$IMAGE:latest" -t "$IMAGE:$REF"
+          fi
+          docker build --platform linux/amd64 \
+            --build-arg SDK_VERSION="$SDK_VERSION" \
+            "$@" \
+            .
+
+      - name: Check the packaged runtime
+        run: |
+          docker run --rm --platform linux/amd64 "$IMAGE:test" bash -lc "bflat --info"
+
+      # The ordinary linux-x64 target (BflatTargetLinuxX64 in
+      # bflat.variant.props). The image is linux/amd64, so the program runs
+      # here.
+      - name: Smoke test bflat (linux-x64)
+        run: |
+          docker run --rm --platform linux/amd64 "$IMAGE:test" bash -lc '
+            set -e
+            if [ ! -d /share/bflat/lib/linux/x64/glibc ]; then
+              echo "This layout has no linux-x64 target"
+              exit 0
+            fi
+            printf "%s\n" "class Program { static int Main() { System.Console.WriteLine(\"Hello from bflat\"); return 0; } }" > /tmp/hello.cs
+            bflat build --arch x64 --os linux -o /tmp/hello /tmp/hello.cs
+            file /tmp/hello | grep -q "x86-64"
+            /tmp/hello | grep -qx "Hello from bflat"
+            echo "linux-x64: OK"'
+
+      # bflat knows no zkVM: each target is a platform (entry point, memory
+      # map, manifest) in its bflat-* package. Only the platform part of each
+      # package is built here - it needs nothing but binutils - into one
+      # directory; the guests below do not use the bindings libraries.
+      - name: Build the zkVM platforms
+        run: |
+          set -e
+          for repo in bflat-libziskos bflat-sp1 bflat-openvm; do
+            "/tmp/$repo/platform/build.sh" "$PWD/platforms"
+          done
+          ls -l platforms
+
+      # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
+      - name: Smoke test bflat (every zkVM target)
+        run: |
+          set -e
+          for libc in zisk zisk_sim sp1 openvm; do
+            echo "::group::Smoke build for libc=$libc"
+            id=$(docker create --platform linux/amd64 "$IMAGE:test" \
+              bash -lc "echo 'class Program { static int Main() => 0; }' > /tmp/smoke.cs && bflat build --arch riscv64 --os linux --stdlib dotnet --libc $libc --extlib /platforms/$libc.bflat.manifest --no-pie --no-pthread -o /tmp/smoke-$libc /tmp/smoke.cs && file /tmp/smoke-$libc && file /tmp/smoke-$libc | grep -q 'UCB RISC-V'")
+            docker cp platforms/. "$id:/platforms"
+            rc=0
+            docker start -a "$id" || rc=$?
+            docker rm "$id" > /dev/null
+            [ "$rc" = 0 ] || exit "$rc"
+            echo "::endgroup::"
+          done
+
+      # The Airbender platform and libairbender from bflat-airbender, built
+      # with the clang and lld of this job, and the test guests built with them
+      # in the image. tests/run-airbender.sh runs them in the next job.
+      - name: Build the Airbender guests
+        if: matrix.sdk == 'riscv32'
+        run: |
+          set -e
+          bash /tmp/bflat-airbender/build/build.sh airbender
+          id=$(docker create --platform linux/amd64 -e BFLAT_AIRBENDER=/airbender -e OUT=/guests "$IMAGE:test" \
+            bash /t/build-airbender.sh)
+          docker cp tests/. "$id:/t"
+          docker cp /tmp/bflat-airbender/output/airbender/. "$id:/airbender"
+          rc=0
+          docker start -a "$id" || rc=$?
+          if [ "$rc" = 0 ]; then
+            mkdir -p airbender-guests
+            docker cp "$id:/guests/." airbender-guests/
+          fi
+          docker rm "$id" > /dev/null
+          exit "$rc"
+
+      - name: Upload the Airbender guests
+        if: matrix.sdk == 'riscv32'
+        uses: actions/upload-artifact@v4
+        with:
+          name: airbender-guests
+          path: airbender-guests/
+          if-no-files-found: error
+
+      - name: Check unaligned-access codegen per zkVM target
+        # docker cp rather than a bind mount: this job's checkout is not a path on the Docker host.
+        run: |
+          set -e
+          id=$(docker create --platform linux/amd64 -e BFLAT_PLATFORMS=/platforms "$IMAGE:test" bash /t/run-unaligned-access.sh)
+          docker cp tests/. "$id:/t"
+          docker cp platforms/. "$id:/platforms"
+          rc=0
+          docker start -a "$id" || rc=$?
+          docker rm "$id" > /dev/null
+          exit "$rc"
+
+      # bflat-ts on zk-testing pulls the images from GHCR: Docker Hub takes
+      # manual releases only. The output is the image by digest, so a new push
+      # to a moving tag does not change the image of a run that is in
+      # progress. The immutable tag comes first in TAGS. When it exists
+      # already (a rerun of the same commit), it is not replaced: the moving
+      # tags take the image of that tag, and the output is that tag with its
+      # digest. Without an immutable tag (a pull request), the output is the
+      # first moving tag. This step runs with sh in the job container.
+      - name: Push the image to GHCR
+        id: ghcr
+        if: needs.inputs.outputs.push == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          GHCR_IMAGE: ghcr.io/${{ matrix.image }}
+          TAGS: ${{ needs.inputs.outputs.tags }}
+          IMMUTABLE_TAG: ${{ needs.inputs.outputs.immutable_tag }}
+          # The job outputs are shared by the matrix: each SDK sets its own.
+          OUTPUT: ${{ matrix.sdk == 'default' && 'image' || 'image_riscv32' }}
+        run: |
+          set -e
+          # The digest in the output of docker pull or docker push.
+          digest_of() {
+            printf '%s\n' "$1" | sed -n 's/.*[Dd]igest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -n 1
+          }
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          src="$IMAGE:test"
+          digest=""
+          name=""
+          for tag in $TAGS; do
+            ref="$GHCR_IMAGE:$tag"
+            [ -n "$name" ] || name="$tag"
+            if [ "$tag" = "$IMMUTABLE_TAG" ]; then
+              # Only "not found" lets the push create the tag: any other
+              # error stops the job, so that it cannot replace the tag.
+              if err=$(docker manifest inspect "$ref" 2>&1 > /dev/null); then
+                echo "::notice::$ref exists and is not replaced: the other tags take its image"
+                out=$(docker pull "$ref")
+                printf '%s\n' "$out"
+                digest=$(digest_of "$out")
+                [ -n "$digest" ] || { echo "::error::$ref: no digest in the output of docker pull"; exit 1; }
+                src="$ref"
+                continue
+              fi
+              if ! printf '%s\n' "$err" | grep -qiE 'no such manifest|manifest unknown'; then
+                echo "::error::$ref: cannot check whether the tag exists: $err"
+                exit 1
+              fi
+            fi
+            [ "$src" = "$ref" ] || docker tag "$src" "$ref"
+            out=$(docker push "$ref")
+            printf '%s\n' "$out"
+            pushed=$(digest_of "$out")
+            [ -n "$pushed" ] || { echo "::error::$ref: no digest in the output of docker push"; exit 1; }
+            if [ -z "$digest" ]; then
+              digest="$pushed"
+            elif [ "$pushed" != "$digest" ]; then
+              echo "::error::$ref has the digest $pushed, not $digest of $GHCR_IMAGE:$name"
+              exit 1
+            fi
+          done
+          [ -n "$name" ] && [ -n "$digest" ] || { echo "::error::No tag was pushed"; exit 1; }
+          echo "$OUTPUT=$GHCR_IMAGE:$name@$digest" >> "$GITHUB_OUTPUT"
+          echo "::notice::$GHCR_IMAGE:$name@$digest"
+          echo "Pushed: \`$GHCR_IMAGE:$name@$digest\` (tags: $TAGS)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to Docker Hub
+        if: needs.inputs.outputs.publish == 'true'
+        uses: docker/login-action@v4
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+        with:
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
+
+      - name: Publish to Docker Hub
+        if: needs.inputs.outputs.publish == 'true'
+        run: |
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$REF"

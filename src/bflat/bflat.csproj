@@ -3,6 +3,26 @@
   <Import Project="bflat.variant.props" />
   <Import Project="bflat.build.props" />
 
+  <!-- -p:RuntimeLocalDir=<dir> takes the dotnet-riscv files from a local
+       directory, not from the release: the signed set of a build run of
+       dotnet-riscv (the release-assets-* and bflat-signatures artifacts),
+       unpacked into one directory. The files have the names of the release
+       assets (<asset>.zip, bflat.compiler.$(RuntimeVersion).nupkg,
+       bflat-signature.sha256 and bflat-signature.sha256.sig), and the build
+       checks them as for a release. RuntimeLocalId names the run in the
+       download cache and in bflat info (BlobsVersion local-<id>). Without
+       RuntimeLocalDir, nothing changes. -->
+  <PropertyGroup Condition="'$(RuntimeLocalDir)' != ''">
+    <_RuntimeLocalDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(RuntimeLocalDir)'))</_RuntimeLocalDir>
+    <RuntimeLocalId Condition="'$(RuntimeLocalId)' == ''">dir</RuntimeLocalId>
+    <BlobsVersion>local-$(RuntimeLocalId)</BlobsVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <_RuntimeSource>the dotnet-riscv release $(RuntimeReleaseTag)</_RuntimeSource>
+    <_RuntimeSource Condition="'$(RuntimeLocalDir)' != ''">the local dotnet-riscv build in $(_RuntimeLocalDir)</_RuntimeSource>
+  </PropertyGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net11.0</TargetFramework>
@@ -177,12 +197,82 @@
   <!-- Runtime artifact caches are keyed by $(BlobsVersion), not
        $(RuntimeVersion): the plain version is identical across variants and
        would let one variant's cached zips/semaphores satisfy the other's. -->
+  <!-- With RuntimeLocalDir, the download targets take the files from that
+       directory: the files of a directory can change without a new
+       RuntimeLocalId. _SyncRuntimeLocalDir compares their hashes with the
+       hashes of the last copy, not their timestamps, since a replaced file can
+       be older than the extract semaphores. When a hash differs, it copies
+       all the files and sets their time to now, so every extract target
+       extracts them again. -->
+  <Target Name="_CheckRuntimeLocalDir" Condition="'$(RuntimeLocalDir)' != ''">
+    <Error Condition="!Exists('$(_RuntimeLocalDir)')"
+           Text="RuntimeLocalDir=$(RuntimeLocalDir): the directory $(_RuntimeLocalDir) does not exist." />
+    <ItemGroup>
+      <_RuntimeLocalFile Include="@(RuntimeArtifact->'$(_RuntimeLocalDir)%(Identity).zip');@(Blob->'$(_RuntimeLocalDir)%(Identity).zip');$(_RuntimeLocalDir)$(_CompilerNupkgName)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_RuntimeLocalFile.FullPath)')"
+           Text="RuntimeLocalDir=$(RuntimeLocalDir): %(_RuntimeLocalFile.Filename)%(_RuntimeLocalFile.Extension) is missing in $(_RuntimeLocalDir)." />
+  </Target>
+
+  <Target Name="_SyncRuntimeLocalDir"
+          Condition="'$(RuntimeLocalDir)' != ''"
+          DependsOnTargets="_CheckRuntimeLocalDir">
+    <PropertyGroup>
+      <_RuntimeLocalHashList>$(DownloadCachePath)runtime-local-$(BlobsVersion).sha256</_RuntimeLocalHashList>
+      <_RuntimeLocalSigned Condition="Exists('$(_RuntimeLocalDir)bflat-signature.sha256') and Exists('$(_RuntimeLocalDir)bflat-signature.sha256.sig')">true</_RuntimeLocalSigned>
+    </PropertyGroup>
+    <!-- Without the list and its signature in the directory, an earlier copy
+         of them must not be taken for this one. -->
+    <Delete Files="$(_ReleaseSignatureList);$(_ReleaseSignature)"
+            Condition="'$(_RuntimeLocalSigned)' != 'true'" />
+    <ItemGroup>
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)%(RuntimeArtifact.Identity).zip"
+                        Cached="$(DownloadCachePath)%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)%(Blob.Identity).zip"
+                        Cached="$(DownloadCachePath)%(Blob.Identity)-$(BlobsVersion).zip" />
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)bflat-signature.sha256"
+                        Cached="$(_ReleaseSignatureList)"
+                        Condition="'$(_RuntimeLocalSigned)' == 'true'" />
+      <_RuntimeLocalCopy Include="$(_RuntimeLocalDir)bflat-signature.sha256.sig"
+                        Cached="$(_ReleaseSignature)"
+                        Condition="'$(_RuntimeLocalSigned)' == 'true'" />
+      <_RuntimeLocalMissing Include="%(_RuntimeLocalCopy.Cached)"
+                            Condition="!Exists('%(_RuntimeLocalCopy.Cached)')" />
+    </ItemGroup>
+    <GetFileHash Files="@(_RuntimeLocalCopy)">
+      <Output TaskParameter="Items" ItemName="_RuntimeLocalCopyHash" />
+    </GetFileHash>
+    <ReadLinesFromFile File="$(_RuntimeLocalHashList)"
+                       Condition="Exists('$(_RuntimeLocalHashList)')">
+      <Output TaskParameter="Lines" PropertyName="_RuntimeLocalLastHashes" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_RuntimeLocalHashes>@(_RuntimeLocalCopyHash->'%(Filename)%(Extension) %(FileHash)')</_RuntimeLocalHashes>
+      <_RuntimeLocalChanged>false</_RuntimeLocalChanged>
+      <_RuntimeLocalChanged Condition="'$(_RuntimeLocalHashes)' != '$(_RuntimeLocalLastHashes)' or '@(_RuntimeLocalMissing)' != ''">true</_RuntimeLocalChanged>
+    </PropertyGroup>
+
+    <Message Text="Taking the runtime files from $(_RuntimeLocalDir) (BlobsVersion=$(BlobsVersion)) ..." Importance="High"
+             Condition="'$(_RuntimeLocalChanged)' == 'true'" />
+    <Copy Condition="'$(_RuntimeLocalChanged)' == 'true'"
+          SourceFiles="@(_RuntimeLocalCopy)"
+          DestinationFiles="@(_RuntimeLocalCopy->'%(Cached)')" />
+    <Touch Condition="'$(_RuntimeLocalChanged)' == 'true'"
+           Files="@(_RuntimeLocalCopy->'%(Cached)')" />
+    <WriteLinesToFile Condition="'$(_RuntimeLocalChanged)' == 'true'"
+                      File="$(_RuntimeLocalHashList)"
+                      Lines="@(_RuntimeLocalCopyHash->'%(Filename)%(Extension) %(FileHash)')"
+                      Overwrite="true" />
+  </Target>
+
   <Target Name="DownloadRuntimeArtifacts"
           AfterTargets="CollectPackageReferences"
-          Condition="!Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
+          DependsOnTargets="_SyncRuntimeLocalDir"
+          Condition="'$(RuntimeLocalDir)' != '' or !Exists(@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
           Outputs="@(RuntimeArtifact->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
-    <DownloadFile SourceUrl="$(RuntimeUri)$(RuntimeReleaseTag)/%(RuntimeArtifact.Identity).zip"
+    <DownloadFile Condition="'$(RuntimeLocalDir)' == ''"
+                  SourceUrl="$(RuntimeUri)$(RuntimeReleaseTag)/%(RuntimeArtifact.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(RuntimeArtifact.Identity)-$(BlobsVersion).zip" />
@@ -190,10 +280,12 @@
 
   <Target Name="DownloadBlobs"
           AfterTargets="CollectPackageReferences"
-          Condition="!Exists(@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
+          DependsOnTargets="_SyncRuntimeLocalDir"
+          Condition="'$(RuntimeLocalDir)' != '' or !Exists(@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip'))"
           Outputs="@(Blob->'$(DownloadCachePath)%(Identity)-$(BlobsVersion).zip')">
 
-    <DownloadFile SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/%(Blob.Identity).zip"
+    <DownloadFile Condition="'$(RuntimeLocalDir)' == ''"
+                  SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/%(Blob.Identity).zip"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
                   DestinationFileName="%(Blob.Identity)-$(BlobsVersion).zip" />
@@ -207,27 +299,51 @@
   -->
   <Target Name="DownloadCompilerNupkg"
           BeforeTargets="Restore"
-          Condition="!Exists('$(_CompilerNupkgLocalPath)') or !Exists('$(_CompilerNupkgVersionMarker)')">
+          DependsOnTargets="_CheckRuntimeLocalDir"
+          Condition="'$(RuntimeLocalDir)' != '' or !Exists('$(_CompilerNupkgLocalPath)') or !Exists('$(_CompilerNupkgVersionMarker)')">
 
-    <Message Text="Downloading $(_CompilerNupkgName) (BlobsVersion=$(BlobsVersion)) ..." Importance="High" />
+    <!-- With RuntimeLocalDir, the package is replaced only when its content
+         differs from the cached one, so that NuGet does not extract it on
+         each build. -->
+    <GetFileHash Files="$(_RuntimeLocalDir)$(_CompilerNupkgName)"
+                 Condition="'$(RuntimeLocalDir)' != ''">
+      <Output TaskParameter="Hash" PropertyName="_LocalNupkgHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(_CompilerNupkgLocalPath)"
+                 Condition="'$(RuntimeLocalDir)' != '' and Exists('$(_CompilerNupkgLocalPath)')">
+      <Output TaskParameter="Hash" PropertyName="_CachedNupkgHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_RefreshCompilerNupkg>true</_RefreshCompilerNupkg>
+      <_RefreshCompilerNupkg Condition="'$(RuntimeLocalDir)' != '' and '$(_LocalNupkgHash)' == '$(_CachedNupkgHash)' and Exists('$(_CompilerNupkgVersionMarker)')">false</_RefreshCompilerNupkg>
+    </PropertyGroup>
+
+    <Message Text="Downloading $(_CompilerNupkgName) (BlobsVersion=$(BlobsVersion)) ..." Importance="High"
+             Condition="'$(RuntimeLocalDir)' == ''" />
+    <Message Text="Taking $(_CompilerNupkgName) from $(_RuntimeLocalDir) (BlobsVersion=$(BlobsVersion)) ..." Importance="High"
+             Condition="'$(_RefreshCompilerNupkg)' == 'true' and '$(RuntimeLocalDir)' != ''" />
 
     <MakeDir Directories="$(_LocalPackagesDir)" />
 
     <!-- Drop the cached nupkg and any stale version markers; the marker for
          the previous BlobsVersion is no longer authoritative. -->
     <Delete Files="$(_CompilerNupkgLocalPath)"
-            Condition="Exists('$(_CompilerNupkgLocalPath)')" />
-    <ItemGroup>
+            Condition="'$(_RefreshCompilerNupkg)' == 'true' and Exists('$(_CompilerNupkgLocalPath)')" />
+    <ItemGroup Condition="'$(_RefreshCompilerNupkg)' == 'true'">
       <_StaleVersionMarkers Include="$(_LocalPackagesDir)/$(_CompilerNupkgName).*.version" />
     </ItemGroup>
     <Delete Files="@(_StaleVersionMarkers)" />
 
-    <DownloadFile SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/$(_CompilerNupkgName)"
+    <DownloadFile Condition="'$(RuntimeLocalDir)' == ''"
+                  SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/$(_CompilerNupkgName)"
                   Retries="3"
                   DestinationFolder="$(_LocalPackagesDir)"
                   DestinationFileName="$(_CompilerNupkgName)" />
+    <Copy Condition="'$(_RefreshCompilerNupkg)' == 'true' and '$(RuntimeLocalDir)' != ''"
+          SourceFiles="$(_RuntimeLocalDir)$(_CompilerNupkgName)"
+          DestinationFiles="$(_CompilerNupkgLocalPath)" />
 
-    <PropertyGroup>
+    <PropertyGroup Condition="'$(_RefreshCompilerNupkg)' == 'true'">
       <_NuGetGlobalPkgDir Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetGlobalPkgDir>
       <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' != 'Windows_NT'">$(HOME)/.nuget/packages</_NuGetGlobalPkgDir>
       <_NuGetGlobalPkgDir Condition="'$(_NuGetGlobalPkgDir)' == '' and '$(OS)' == 'Windows_NT'">$(USERPROFILE)\.nuget\packages</_NuGetGlobalPkgDir>
@@ -239,7 +355,8 @@
     <RemoveDir Directories="$(_NuGetCacheEntry)"
                Condition="Exists('$(_NuGetCacheEntry)')" />
 
-    <Touch Files="$(_CompilerNupkgVersionMarker)" AlwaysCreate="true" />
+    <Touch Files="$(_CompilerNupkgVersionMarker)" AlwaysCreate="true"
+           Condition="'$(_RefreshCompilerNupkg)' == 'true'" />
   </Target>
 
   <!--
@@ -252,7 +369,11 @@
 
     Without the keys nothing is checked, and the build says so. A release
     without a signature is an error unless AllowUnsignedRuntime=true. The
-    check runs again when a download changes (the .verified stamp).
+    check runs again when a download changes (the .verified stamp). With
+    RuntimeLocalDir, the list and its signature are the bflat-signature.sha256
+    and bflat-signature.sha256.sig of that directory, and the files are
+    checked as for a release. A directory without them, or a build without
+    the keys, is an error, also with AllowUnsignedRuntime=true.
   -->
   <PropertyGroup>
     <_ReleaseSignatureList>$(DownloadCachePath)bflat-signature-$(BlobsVersion).sha256</_ReleaseSignatureList>
@@ -272,7 +393,7 @@
   </ItemGroup>
 
   <Target Name="DownloadReleaseSignature"
-          Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and (!Exists('$(_ReleaseSignatureList)') or !Exists('$(_ReleaseSignature)'))">
+          Condition="'$(RuntimeLocalDir)' == '' and '$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and (!Exists('$(_ReleaseSignatureList)') or !Exists('$(_ReleaseSignature)'))">
     <DownloadFile SourceUrl="$(BlobsUri)$(RuntimeReleaseTag)/bflat-signature.sha256"
                   Retries="3"
                   DestinationFolder="$(DownloadCachePath)"
@@ -296,11 +417,15 @@
     <Message Importance="High"
              Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' == ''"
              Text="BFLAT_SIGNING_PUBLIC_KEY is not set: the dotnet-riscv downloads are not checked, and this bflat checks no package signature." />
+    <Error Condition="'$(RuntimeLocalDir)' != '' and '$(BFLAT_SIGNING_PUBLIC_KEY)' == ''"
+           Text="RuntimeLocalDir needs BFLAT_SIGNING_PUBLIC_KEY: the files of $(_RuntimeSource) are checked with verify-release." />
+    <Error Condition="'$(RuntimeLocalDir)' != '' and '$(_ReleaseIsSigned)' != 'true'"
+           Text="There is no bflat-signature.sha256 and bflat-signature.sha256.sig for $(_RuntimeSource). RuntimeLocalDir takes a signed set only." />
     <Error Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' != 'true' and '$(AllowUnsignedRuntime)' != 'true'"
            Text="The dotnet-riscv release $(RuntimeReleaseTag) has no bflat-signature.sha256 and bflat-signature.sha256.sig. Use a signed release, or set AllowUnsignedRuntime=true." />
     <Message Importance="High"
              Condition="'$(BFLAT_SIGNING_PUBLIC_KEY)' != '' and '$(_ReleaseIsSigned)' != 'true'"
-             Text="AllowUnsignedRuntime=true: the dotnet-riscv release $(RuntimeReleaseTag) is not signed and is used without a check." />
+             Text="AllowUnsignedRuntime=true: $(_RuntimeSource) is not signed and is used without a check." />
   </Target>
 
   <!-- The tool is built inside the target, not as a dependency, so that an
