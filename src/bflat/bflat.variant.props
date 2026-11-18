@@ -22,7 +22,7 @@
          dotnet-riscv makes), from the same release. The rv32 modules must be
          built (build.sh modules riscv32). -->
     <BflatTargetRiscV32 Condition="'$(BflatTargetRiscV32)' == ''">false</BflatTargetRiscV32>
-    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == ''">11.0.102-upstream-perf.maximmenshikov.202611172038</RuntimeReleaseTag>
+    <RuntimeReleaseTag Condition="'$(RuntimeReleaseTag)' == ''">11.0.102-upstream-perf</RuntimeReleaseTag>
 
     <!-- Whether the release has the linux-x64 target of bflat (the x64 JIT,
          runtime and glibc sysroot that the runtime-x64 job of dotnet-riscv
