@@ -4,7 +4,8 @@
 # checks what each one did:
 #   hello   prints its line through the UART and ends as a success;
 #   keccak  publishes keccak256 of its input in x10-x17;
-#   fail    ends as a failure, which the simulator rejects.
+#   fail    ends as a failure, which the simulator rejects;
+#   rev8    checks word reversal and sign extension on halfwords.
 # The simulator treats any self-jump as the end of a run, and reports the
 # cycle limit only in its output, so both are checked here.
 set -euo pipefail
@@ -51,6 +52,12 @@ if run keccak "$work_dir/abc.hex" --expected-results "$expected" && finished kec
     echo "keccak: OK ($(grep '^Result: ' "$work_dir/keccak.log"))"
 else
     echo "keccak: FAILED, expected x10-x17 = $expected"; cat "$work_dir/keccak.log"; status=1
+fi
+
+if run rev8 "$work_dir/empty.hex" && finished rev8; then
+    echo "rev8: OK"
+else
+    echo "rev8: FAILED"; cat "$work_dir/rev8.log"; status=1
 fi
 
 if run fail "$work_dir/empty.hex"; then
