@@ -12,15 +12,21 @@ package="${BFLAT_AIRBENDER:?set BFLAT_AIRBENDER to a directory with the bflat-ai
 out="${OUT:?set OUT to the output directory}"
 mkdir -p "$out"
 
-for guest in hello keccak fail; do
+for guest in hello keccak fail rev8; do
+    options=()
+    if [ "$guest" = rev8 ]; then options+=(--codegenopt JitZkRev8=1); fi
     bflat build --arch riscv32 --os linux --stdlib dotnet --libc airbender \
         --extlib "$package/libairbender.bflat.manifest" --no-pie --no-pthread \
         --error-on-float-binary --error-on-compressed --error-on-atomic \
-        -o "$out/$guest" "$test_dir/airbender-$guest.cs"
+        "${options[@]}" -o "$out/$guest" "$test_dir/airbender-$guest.cs"
     for f in "$out/$guest" "$out/$guest.bin" "$out/$guest.text"; do
         [ -s "$f" ] || { echo "$guest: $f was not written" >&2; exit 1; }
     done
     file "$out/$guest" | grep -q 'ELF 32-bit LSB executable, UCB RISC-V' \
         || { echo "$guest: not an RV32 executable: $(file "$out/$guest")" >&2; exit 1; }
+    if [ "$guest" = rev8 ]; then
+        llvm-objdump -d --mattr=+zbb "$out/$guest" | sed -n '/<[^>]*SwapWord[^>]*>:/,/^$/p' > "$out/rev8-word.asm"
+        grep -qw rev8 "$out/rev8-word.asm" || { echo "SwapWord is missing rev8" >&2; exit 1; }
+    fi
     echo "$guest: $(stat -c %s "$out/$guest.bin") bytes of ROM image"
 done

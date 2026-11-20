@@ -73,8 +73,8 @@ The two legs of the build matrix:
 
 | Leg | Image | Runtime release | Also |
 |-----|-------|-----------------|------|
-| `default` SDK | `nethermindeth/bflat-riscv64-11` | `11.0.102-upstream-perf` | |
-| `riscv32` SDK | `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.102-upstream-perf` (`BflatTargetRiscV32=true`) | Builds the rv32 modules and the Airbender guests |
+| `default` SDK | `nethermindeth/bflat-riscv64-11` | `11.0.102-upstream-perf.r440` | |
+| `riscv32` SDK | `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.102-upstream-perf.r440` (`BflatTargetRiscV32=true`) | Builds the rv32 modules and the Airbender guests |
 
 The zkVM platforms come from the `main` branch of bflat-libziskos, bflat-sp1,
 bflat-openvm and bflat-airbender. A manual run (`workflow_dispatch`) can
