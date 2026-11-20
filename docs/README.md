@@ -5,6 +5,9 @@ It is in `docs/`, so GitHub Pages can serve it, and you can run it locally.
 
 ## Local preview
 
+Use Ruby 3.4.13 from `docs/.ruby-version`. It includes the Ruby string and
+regular expression security fixes. Bundler checks the version before building.
+
 ```console
 $ cd docs
 $ bundle install
