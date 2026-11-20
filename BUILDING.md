@@ -61,8 +61,8 @@ key, so a new tag downloads the new release and extracts it again.
 
 | Build | Release tag | Targets in the layout |
 |-------|-------------|-----------------------|
-| default | `11.0.102-upstream-perf` | linux-musl-riscv64, linux-glibc-x64 |
-| `-p:BflatTargetRiscV32=true` | `11.0.102-upstream-perf` | the same, plus linux-musl-riscv32 |
+| default | `11.0.102-upstream-perf.r440` | linux-musl-riscv64, linux-glibc-x64 |
+| `-p:BflatTargetRiscV32=true` | `11.0.102-upstream-perf.r440` | the same, plus linux-musl-riscv32 |
 
 `-p:BflatTargetLinuxX64=false` builds without the linux-x64 target.
 
