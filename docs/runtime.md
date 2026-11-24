@@ -156,7 +156,7 @@ bflat downloads one release that a property names. The release tag is
 The tag is the SDK version of the VMR plus the profile, and the run number
 when a release of that SDK version exists already. The default build and
 `-p:BflatTargetRiscV32=true` use the same release,
-`11.0.102-upstream-perf.r440`, a release of dotnet-riscv `main` that has the
+`11.0.102-upstream-perf.r442`, a release of dotnet-riscv `main` that has the
 riscv32 target too.
 
 The tag changes with each new release. The download cache uses the tag as

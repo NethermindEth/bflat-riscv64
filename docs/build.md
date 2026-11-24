@@ -16,8 +16,8 @@ llvm-objcopy:
 
 | Image | Runtime release | Targets |
 |-------|-----------------|---------|
-| `nethermindeth/bflat-riscv64-11` | `11.0.102-upstream-perf.r440` | riscv64 zkVM platforms, linux-x64 |
-| `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.102-upstream-perf.r440` | the same, plus the riscv32 platform (Airbender) |
+| `nethermindeth/bflat-riscv64-11` | `11.0.102-upstream-perf.r442` | riscv64 zkVM platforms, linux-x64 |
+| `nethermindeth/bflat-riscv64-11-riscv32` | `11.0.102-upstream-perf.r442` | the same, plus the riscv32 platform (Airbender) |
 | `ghcr.io/nethermindeth/bflat-riscv64-11:<tag>` | as the default image | the default image of a CI build, for the bflat-ts runs |
 | `ghcr.io/nethermindeth/bflat-riscv64-11-riscv32:<tag>` | as the riscv32 image | the riscv32 image of a CI build |
 
