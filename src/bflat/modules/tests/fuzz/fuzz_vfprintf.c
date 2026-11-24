@@ -89,7 +89,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         int r = vf(f, fmt, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s,
                    s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s);
         if (r < 0)
-            __builtin_trap(); /* contract: never negative */
+            __builtin_trap(); /* these formats cannot overflow the count */
         fclose(f);
     }
 

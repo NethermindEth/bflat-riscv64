@@ -1109,8 +1109,11 @@ atoi(const char *s)
 static unsigned long long
 noos_strtox(const char *s, char **end, int base, int *negative)
 {
+    const char *start = s;
+    const char *digits;
     unsigned long long value = 0;
     int neg = 0;
+    int prefix = 0;
 
     /*@ loop invariant 0 <= s - \at(s, Pre) <= strlen(\at(s, Pre));
         loop invariant \base_addr(s) == \base_addr(\at(s, Pre));
@@ -1130,12 +1133,15 @@ noos_strtox(const char *s, char **end, int base, int *negative)
         && (s[1] == 'x' || s[1] == 'X')) {
         s += 2;
         base = 16;
+        prefix = 1;
     } else if (base == 0) {
         base = (s[0] == '0') ? 8 : 10;
     }
 
+    digits = s;
     /*@ loop invariant 0 <= s - \at(s, Pre) <= strlen(\at(s, Pre));
         loop invariant \base_addr(s) == \base_addr(\at(s, Pre));
+        loop invariant digits <= s;
         loop assigns s, value;
         loop variant strlen(\at(s, Pre)) - (s - \at(s, Pre));
     */
@@ -1155,6 +1161,14 @@ noos_strtox(const char *s, char **end, int base, int *negative)
             break;
 
         value = value * (unsigned long long)base + (unsigned long long)digit;
+    }
+
+    /* No digits: nothing was converted and *end is the string itself, as ISO
+     * C asks - except after a "0x" prefix, where the "0" is the number and
+     * the parse ends at the 'x'. */
+    if (s == digits) {
+        s = prefix ? digits - 1 : start;
+        neg = 0;
     }
 
     if (end != (void *)0)

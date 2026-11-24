@@ -18,7 +18,9 @@
  *
  * Copyright (C) 2026 Demerzel Solutions Limited (Nethermind)
  */
+#include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
@@ -325,6 +327,10 @@ int main(void)
         void *p = __wrap_mmap(NULL, 4096, 3, 0x22, -1, 0);
         CHECK(p != NULL && ((uintptr_t)p % 8) == 0);
         CHECK((uintptr_t)p >= heap_bottom() && (uintptr_t)p < heap_top());
+        /* failures are MAP_FAILED, never NULL */
+        CHECK(__wrap_mmap(NULL, 0, 3, 0x22, -1, 0) == (void *)-1);
+        CHECK(__wrap_mmap(NULL, -4096, 3, 0x22, -1, 0) == (void *)-1);
+        CHECK(__wrap_mmap(NULL, 2 * HEAP_SIZE, 3, 0x22, -1, 0) == (void *)-1);
     }
 
     MARK("aligned");
@@ -432,6 +438,22 @@ int main(void)
         CHECK(call_vf(f, "%s %d", "n", 5) == 3);
         fclose(f);
         CHECK_STR_EQ(buf, "n 5");
+    }
+    {
+        /* a count that does not fit in an int is -1 with EOVERFLOW, and the
+         * field that would overflow it is not written */
+        char buf[64];
+        memset(buf, 0, sizeof(buf));
+        FILE *f = fmemopen(buf, sizeof(buf), "w");
+        errno = 0;
+        CHECK(call_vf(f, "%2147483648d", 1) == -1);
+        CHECK(errno == EOVERFLOW);
+        CHECK(call_vf(f, "%.2147483648s", "s") == -1);
+        CHECK(call_vf(f, "%99999999999d", 1) == -1);
+        CHECK(call_vf(f, "%*d", INT_MIN, 1) == -1);
+        CHECK(call_vf(f, "x%2147483647d", 1) == -1);
+        fclose(f);
+        CHECK_STR_EQ(buf, "x");
     }
 
     MARK("syscall");

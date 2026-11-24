@@ -7,7 +7,9 @@
  *
  * @author Maxim Menshikov <maksim.menshikov@nethermind.io>
  */
+#include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
@@ -526,21 +528,31 @@ __wrap___malloc_allzerop(void *)
     return 0;
 }
 
+/* What mmap returns on failure; callers compare with it, not with NULL. */
+#define ZK_MAP_FAILED ((void *)-1)
+
 /*@ // Anonymous mappings degrade to bump allocations; every other mmap
     // caller is stubbed out elsewhere. Hint address, protection and flags
-    // are ignored.
+    // are ignored. A length that is not positive, or a heap that cannot
+    // hold it, gives MAP_FAILED, as for a real mmap.
     requires zk_heap_state;
     assigns g_zk_bump_ptr;
     assigns ((uint8_t *)_kernel_heap_bottom)
         [0 .. zk_bump_start - (uint8_t *)_kernel_heap_bottom - 1];
     ensures zk_heap_state;
-    ensures \result == \null || (uintptr_t)\result % 8 == 0;
+    ensures length <= 0 ==> \result == (void *)-1;
+    ensures \result == (void *)-1 ||
+            (\result != \null && (uintptr_t)\result % 8 == 0);
 */
 void *
 __wrap_mmap(void *addr, int length, int prot, int flags,
             int fd, int offset)
 {
-    return __wrap___libc_malloc_impl(length);
+    if (length <= 0)
+        return ZK_MAP_FAILED;
+
+    void *p = __wrap___libc_malloc_impl((unsigned long)length);
+    return p != 0 ? p : ZK_MAP_FAILED;
 }
 
 /*@ assigns \nothing;
@@ -664,10 +676,11 @@ zkvm_emit(FILE *f, const char *s, int n)
     // matter to callers: the format string is only read, the character
     // count is non-negative, and no floating-point value is ever touched
     // (float conversions consume an integer register slot and emit
-    // "<float>").
+    // "<float>"). The count is -1 when it would not fit in an int, as
+    // musl returns with EOVERFLOW.
     requires \valid(f);
     requires valid_read_string(fmt);
-    ensures \result >= 0;
+    ensures \result >= -1;
 */
 int
 __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
@@ -677,6 +690,8 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
 
     while (*p) {
         if (*p != '%') {
+            if (total == INT_MAX)
+                goto overflow;
             fputc((unsigned char)*p++, f);
             total++;
             continue;
@@ -694,15 +709,33 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
         }
 
         int width = 0;
-        if (*p == '*') { width = va_arg(ap, int); p++; if (width < 0) { left = 1; width = -width; } }
-        else while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+        if (*p == '*') {
+            width = va_arg(ap, int);
+            p++;
+            if (width < 0) {
+                if (width == INT_MIN)
+                    goto overflow;
+                left = 1;
+                width = -width;
+            }
+        } else {
+            while (*p >= '0' && *p <= '9') {
+                if (width > (INT_MAX - (*p - '0')) / 10)
+                    goto overflow;
+                width = width * 10 + (*p++ - '0');
+            }
+        }
 
         int prec = -1;
         if (*p == '.') {
             p++;
             prec = 0;
             if (*p == '*') { prec = va_arg(ap, int); p++; }
-            else while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+            else while (*p >= '0' && *p <= '9') {
+                if (prec > (INT_MAX - (*p - '0')) / 10)
+                    goto overflow;
+                prec = prec * 10 + (*p++ - '0');
+            }
         }
 
         int lng = 0; /* 0=int,1=long,2=long long */
@@ -726,7 +759,11 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
                 out = va_arg(ap, const char *);
                 if (out == 0) out = "(null)";
                 outlen = 0;
-                while (out[outlen] && (prec < 0 || outlen < prec)) outlen++;
+                while (out[outlen] && (prec < 0 || outlen < prec)) {
+                    if (outlen == INT_MAX)
+                        goto overflow;
+                    outlen++;
+                }
                 break;
             }
             case 'd': case 'i': {
@@ -765,6 +802,11 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
         int bodylen = outlen + (sign ? 1 : 0);
         int pad = width > bodylen ? width - bodylen : 0;
 
+        /* The whole field, then the count: nothing of a field that would
+         * overflow the count is written. */
+        if (bodylen + pad > INT_MAX - total)
+            goto overflow;
+
         if (!left && !zero) { while (pad-- > 0) { fputc(' ', f); total++; } }
         if (sign) { fputc(sign, f); total++; }
         if (!left && zero) { while (pad-- > 0) { fputc('0', f); total++; } }
@@ -773,6 +815,10 @@ __wrap_vfprintf(FILE *f, const char *fmt, va_list ap)
     }
 
     return total;
+
+overflow:
+    errno = EOVERFLOW;
+    return -1;
 }
 /* ------------------------------------------------------------------------
  * The platform interface. pal.o is built once and shared by every platform,

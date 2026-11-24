@@ -71,6 +71,28 @@ extern const uintptr_t tls_link_tbss_len;
 */
 extern int __set_thread_area(void *tp);
 
+#ifdef __FRAMAC__
+/*@ // The compiler builtin: an illegal instruction, never returns.
+    terminates \false;
+    assigns \nothing;
+    ensures \false;
+*/
+extern void __builtin_trap(void);
+#endif
+
+/*@ // Stops the guest: an image whose TLS does not fit the static block
+    // cannot run correctly.
+    terminates \false;
+    assigns \nothing;
+    ensures \false;
+*/
+__attribute__((noreturn, noinline, cold))
+static void
+tls_layout_trap(void)
+{
+    __builtin_trap();
+}
+
 /*@ // What the link provides: .tdata and .tbss fit in the block after the
     // pthread area, and the .tdata image, wherever it exists, is readable
     // and lies outside the block.
@@ -98,7 +120,8 @@ extern int __set_thread_area(void *tp);
 /*@ // Idempotent lazy init of the single static TLS block. The lengths of
     // .tdata/.tbss arrive as link-time symbol ADDRESSES (__tdata_len,
     // __tbss_len); the linker script guarantees tdata+tbss fits
-    // HEAP_SIZE - PTHREAD_SIZE, which tls_layout states.
+    // HEAP_SIZE - PTHREAD_SIZE, which tls_layout states. The body checks
+    // the size as well and traps when a link breaks it.
     requires tls_layout;
     requires tls_state;
     assigns tls_initialized, tp, tls_base,
@@ -142,6 +165,15 @@ ensure_tls_initialized(void)
 
     uintptr_t tdata_len = tls_link_tdata_len;
     uintptr_t tbss_len = tls_link_tbss_len;
+
+    /*
+     * The linker script keeps .tdata + .tbss within the block; check it here
+     * too, so that a different link stops the guest instead of writing past
+     * tls_storage_static. Written so that the sum cannot wrap.
+     */
+    if (tdata_len > HEAP_SIZE - PTHREAD_SIZE ||
+        tbss_len > HEAP_SIZE - PTHREAD_SIZE - tdata_len)
+        tls_layout_trap();
 
     /*
      * Copy initial TLS data if present (.tdata section).
