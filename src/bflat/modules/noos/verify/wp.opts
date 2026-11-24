@@ -1,0 +1,8 @@
+# Trap names are string literals whose contents the call sites rely on.
+# The popcount step of __sched_cpucount is checked over all byte values
+# (wp:range). bcmp, sigaddset and __sched_cpucount read through casts of
+# void *, hence Typed+cast.
+-wp-literals -wp-auto=wp:range -wp-model Typed+cast -wp-prover alt-ergo,z3,cvc4
+# noos_main calls the constructors through the linker's init array, whose
+# bounds are two unrelated symbols to WP.
+-wp-skip-fct noos_main

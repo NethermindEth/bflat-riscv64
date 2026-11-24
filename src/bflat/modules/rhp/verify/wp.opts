@@ -1,0 +1,14 @@
+# The bump paths store pointers and lengths through uint8_t * budgets and
+# read MethodTable fields through narrower casts. The bytes model loses a
+# pointer stored in memory (it keeps the integer only), so the typed model
+# with casts is used; it checks those accesses per memory cell, and the
+# byte extent of each object is stated separately (the bump behaviors'
+# \valid ensures).
+-wp-model Typed+cast
+# The runtime's helpers and the ZkvmThrow handler have footprints this
+# module cannot state: no generated assigns, so WP assumes they write
+# anything.
+-generated-spec-custom assigns:skip
+# (v & ~7) >= v - 7: no prover gets the bit fact.
+-wp-prop=-round_down_8
+-wp-prover alt-ergo,z3,cvc4

@@ -90,6 +90,25 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work framac/frama-c:30.0 \
             src/bflat/modules/eh/verify/run_wp.sh
 
+  wp_proof:
+    runs-on: ubuntu-latest
+    name: Formal proof of the module contracts (Frama-C WP)
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Pull Frama-C image
+        run: docker pull framac/frama-c:30.0
+
+      # WP with RTE guards over every C module as a whole file: every goal
+      # of every contract, loop invariant and runtime-error guard must be
+      # proved (src/bflat/scripts/run_wp_all.sh).
+      - name: Run WP
+        run: |
+          chmod +x src/bflat/scripts/run_wp_all.sh
+          docker run --rm -v "$PWD":/work -w /work framac/frama-c:30.0 \
+            src/bflat/scripts/run_wp_all.sh
+
   csharp_analyzers:
     runs-on: ubuntu-latest
     container:

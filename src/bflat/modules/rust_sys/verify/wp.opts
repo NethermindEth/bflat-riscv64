@@ -1,0 +1,3 @@
+# x & ~(a-1) clears the low bits of x for a = 2^k: the auto range strategy
+# splits on k, after which each case is constant folding.
+-wp-auto=wp:range
