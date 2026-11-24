@@ -242,7 +242,12 @@ zk_eh_build_info(zk_dl_phdr_info *info)
     // The header's first byte is readable even when the section is empty:
     // the symbol still points into the image.
     requires \valid_read(&__eh_frame_hdr_start[0]);
-    assigns zk_eh_phdrs[0 .. 1];
+    // The callback is the caller's: what it writes (its data at least),
+    // whether it returns and whether it ends the program are its own. So
+    // the contract has no assigns clause, no termination obligation and
+    // allows an exit; the block it hands over is zk_eh_build_info's.
+    terminates \false;
+    exits \true;
 */
 int
 __wrap_dl_iterate_phdr(zk_phdr_cb callback, void *data)

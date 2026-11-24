@@ -1,0 +1,10 @@
+# The allocator reads its size header through a byte pointer: bytes model.
+# String literal contents and no generated assigns for the platform externs.
+-wp-model bytes -wp-literals -generated-spec-custom assigns:skip
+# __wrap___libc_malloc_impl writes through integer addresses (CBMC proves it,
+# tests/verify/verify_alloc.c); __wrap_vfprintf and __wrap_syscall read a
+# va_list, which WP cannot describe.
+-wp-skip-fct __wrap_vfprintf,__wrap___libc_malloc_impl,__wrap_syscall
+# x & ~(a-1) is a multiple of a power of two a: no prover gets the bit fact.
+-wp-prop=-pow2_rounding
+-wp-prover alt-ergo,z3,cvc4

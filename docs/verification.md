@@ -30,6 +30,7 @@ The "Runs in" column has these values:
 | Layer | Runs in | What it proves | What it catches |
 |-------|---------|----------------|-----------------|
 | **ACSL contracts** | CI | Every function in the C modules carries a formal contract and parses under Frama-C | A new function landing without a specification; a module that stops parsing |
+| **WP proof** | CI | Every contract, loop invariant and runtime-error guard of every C module is proved by Frama-C WP (`run_wp_all.sh`); the few functions WP cannot model are named in the module's `verify/wp.opts` with the analysis that covers them | A contract that no longer matches the code; an out-of-bounds access, overflow or undefined operation in a module |
 | **`eh` proof** | CI | The unwinder's synthetic program headers are correct, and the module is free of runtime errors | A wrong or unsafe answer to the lookup that managed exception handling depends on |
 | **Module unit tests** | CI | Each module function behaves as specified, executing on the real ISA under qemu | Wrong return values, off-by-one stores, broken register contracts |
 | **Fuzzing** | CI | The two input-driven components survive arbitrary input under ASan/UBSan | Memory errors and arithmetic UB in the printf parser and the allocator |
@@ -60,6 +61,7 @@ unless the table gives a different rule.
 |-----|--------------|
 | ACSL contract gate (Frama-C) | `check_acsl.py` on the C modules |
 | Formal proof of the eh module (Frama-C WP + Eva) | `eh/verify/run_wp.sh` in the `framac/frama-c` image |
+| Formal proof of the module contracts (Frama-C WP) | `scripts/run_wp_all.sh` in the `framac/frama-c:30.0` image |
 | C# analyzers | Builds the driver with `-warnaserror`, checks the module manifests, runs `src/bflat.UnitTests` |
 | Fuzz smoke (vfprintf + allocator) | The libFuzzer targets for a short time; a crash is uploaded as an artifact |
 | CBMC allocator proof | `tests/verify/run_verify.sh` |

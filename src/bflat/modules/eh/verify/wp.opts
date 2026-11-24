@@ -1,0 +1,5 @@
+# __wrap_dl_iterate_phdr calls the caller's callback through a pointer. WP has
+# no model of \valid_function, so the RTE guard on that one call can only be
+# discharged by Eva, which run_wp.sh runs against the drivers' callback. Every
+# other goal of the file, the dispatcher's included, stays with WP.
+-rte-no-pointer-call

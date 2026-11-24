@@ -346,6 +346,22 @@ int main(void)
         CHECK(noos_t_strtol("abc", &end, 10) == 0);
         CHECK(end[0] == 'a'); /* nothing consumed */
 
+        /* no digits: *end is the string itself, blanks and sign included;
+         * after a bare "0x" the "0" is the number and the parse ends at 'x' */
+        {
+            static const char blank[] = "  -x";
+            static const char sign[] = "+";
+            static const char hex[] = "0xg";
+            CHECK(noos_t_strtol(blank, &end, 10) == 0);
+            CHECK(end == blank);
+            CHECK(noos_t_strtoul(sign, &end, 0) == 0);
+            CHECK(end == sign);
+            CHECK(noos_t_strtol(hex, &end, 16) == 0);
+            CHECK(end == hex + 1);
+            CHECK(noos_t_strtol(hex, &end, 0) == 0);
+            CHECK(end == hex + 1);
+        }
+
         /* widths */
         CHECK(noos_t_strtoll("9007199254740993", &end, 10)
               == 9007199254740993LL);

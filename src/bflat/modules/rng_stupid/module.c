@@ -10,12 +10,32 @@
 
 static unsigned long _next = 0x34095153;
 
+/*@ // The generator as logic: lcg_next is one LCG step (get_val's state
+    // update), lcg_iter(s, k) the state k steps after s, and lcg_byte the
+    // byte the buffer fillers take from a freshly stepped state. Both
+    // operations of the step wrap, as unsigned arithmetic does in C.
+    logic unsigned long lcg_next(unsigned long s) =
+        (unsigned long)((unsigned long)(s * 1103515243) + 12345);
+    logic unsigned long lcg_iter(unsigned long s, integer k) =
+        k <= 0 ? s : lcg_next(lcg_iter(s, k - 1));
+    lemma lcg_iter_step:
+        \forall unsigned long s, integer k;
+            k >= 0 ==> lcg_iter(s, k + 1) == lcg_next(lcg_iter(s, k));
+    logic unsigned char lcg_byte(unsigned long s) =
+        (unsigned char)(s / 65536 % 32768 % 256);
+
+    // b[0 .. n - 1] holds the n bytes the generator yields from state s.
+    predicate lcg_filled{L}(unsigned char *b, integer n, unsigned long s) =
+        \forall integer j; 0 <= j < n ==> b[j] == lcg_byte(lcg_iter(s, j + 1));
+*/
+
 /*@ // Deterministic LCG step (deliberately: a zkVM guest must be
     // reproducible, so "cryptographically secure" collapses to a fixed
-    // pseudo-random stream). Unsigned overflow wraps mod 2^64 by C
-    // semantics.
+    // pseudo-random stream). Unsigned overflow wraps modulo 2^N for an
+    // N-bit unsigned long by C semantics.
     assigns _next;
-    ensures _next == (unsigned long)(\old(_next) * 1103515243 + 12345);
+    ensures _next == lcg_next(\old(_next));
+    ensures \result == _next / 65536 % 32768;
     ensures 0 <= \result < 32768;
 */
 static unsigned long get_val(void)
@@ -27,11 +47,19 @@ static unsigned long get_val(void)
 /*@ requires bufferLength >= 0;
     requires \valid(buffer + (0 .. bufferLength - 1));
     assigns buffer[0 .. bufferLength - 1], _next;
+    ensures _next == lcg_iter(\old(_next), bufferLength);
+    ensures lcg_filled(buffer, bufferLength, \old(_next));
     ensures \result == 0;
 */
 int
 __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer, int bufferLength)
 {
+    /*@ loop invariant 0 <= i <= bufferLength;
+        loop invariant _next == lcg_iter(\at(_next, Pre), i);
+        loop invariant lcg_filled(buffer, i, \at(_next, Pre));
+        loop assigns i, _next, buffer[0 .. bufferLength - 1];
+        loop variant bufferLength - i;
+    */
     for (int i = 0; i < bufferLength; i++)
         buffer[i] = (unsigned char)(get_val() % 0x100);
     return 0;
@@ -48,10 +76,18 @@ __wrap_minipal_get_cryptographically_secure_random_bytes(unsigned char *buffer, 
     requires bufferLength >= 0;
     requires \valid(buffer + (0 .. bufferLength - 1));
     assigns buffer[0 .. bufferLength - 1], _next;
+    ensures _next == lcg_iter(\old(_next), bufferLength);
+    ensures lcg_filled(buffer, bufferLength, \old(_next));
 */
 void
 __wrap_minipal_get_non_cryptographically_secure_random_bytes(unsigned char *buffer, int bufferLength)
 {
+    /*@ loop invariant 0 <= i <= bufferLength;
+        loop invariant _next == lcg_iter(\at(_next, Pre), i);
+        loop invariant lcg_filled(buffer, i, \at(_next, Pre));
+        loop assigns i, _next, buffer[0 .. bufferLength - 1];
+        loop variant bufferLength - i;
+    */
     for (int i = 0; i < bufferLength; i++)
         buffer[i] = (unsigned char)(get_val() % 0x100);
 }
@@ -71,11 +107,19 @@ __wrap_CryptoNative_EnsureOpenSslInitialized(void)
     requires length >= 0;
     requires \valid(buffer + (0 .. length - 1));
     assigns buffer[0 .. length - 1], _next;
+    ensures _next == lcg_iter(\old(_next), length);
+    ensures lcg_filled(buffer, length, \old(_next));
     ensures \result == 1;
 */
 int
 __wrap_CryptoNative_GetRandomBytes(unsigned char *buffer, int length)
 {
+    /*@ loop invariant 0 <= i <= length;
+        loop invariant _next == lcg_iter(\at(_next, Pre), i);
+        loop invariant lcg_filled(buffer, i, \at(_next, Pre));
+        loop assigns i, _next, buffer[0 .. length - 1];
+        loop variant length - i;
+    */
     for (int i = 0; i < length; i++)
         buffer[i] = (unsigned char)(get_val() % 0x100);
     return 1;

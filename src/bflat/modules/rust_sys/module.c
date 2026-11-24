@@ -8,21 +8,38 @@
  */
 #include <stdint.h>
 
+/* pal's allocator state (bump pointer, size headers), which this module
+ * reaches only through __libc_malloc_impl. */
+//@ ghost int zk_heap_state;
+
+/*@ // pal's bump allocator (__wrap___libc_malloc_impl through the link's
+    // --wrap): NULL, or an 8-byte-aligned block of n bytes.
+    terminates \true;
+    exits \false;
+    assigns zk_heap_state;
+    ensures \result == \null ||
+        ((uintptr_t)\result % 8 == 0 && \valid((char *)\result + (0 .. n - 1)));
+*/
 void *__libc_malloc_impl(unsigned long n);
 
-/*@ // Rust's GlobalAlloc contract: align is a power of two. The heap
-    // footprint (bump pointer + size header) belongs to pal's allocator and
-    // is not re-declared here, hence no assigns clause.
+/*@ // Rust's GlobalAlloc contract: align is a power of two (above 8 that
+    // is 2^4 .. 2^30 for an int). The heap footprint (bump pointer + size
+    // header) belongs to pal's allocator and is modelled by zk_heap_state.
     requires bytes >= 0;
-    requires align <= 8 || (align & (align - 1)) == 0;
+    requires 0 <= align;
+    requires align <= 8 || \exists integer k; 4 <= k <= 30 && align == 1 << k;
+    assigns zk_heap_state;
 
     behavior small_align:
       assumes align <= 8;
-      ensures \result == \null || (uintptr_t)\result % 8 == 0;
+      ensures \result == \null ||
+        ((uintptr_t)\result % 8 == 0 &&
+         \valid((char *)\result + (0 .. bytes - 1)));
 
     behavior big_align:
       assumes align > 8;
-      ensures \result == \null || (uintptr_t)\result % align == 0;
+      // The low log2(align) bits are clear: \result is a multiple of align.
+      ensures \result == \null || ((uintptr_t)\result & (align - 1)) == 0;
 
     complete behaviors;
     disjoint behaviors;

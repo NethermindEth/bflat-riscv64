@@ -1,0 +1,7 @@
+# tls_initialized is volatile only to keep the compiler from caching it; the
+# guest has one hart and no interrupts, so nothing else writes it. WP's sound
+# volatile model makes every read arbitrary, which no contract can survive.
+-wp-no-volatile
+# Plain char unsigned, as on RISC-V: see the header of the file (path from the
+# repository root, where run_wp_all.sh runs).
+-machdep src/bflat/modules/tls/verify/machdep_x86_64_uchar.yaml

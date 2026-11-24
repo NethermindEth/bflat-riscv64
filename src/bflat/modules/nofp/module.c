@@ -23,11 +23,20 @@
  * non-success terminator, never a silent return. To change the abort policy,
  * change nofp_trap() alone.
  */
+/*@ // Ends the program with the given status: never returns. What runs on
+    // the way out (atexit handlers, the platform's halt) is not visible to
+    // a caller that does not resume.
+    terminates \true;
+    assigns \nothing;
+    ensures \false;
+    exits \exit_status == status;
+*/
 extern void exit(int status) __attribute__((noreturn));
 
 /*@ // Single abort policy for every FP stub: terminate with status 255,
     // never return. exit() resolves to the PAL's __wrap_exit (the exit of
     // the platform) in the zkVM link.
+    terminates \true;
     assigns \nothing;
     ensures \false;
     exits \exit_status == 255;
@@ -76,7 +85,8 @@ nofp_trap(void)
  * Math.Truncate), HashHelpers.IsPrime (sqrt), and the C# % operator on
  * double and float (fmod).
  */
-/* Same contract-in-macro arrangement as NOFP_STUB above (needs -CC). */
+/* The contract is embedded in the macro so every expansion carries one; Frama-C
+ * sees it only with comments kept through expansion (-cpp-extra-args=-CC). */
 #define NOFP_WRAP_STUB(name) \
     /*@ assigns \nothing; ensures \false; exits \exit_status == 255; */ \
     void __wrap_##name(void) { nofp_trap(); }

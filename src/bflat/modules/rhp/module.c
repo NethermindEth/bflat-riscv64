@@ -45,7 +45,12 @@ __wrap_RhpPInvokeReturn(void *pFrame)
 void
 __wrap_RhBulkMoveWithWriteBarrier(void *dest, void *src, size_t len)
 {
-    memmove(dest, src, len);
+    /* An empty move may come with pointers that are not dereferenceable
+     * (an empty span's null reference, the end of an array), which memmove
+     * must not be given. Upstream's RhBulkMoveWithWriteBarrier returns
+     * early the same way. */
+    if (len != 0)
+        memmove(dest, src, len);
 }
 
 /* Allocation fast paths without the TLS lookup. Upstream riscv64
@@ -91,15 +96,96 @@ typedef struct {
 #define MAX_BUMP_ARRAY_LENGTH 0x7fffffffu
 #endif
 
+static ee_alloc_context *alloc_context;
+
+/*@ axiomatic AllocContext {
+      // The thread's ee_alloc_context as RhpGetThread returns it: the guest
+      // has one thread and one static TLS block, so one fixed address.
+      logic ee_alloc_context *thread_alloc_context reads \nothing;
+    }
+
+    // The bytes left in a context's budget.
+    logic integer budget{L}(ee_alloc_context *c) =
+        c->combined_limit - c->alloc_ptr;
+
+    // A context's budget [alloc_ptr, combined_limit) is writable memory
+    // apart from the context itself: one block, so both pointers share a
+    // base. A fresh context has an empty budget (both pointers null).
+    predicate budget_ok{L}(ee_alloc_context *c) =
+        \valid(c) &&
+        \base_addr(c->alloc_ptr) == \base_addr(c->combined_limit) &&
+        c->alloc_ptr <= c->combined_limit &&
+        budget(c) <= PTRDIFF_MAX &&
+        \valid(c->alloc_ptr + (0 .. budget(c) - 1)) &&
+        \separated(c, c->alloc_ptr + (0 .. budget(c) - 1));
+
+    // What the bump paths rely on: the thread's context keeps a valid
+    // budget, and the cached pointer is unset or that context.
+    predicate alloc_state{L} =
+        budget_ok(thread_alloc_context) &&
+        (alloc_context == \null || alloc_context == thread_alloc_context);
+
+    // MethodTable fields the helpers read: m_usComponentSize at 0 and
+    // m_uBaseSize at 4.
+    logic integer component_size{L}(void *mt) = *(const uint16_t *)mt;
+    logic integer base_size{L}(void *mt) =
+        *(const uint32_t *)((const uint8_t *)mt + 4);
+
+    // The array size the bump paths compute: rounded up to 8 bytes.
+    logic integer array_size(integer component, integer length, integer base) =
+        (component * length + base + 7) & (uintptr_t)~7;
+
+    // Clearing the low three bits takes at most 7 away. No prover relates
+    // a bit mask to magnitude, so this lemma is left out of the proof
+    // (rhp/verify/wp.opts); it is plain machine arithmetic.
+    lemma round_down_8:
+      \forall integer v; 0 <= v <= UINTPTR_MAX ==> v - 7 <= (v & (uintptr_t)~7);
+*/
+
+/*@ terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == thread_alloc_context;
+*/
 extern ee_alloc_context *RhpGetThread(void);
+
+/*@ // The runtime's helpers (AllocFast.S and its slow path into
+    // uGCHeap::Alloc). Their footprint - context refills, the GC heap,
+    // exceptions - is the runtime's and is left unspecified (no assigns
+    // clause). They keep the thread's context valid, cannot reach this
+    // file's cached pointer, and return the new object stamped with its
+    // MethodTable unless they raise.
+    requires budget_ok(thread_alloc_context);
+    terminates \true;
+    exits \true;
+    ensures budget_ok(thread_alloc_context);
+    ensures alloc_context == \old(alloc_context);
+    ensures *(const void **)\result == pEEType;
+*/
 extern void *__real_RhpNewFast(const void *pEEType);
+
+/*@ requires budget_ok(thread_alloc_context);
+    terminates \true;
+    exits \true;
+    ensures budget_ok(thread_alloc_context);
+    ensures alloc_context == \old(alloc_context);
+    ensures *(const void **)\result == pEEType;
+*/
 extern void *__real_RhpNewArrayFast(const void *pEEType, uintptr_t numElements);
+
+/*@ requires budget_ok(thread_alloc_context);
+    terminates \true;
+    exits \true;
+    ensures budget_ok(thread_alloc_context);
+    ensures alloc_context == \old(alloc_context);
+    ensures *(const void **)\result == pEEType;
+*/
 extern void *__real_RhpNewPtrArrayFast(const void *pEEType,
                                        uintptr_t numElements);
 
-static ee_alloc_context *alloc_context;
-
-/*@ assigns alloc_context; */
+/*@ assigns alloc_context;
+    ensures alloc_context == thread_alloc_context;
+*/
 static __attribute__((noinline, cold)) void
 bind_alloc_context(void)
 {
@@ -107,8 +193,10 @@ bind_alloc_context(void)
 }
 
 /* Takes size bytes from the budget into *obj; 0 when they do not fit. */
-/*@ requires \valid(ctx) && \valid(obj);
+/*@ requires \valid(ctx) && \valid(obj) && \separated(ctx, obj);
+    requires \base_addr(ctx->alloc_ptr) == \base_addr(ctx->combined_limit);
     requires ctx->alloc_ptr <= ctx->combined_limit;
+    requires ctx->combined_limit - ctx->alloc_ptr <= PTRDIFF_MAX;
 
     behavior fits:
       assumes size <= ctx->combined_limit - ctx->alloc_ptr;
@@ -121,6 +209,7 @@ bind_alloc_context(void)
       assumes size > ctx->combined_limit - ctx->alloc_ptr;
       assigns \nothing;
       ensures \result == 0;
+      ensures ctx->alloc_ptr == \old(ctx->alloc_ptr);
 
     complete behaviors;
     disjoint behaviors;
@@ -138,9 +227,24 @@ bump_alloc(ee_alloc_context *ctx, uintptr_t size, uint8_t **obj)
 
 /*@ // Off the bump path the original helper runs; its effects (refills,
     // exceptions) are the runtime's and are not specified here. Either way
-    // the object comes back stamped with its MethodTable.
+    // the object comes back stamped with its MethodTable, which a base
+    // size always has room for.
     requires \valid_read((const uint32_t *)((const uint8_t *)pEEType + 4));
+    requires base_size(pEEType) >= sizeof(void *);
+    requires alloc_state;
+    terminates \true;
+    exits \true;
+    ensures alloc_state;
     ensures *(const void **)\result == pEEType;
+
+    behavior bump:
+      assumes alloc_context != \null;
+      assumes OBJECT_SIZE(base_size(pEEType)) <= budget(alloc_context);
+      ensures \result == \old(alloc_context->alloc_ptr);
+      ensures \valid((uint8_t *)\result +
+                     (0 .. OBJECT_SIZE(base_size(pEEType)) - 1));
+      ensures alloc_context->alloc_ptr ==
+          \old(alloc_context->alloc_ptr) + OBJECT_SIZE(base_size(pEEType));
 */
 void *
 __wrap_RhpNewFast(const void *pEEType)
@@ -158,7 +262,24 @@ __wrap_RhpNewFast(const void *pEEType)
 
 /*@ // Same split as __wrap_RhpNewFast.
     requires \valid_read((const uint16_t *)pEEType);
+    requires alloc_state;
+    terminates \true;
+    exits \true;
+    ensures alloc_state;
     ensures *(const void **)\result == pEEType;
+
+    behavior bump:
+      assumes alloc_context != \null;
+      assumes numElements <= MAX_BUMP_ARRAY_LENGTH;
+      assumes array_size(component_size(pEEType), numElements,
+                         SZARRAY_BASE_SIZE) <= budget(alloc_context);
+      ensures \result == \old(alloc_context->alloc_ptr);
+      ensures \valid((uint8_t *)\result +
+                     (0 .. array_size(component_size(pEEType), numElements,
+                                      SZARRAY_BASE_SIZE) - 1));
+      ensures ((uintptr_t *)\result)[1] == numElements;
+      ensures alloc_context->alloc_ptr == \old(alloc_context->alloc_ptr) +
+          array_size(component_size(pEEType), numElements, SZARRAY_BASE_SIZE);
 */
 void *
 __wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
@@ -177,7 +298,24 @@ __wrap_RhpNewArrayFast(const void *pEEType, uintptr_t numElements)
 }
 
 /*@ // Same split as __wrap_RhpNewFast.
+    requires alloc_state;
+    terminates \true;
+    exits \true;
+    ensures alloc_state;
     ensures *(const void **)\result == pEEType;
+
+    behavior bump:
+      assumes alloc_context != \null;
+      assumes numElements < 0x8000000;
+      assumes OBJECT_SIZE(numElements * sizeof(void *) + SZARRAY_BASE_SIZE) <=
+          budget(alloc_context);
+      ensures \result == \old(alloc_context->alloc_ptr);
+      ensures \valid((uint8_t *)\result +
+                     (0 .. OBJECT_SIZE(numElements * sizeof(void *) +
+                                       SZARRAY_BASE_SIZE) - 1));
+      ensures ((uintptr_t *)\result)[1] == numElements;
+      ensures alloc_context->alloc_ptr == \old(alloc_context->alloc_ptr) +
+          OBJECT_SIZE(numElements * sizeof(void *) + SZARRAY_BASE_SIZE);
 */
 void *
 __wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
@@ -209,15 +347,57 @@ __wrap_RhpNewPtrArrayFast(const void *pEEType, uintptr_t numElements)
 #define GC_ALLOC_PINNED_OBJECT_HEAP 64
 #define MT_HAS_FINALIZER 0x00100000
 
+/*@ // The original QCalls, as for __real_RhpNewFast: unspecified
+    // footprint, the thread's context kept valid, the result stamped.
+    requires \valid(pResult);
+    requires budget_ok(thread_alloc_context);
+    terminates \true;
+    exits \true;
+    ensures budget_ok(thread_alloc_context);
+    ensures alloc_context == \old(alloc_context);
+    ensures *(const void **)*pResult == pEEType;
+*/
 extern void __real_RhAllocateNewObject(const void *pEEType, uint32_t flags,
                                        void **pResult);
+
+/*@ requires \valid(pResult);
+    requires budget_ok(thread_alloc_context);
+    terminates \true;
+    exits \true;
+    ensures budget_ok(thread_alloc_context);
+    ensures alloc_context == \old(alloc_context);
+    ensures *(const void **)*pResult == pEEType;
+*/
 extern void __real_RhAllocateNewArray(const void *pEEType, uint32_t numElements,
                                       uint32_t flags, void **pResult);
 
 /*@ // Off the bump path the original QCall runs, as for __wrap_RhpNewFast.
+    // The result slot is the caller's, never inside the free budget.
     requires \valid_read((const uint32_t *)pEEType + (0 .. 1));
+    requires \valid_read((const uint32_t *)((const uint8_t *)pEEType + 4));
+    requires base_size(pEEType) >= sizeof(void *);
     requires \valid(pResult);
+    requires alloc_state;
+    requires \separated(pResult, thread_alloc_context);
+    requires \separated(pResult, thread_alloc_context->alloc_ptr +
+                                  (0 .. budget(thread_alloc_context) - 1));
+    terminates \true;
+    exits \true;
+    ensures alloc_state;
     ensures *(const void **)*pResult == pEEType;
+
+    behavior bump:
+      assumes (flags & ~(uint32_t)GC_ALLOC_PINNED_OBJECT_HEAP) == 0;
+      assumes (*(const uint32_t *)pEEType & MT_HAS_FINALIZER) == 0;
+      assumes OBJECT_SIZE(base_size(pEEType)) <=
+          budget(thread_alloc_context);
+      ensures alloc_context == thread_alloc_context;
+      ensures *pResult == \old(thread_alloc_context->alloc_ptr);
+      ensures \valid((uint8_t *)*pResult +
+                     (0 .. OBJECT_SIZE(base_size(pEEType)) - 1));
+      ensures thread_alloc_context->alloc_ptr ==
+          \old(thread_alloc_context->alloc_ptr) +
+          OBJECT_SIZE(base_size(pEEType));
 */
 void
 __wrap_RhAllocateNewObject(const void *pEEType, uint32_t flags, void **pResult)
@@ -243,10 +423,38 @@ __wrap_RhAllocateNewObject(const void *pEEType, uint32_t flags, void **pResult)
     __real_RhAllocateNewObject(pEEType, flags, pResult);
 }
 
-/*@ // Same split as __wrap_RhAllocateNewObject.
+/*@ // Same split as __wrap_RhAllocateNewObject. An array's base size
+    // covers its MethodTable pointer and length.
     requires \valid_read((const uint32_t *)pEEType + (0 .. 1));
+    requires \valid_read((const uint16_t *)pEEType);
+    requires \valid_read((const uint32_t *)((const uint8_t *)pEEType + 4));
+    requires base_size(pEEType) >= 2 * sizeof(void *);
     requires \valid(pResult);
+    requires alloc_state;
+    requires \separated(pResult, thread_alloc_context);
+    requires \separated(pResult, thread_alloc_context->alloc_ptr +
+                                  (0 .. budget(thread_alloc_context) - 1));
+    terminates \true;
+    exits \true;
+    ensures alloc_state;
     ensures *(const void **)*pResult == pEEType;
+
+    behavior bump:
+      assumes (flags & ~(uint32_t)(GC_ALLOC_ZEROING_OPTIONAL |
+                                   GC_ALLOC_PINNED_OBJECT_HEAP)) == 0;
+      assumes numElements <= 0x7FFFFFC7 && numElements <= MAX_BUMP_ARRAY_LENGTH;
+      assumes array_size(component_size(pEEType), numElements,
+                         base_size(pEEType)) <= budget(thread_alloc_context);
+      ensures alloc_context == thread_alloc_context;
+      ensures *pResult == \old(thread_alloc_context->alloc_ptr);
+      ensures \valid((uint8_t *)*pResult +
+                     (0 .. array_size(component_size(pEEType), numElements,
+                                      base_size(pEEType)) - 1));
+      ensures ((uintptr_t *)*pResult)[1] == numElements;
+      ensures thread_alloc_context->alloc_ptr ==
+          \old(thread_alloc_context->alloc_ptr) +
+          array_size(component_size(pEEType), numElements,
+                     base_size(pEEType));
 */
 void
 __wrap_RhAllocateNewArray(const void *pEEType, uint32_t numElements,
@@ -326,11 +534,21 @@ void __wrap_SystemNative_SetTerminalInvalidationHandler(void *param)
  * without a host-visible console swallows them; see pal/module.c
  * zkvm_console_write). Weak on purpose: rhp.o is linked (and unit tested)
  * without pal. */
+/*@ // pal/module.c's contract.
+    requires len >= 0;
+    requires \valid_read(buf + (0 .. len - 1));
+    terminates \true;
+    exits \false;
+    assigns \nothing;
+    ensures \result == len;
+*/
 extern int zkvm_console_write(int fd, const char *buf, int len) __attribute__((weak));
 
 /*@ // The buffer is handed to the guest console if the target has one, and
     // swallowed otherwise; either way the caller is told the full buffer
     // was consumed so it does not retry.
+    requires bufferSize <= 0 ||
+        \valid_read((const char *)buffer + (0 .. bufferSize - 1));
     assigns \nothing;
     ensures \result == bufferSize;
 */
@@ -367,8 +585,12 @@ typedef struct
     // else. The guest has no file system, so any other descriptor is a bug
     // in the caller rather than a question worth answering.
     requires \valid(((char *)output) + (0 .. sizeof(rhp_file_status) - 1));
-    assigns ((char *)output)[0 .. sizeof(rhp_file_status) - 1];
+    assigns ((char *)output)[0 .. sizeof(rhp_file_status) - 1],
+            ((rhp_file_status *)output)->Mode;
     ensures \result == 0 || \result == -1;
+    ensures \result == 0 <==> (fd == 0 || fd == 1 || fd == 2);
+    ensures \result == 0 ==>
+        ((rhp_file_status *)output)->Mode == (RHP_S_IFCHR | 0666);
 */
 int32_t __wrap_SystemNative_FStat(intptr_t fd, void *output)
 {
@@ -387,6 +609,11 @@ int32_t __wrap_SystemNative_FStat(intptr_t fd, void *output)
     if (st == 0)
         return -1;
 
+    /*@ loop invariant 0 <= i <= sizeof(rhp_file_status);
+        loop invariant \forall integer j; 0 <= j < i ==> ((char *)st)[j] == 0;
+        loop assigns i, ((char *)st)[0 .. sizeof(rhp_file_status) - 1];
+        loop variant sizeof(rhp_file_status) - i;
+    */
     for (unsigned i = 0; i < sizeof(rhp_file_status); i++)
         ((char *)st)[i] = 0;
 
@@ -452,16 +679,22 @@ __wrap_RhpReversePInvokeReturn(void *pFrame)
  * fall back to exit(1), so existing binaries keep their old behaviour. A
  * program that does define it takes full control of the throw — the wrapper
  * does not exit, so the handler decides what happens next. */
+/*@ // The program's managed handler: its effects are the program's (no
+    // assigns clause), and it may end the guest or never return.
+    terminates \false;
+    exits \true;
+*/
 extern void ZkvmThrow(void *exceptionObj) __attribute__((weak));
 
 /*@ // Two configurations exist. Without a linked ZkvmThrow handler (weak
     // symbol resolves to null) the function never returns and terminates the
     // guest with exit status 1. With a handler, control transfers to managed
     // code whose effects cannot be specified here; the function returns
-    // normally only in that configuration. The weak-symbol test is a link-time
-    // property, not expressible as an ACSL assumes clause, so only the exit
-    // status of the fallback path is stated formally.
-    exits \exit_status == 1;
+    // normally only in that configuration. Frama-C's libc models exit() as
+    // not guaranteed to terminate (atexit handlers), and the handler gives
+    // no such guarantee either, hence no termination claim.
+    terminates \false;
+    exits &ZkvmThrow == \null ==> \exit_status == 1;
 */
 void __wrap_RhpThrowEx(void *exceptionObj)
 {
@@ -475,7 +708,10 @@ void __wrap_RhpThrowEx(void *exceptionObj)
 
 /* FailFast carries a message string (or null), not an exception object, so it
  * keeps the plain fail-fast path rather than routing through ZkvmThrow. */
-/*@ assigns \nothing;
+/*@ // exit() never returns; as above, Frama-C's libc gives it no
+    // termination guarantee, hence none is claimed here.
+    terminates \false;
+    assigns \nothing;
     ensures \false;
     exits \exit_status == 1;
 */

@@ -38,6 +38,14 @@
  * Linked for the platforms with the no-atomics flag (sp1, openvm and
  * airbender). The other platforms keep musl's primitives, which work on one hart too.
  */
+/*@ // Ends the program with the given status: never returns. What runs on
+    // the way out (atexit handlers, the platform's halt) is not visible to
+    // a caller that does not resume.
+    terminates \true;
+    assigns \nothing;
+    ensures \false;
+    exits \exit_status == status;
+*/
 extern void exit(int status) __attribute__((noreturn));
 
 /*
@@ -49,6 +57,7 @@ extern void exit(int status) __attribute__((noreturn));
 /*@ // Single abort policy for every blocking primitive: terminate with status
     // 254, never return. exit() resolves to the PAL's __wrap_exit (the
     // target's real termination sequence) in the zkVM link.
+    terminates \true;
     assigns \nothing;
     ensures \false;
     exits \exit_status == NOTHREAD_EXIT_STATUS;
@@ -133,9 +142,44 @@ NOTHREAD_NOOP(__do_orphaned_stdio_locks)
  * pal's __wrap___stdio_write fails unconditionally, so the underlying write
  * path is already inert and no buffered byte can leave the FILE either way.
  * In this image fflush is reached only from libunwind's logging paths. */
+/*
+ * The FILE objects are opaque here (no musl headers), so the state the
+ * unlocked primitives change - the FILE buffers and positions, the stream
+ * behind them - is modelled by one ghost variable. Their results are the
+ * C standard's: the byte written or read as an unsigned char, or EOF (-1).
+ */
+//@ ghost int nothread_stdio_state;
+
+/*@ terminates \true;
+    exits \false;
+    assigns nothread_stdio_state \from nothread_stdio_state, c;
+    assigns \result \from nothread_stdio_state, c;
+    ensures \result == -1 || \result == (unsigned char)c;
+*/
 extern int fputc_unlocked(int c, void *f);
+
+/*@ terminates \true;
+    exits \false;
+    assigns nothread_stdio_state \from nothread_stdio_state;
+    assigns \result \from nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255;
+*/
 extern int fgetc_unlocked(void *f);
+
+/*@ terminates \true;
+    exits \false;
+    assigns nothread_stdio_state \from nothread_stdio_state, c;
+    assigns \result \from nothread_stdio_state, c;
+    ensures \result == -1 || \result == (unsigned char)c;
+*/
 extern int putchar_unlocked(int c);
+
+/*@ terminates \true;
+    exits \false;
+    assigns nothread_stdio_state \from nothread_stdio_state;
+    assigns \result \from nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255;
+*/
 extern int getchar_unlocked(void);
 
 /*@ assigns \nothing; ensures \result == 0; */
@@ -144,28 +188,36 @@ int fflush(void *f) { (void)f; return 0; }
 /*@ assigns \nothing; ensures \result == 0; */
 int fflush_unlocked(void *f) { (void)f; return 0; }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || \result == (unsigned char)c; */
 int fputc(int c, void *f) { return fputc_unlocked(c, f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || \result == (unsigned char)c; */
 int putc(int c, void *f) { return fputc_unlocked(c, f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || \result == (unsigned char)c; */
 int _IO_putc(int c, void *f) { return fputc_unlocked(c, f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || \result == (unsigned char)c; */
 int putchar(int c) { return putchar_unlocked(c); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255; */
 int fgetc(void *f) { return fgetc_unlocked(f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255; */
 int getc(void *f) { return fgetc_unlocked(f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255; */
 int _IO_getc(void *f) { return fgetc_unlocked(f); }
 
-/*@ assigns \nothing; */
+/*@ assigns nothread_stdio_state;
+    ensures \result == -1 || 0 <= \result <= 255; */
 int getchar(void) { return getchar_unlocked(); }
 
 /* --- the futex wait behind a contended lock, __wait.lo ------------------
